@@ -155,9 +155,9 @@ pub const UUID = struct {
         return alloc.dupe(u8, self.toString(&buf));
     }
 
-    pub fn format(self: UUID, w: anytype) !void {
+    pub fn format(self: UUID, writer: anytype) !void {
         var buf: [36]u8 = undefined;
-        try w.writeAll(self.toString(&buf));
+        try writer.writeAll(self.toString(&buf));
     }
 };
 
