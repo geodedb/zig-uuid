@@ -66,10 +66,9 @@ pub fn build(b: *std.Build) void {
     });
     check_step.dependOn(&check.step);
 
-    // Cross-compile check step — one check artifact per target triple.
-    // The Makefile calls `zig build check-cross -Dtarget=<triple>` per target,
-    // which works because standardTargetOptions picks up -Dtarget from the CLI.
-    // Per-target artifacts are wired here matching the spec's build.zig design.
+    // Cross-compile check step — all five target triples are compiled unconditionally.
+    // Each invocation of `zig build check-cross` compiles all five targets,
+    // so `make cross-compile-required` (which calls this once) checks everything.
     const cross_step = b.step("check-cross", "Cross-compile check for the active -Dtarget");
     const cross_targets = [_][]const u8{
         "x86_64-linux",

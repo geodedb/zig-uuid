@@ -108,7 +108,7 @@ repos:
     entry: bash
     args:
     - -c
-    - make cross-compile-required 2>&1 | tail -20
+    - make cross-compile-required
     language: system
     files: \.(zig|zon)$
     exclude: ^(zig-out/|\.zig-cache/)
