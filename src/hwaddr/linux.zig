@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 CodePros
+
+const std = @import("std");
+const builtin = @import("builtin");
+const Error = @import("../uuid.zig").Error;
+
+const linux = std.os.linux;
+
+const SIOCGIFCONF = 0x8912;
+const SIOCGIFHWADDR = 0x8927;
+const SIOCGIFFLAGS = 0x8913;
+const IFF_LOOPBACK = 0x8;
+const ARPHRD_ETHER = 1;
+
+const ifreq = extern struct {
+    ifr_name: [16]u8,
+    // union: we read different fields depending on the ioctl
+    ifr_data: [24]u8,
+};
+
+const ifconf = extern struct {
+    ifc_len: c_int,
+    ifc_buf: ?[*]ifreq,
+};
+
+pub fn getHWAddr() Error![6]u8 {
+    const sock = std.posix.socket(
+        std.posix.AF.INET,
+        std.posix.SOCK.DGRAM,
+        0,
+    ) catch return Error.NoHWAddressFound;
+    defer std.posix.close(sock);
+
+    // Get interface list
+    var ifreqs: [64]ifreq = undefined;
+    var ifc = ifconf{
+        .ifc_len = @intCast(@sizeOf(ifreq) * ifreqs.len),
+        .ifc_buf = &ifreqs,
+    };
+    const ifc_ret = linux.syscall3(
+        .ioctl,
+        @as(usize, @intCast(sock)),
+        SIOCGIFCONF,
+        @intFromPtr(&ifc),
+    );
+    if (ifc_ret != 0) return Error.NoHWAddressFound;
+
+    const count: usize = @intCast(@divTrunc(ifc.ifc_len, @sizeOf(ifreq)));
+
+    for (ifreqs[0..count]) |*ifr| {
+        // Get flags to skip loopback
+        var flags_req = ifr.*;
+        const flags_ret = linux.syscall3(
+            .ioctl,
+            @as(usize, @intCast(sock)),
+            SIOCGIFFLAGS,
+            @intFromPtr(&flags_req),
+        );
+        if (flags_ret != 0) continue;
+        const flags = std.mem.readInt(u16, flags_req.ifr_data[0..2], .little);
+        if (flags & IFF_LOOPBACK != 0) continue;
+
+        // Get hardware address
+        var hw_req = ifr.*;
+        const hw_ret = linux.syscall3(
+            .ioctl,
+            @as(usize, @intCast(sock)),
+            SIOCGIFHWADDR,
+            @intFromPtr(&hw_req),
+        );
+        if (hw_ret != 0) continue;
+
+        // sa_family is first 2 bytes; MAC is bytes 2-7
+        const family = std.mem.readInt(u16, hw_req.ifr_data[0..2], .little);
+        if (family != ARPHRD_ETHER) continue;
+
+        const mac = hw_req.ifr_data[2..8];
+        // Skip zero MAC
+        if (std.mem.allEqual(u8, mac, 0)) continue;
+
+        var result: [6]u8 = undefined;
+        @memcpy(&result, mac);
+        return result;
+    }
+    return Error.NoHWAddressFound;
+}
