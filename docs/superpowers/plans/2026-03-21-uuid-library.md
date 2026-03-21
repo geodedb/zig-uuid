@@ -45,6 +45,7 @@
 ## Task 0: Pre-commit Install & Tooling Setup
 
 **Files:**
+
 - Modify: `build.zig`
 - Modify: `build.zig.zon`
 - Modify: `.pre-commit-config.yaml`
@@ -201,12 +202,12 @@ Add after the existing `test-all-optimizations` target and update `fmt`:
 CROSS_TARGETS = x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows
 
 cross-compile-required:
-	@echo "🔀 Cross-compile check for required targets..."
-	@for target in $(CROSS_TARGETS); do \
-		echo "  Checking $$target..."; \
-		zig build check-cross -Dtarget=$$target || exit 1; \
-	done
-	@echo "✅ All cross-compile targets pass"
+ @echo "🔀 Cross-compile check for required targets..."
+ @for target in $(CROSS_TARGETS); do \
+  echo "  Checking $$target..."; \
+  zig build check-cross -Dtarget=$$target || exit 1; \
+ done
+ @echo "✅ All cross-compile targets pass"
 
 cross-compile: cross-compile-required
 ```
@@ -215,8 +216,8 @@ Also update the existing `fmt` target to include `examples/`:
 
 ```makefile
 fmt:
-	@echo "📝 Formatting code..."
-	@zig fmt src/ tests/ examples/ build.zig
+ @echo "📝 Formatting code..."
+ @zig fmt src/ tests/ examples/ build.zig
 ```
 
 Update `.PHONY` to include new targets:
@@ -365,6 +366,7 @@ git commit -m "chore: update build tooling — add json dep, cross-compile step,
 ## Task 1: Error Set, Version & Variant Enums
 
 **Files:**
+
 - Create: `src/uuid.zig`
 
 These are the foundational types everything else depends on. Start here.
@@ -439,6 +441,7 @@ git commit -m "feat: add UUID Error set and Version/Variant enums"
 ## Task 2: UUID Core Type — Sentinels, Inspection, Mutation
 
 **Files:**
+
 - Modify: `src/uuid.zig`
 
 - [ ] **Step 1: Write failing tests** — add after the enum tests
@@ -557,6 +560,7 @@ git commit -m "feat: add UUID core type with sentinels, inspection, and mutation
 ## Task 3: UUID Parsing — All Six Formats
 
 **Files:**
+
 - Modify: `src/uuid.zig`
 
 The spec requires: canonical, braced canonical, hash (no dashes), braced hash, URN canonical, URN hash.
@@ -716,6 +720,7 @@ git commit -m "feat: implement UUID parsing for all six RFC formats"
 ## Task 4: UUID Output — toString, toStringAlloc, format
 
 **Files:**
+
 - Modify: `src/uuid.zig`
 
 - [ ] **Step 1: Write failing tests**
@@ -821,6 +826,7 @@ git commit -m "feat: implement UUID toString, toStringAlloc, and fmt.format"
 ## Task 5: Namespace Constants
 
 **Files:**
+
 - Create: `src/namespace.zig`
 
 - [ ] **Step 1: Create `src/namespace.zig` with tests**
@@ -903,6 +909,7 @@ git commit -m "feat: add namespace constants (nil, max, DNS, URL, OID, X500)"
 ## Task 6: Timestamp Type
 
 **Files:**
+
 - Create: `src/timestamp.zig`
 
 The Gregorian epoch (1582-10-15) is 122,192,928,000,000,000 100-ns intervals before Unix epoch.
@@ -1060,6 +1067,7 @@ git commit -m "feat: add Timestamp type with V1/V6/V7 extraction"
 ## Task 7: Hardware Address — Linux
 
 **Files:**
+
 - Create: `src/hwaddr/linux.zig`
 
 Uses `SIOCGIFCONF` (get interface list) then `SIOCGIFHWADDR` per interface via `std.posix`.
@@ -1178,6 +1186,7 @@ git commit -m "feat: add Linux hardware address resolution via SIOCGIFHWADDR"
 ## Task 8: Hardware Address — macOS
 
 **Files:**
+
 - Create: `src/hwaddr/macos.zig`
 
 Uses `getifaddrs()` + `AF_LINK` sockaddr to find the first non-loopback Ethernet interface.
@@ -1279,6 +1288,7 @@ git commit -m "feat: add macOS hardware address resolution via getifaddrs"
 ## Task 9: Hardware Address — Windows + GUID Interop
 
 **Files:**
+
 - Create: `src/hwaddr/windows.zig`
 
 Uses `GetAdaptersAddresses` (Vista+). MAC is in `PhysicalAddress[0..PhysicalAddressLength]`
@@ -1437,6 +1447,7 @@ git commit -m "feat: add Windows hardware address via GetAdaptersAddresses and G
 ## Task 10: Hardware Address — Dispatch
 
 **Files:**
+
 - Create: `src/hwaddr/hwaddr.zig`
 
 Comptime dispatch. Each platform file is `@import`ed only in its own branch so
@@ -1504,6 +1515,7 @@ git commit -m "feat: add comptime hwaddr platform dispatch"
 ## Task 11: Generator — Core, V4, V7
 
 **Files:**
+
 - Create: `src/generator.zig`
 
 Build the `Generator` struct with injectable functions, then implement V4 (simplest: pure
@@ -1718,6 +1730,7 @@ git commit -m "feat: add Generator with injectable clock/rand/hwaddr, V4 and V7 
 ## Task 12: Generator — V1, V6, V3, V5, V8
 
 **Files:**
+
 - Modify: `src/generator.zig`
 
 - [ ] **Step 1: Write failing tests for V1, V6, V3, V5, V8**
@@ -1975,6 +1988,7 @@ git commit -m "feat: add V1, V3, V5, V6, V8 UUID generation with clock_seq and M
 ## Task 13: Package-Level Convenience Functions
 
 **Files:**
+
 - Create: `src/versions.zig`
 
 - [ ] **Step 1: Create `src/versions.zig`**
@@ -2045,6 +2059,7 @@ git commit -m "feat: add package-level UUID convenience functions (newV1-newV8)"
 ## Task 14: NullUUID with JSON Serialization
 
 **Files:**
+
 - Create: `src/null_uuid.zig`
 - Modify: `src/uuid.zig` (add `jsonMarshal`/`jsonUnmarshal` to `UUID`)
 
@@ -2182,6 +2197,7 @@ git commit -m "feat: add NullUUID with JSON marshal/unmarshal and UUID jsonMarsh
 ## Task 15: Public API Surface (`src/root.zig`)
 
 **Files:**
+
 - Rewrite: `src/root.zig`
 
 - [ ] **Step 1: Rewrite `src/root.zig`**
@@ -2305,6 +2321,7 @@ git commit -m "feat: wire public API surface in root.zig"
 ## Task 16: Integration Tests
 
 **Files:**
+
 - Rewrite: `tests/integration.zig`
 
 - [ ] **Step 1: Rewrite `tests/integration.zig`**
@@ -2499,6 +2516,7 @@ git commit -m "test: add integration tests — round-trips, JSON, concurrent V7 
 ## Task 17: Update Examples
 
 **Files:**
+
 - Modify: `examples/basic.zig`
 
 - [ ] **Step 1: Update `examples/basic.zig`** to demonstrate all UUID versions
@@ -2647,8 +2665,8 @@ git commit -m "feat: complete RFC-9562 UUID library — V1/V3/V4/V5/V6/V7/V8 wit
 
 | Version | Namespace | Name | Expected UUID |
 |---|---|---|---|
-| V3 (MD5) | DNS | www.example.com | `5df41881-3aed-3515-88a7-2f4a814cf09e` |
-| V5 (SHA-1) | DNS | www.example.com | `2ed6657d-e927-568b-95e3-af9b26a12f30` |
+| V3 (MD5) | DNS | <www.example.com> | `5df41881-3aed-3515-88a7-2f4a814cf09e` |
+| V5 (SHA-1) | DNS | <www.example.com> | `2ed6657d-e927-568b-95e3-af9b26a12f30` |
 
 ### Namespace UUID Byte Values
 

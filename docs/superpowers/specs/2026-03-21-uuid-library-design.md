@@ -40,7 +40,7 @@ Each concern gets its own focused file (`< 800` lines each), all re-exported fro
 
 ### File Layout
 
-```
+```text
 src/
   root.zig          # Public API — re-exports all public symbols
   uuid.zig          # UUID type, parse/format, Version/Variant enums, Error
@@ -180,7 +180,7 @@ Interop uses `i128` nanoseconds (`std.time.nanoTimestamp()`), the natural Zig ti
 
 #### V1 — Time + MAC (RFC-9562 §5.1)
 
-```
+```text
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -203,18 +203,21 @@ Interop uses `i128` nanoseconds (`std.time.nanoTimestamp()`), the natural Zig ti
 #### V3 — MD5 Name Hash (RFC-9562 §5.3)
 
 Fill all 16 bytes with MD5(namespace_bytes || name_bytes), then:
+
 - `bytes[6]`: `(bytes[6] & 0x0F) | 0x30` (version 3)
 - `bytes[8]`: `(bytes[8] & 0x3F) | 0x80` (RFC variant)
 
 #### V4 — Random (RFC-9562 §5.4)
 
 Fill all 16 bytes with CSPRNG output, then:
+
 - `bytes[6]`: `(bytes[6] & 0x0F) | 0x40` (version 4)
 - `bytes[8]`: `(bytes[8] & 0x3F) | 0x80` (RFC variant)
 
 #### V5 — SHA-1 Name Hash (RFC-9562 §5.5)
 
-Fill bytes 0–15 with SHA-1(namespace_bytes || name_bytes)[0..16], then:
+Fill bytes 0–15 with SHA-1[namespace_bytes || name_bytes](0..16), then:
+
 - `bytes[6]`: `(bytes[6] & 0x0F) | 0x50` (version 5)
 - `bytes[8]`: `(bytes[8] & 0x3F) | 0x80` (RFC variant)
 
@@ -222,7 +225,7 @@ Fill bytes 0–15 with SHA-1(namespace_bytes || name_bytes)[0..16], then:
 
 V6 reorders V1's timestamp fields for lexicographic sortability (most-significant bits first):
 
-```
+```text
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -245,7 +248,7 @@ positions back into the V1 field order before constructing a `Timestamp`.
 
 #### V7 — Unix Millisecond Timestamp (RFC-9562 §5.7)
 
-```
+```text
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -472,7 +475,7 @@ pub const NullUUID = struct {
 
 ## Data Flow
 
-```
+```text
 Application code
     │
     ├─ newV4() / newV7() / ...          ← top-level convenience functions (versions.zig)
@@ -596,7 +599,7 @@ shellcheck `v0.11.0.1`, markdownlint `v0.47.0`, language-formatters `v2.16.0`.
 
 ### Implementation Order (Step 0)
 
-```
+```bash
 make pre-commit-install
 ```
 
