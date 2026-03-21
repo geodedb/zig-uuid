@@ -33,6 +33,8 @@ pub const version = "0.1.0";
 // Re-export submodules here as the library grows:
 // pub const submodule = @import("submodule.zig");
 pub const versions = @import("versions.zig");
+pub const NullUUID = @import("null_uuid.zig").NullUUID;
+pub const UUID = @import("uuid.zig").UUID;
 
 // ============================================================================
 // Public Types

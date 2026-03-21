@@ -2,6 +2,7 @@
 // Copyright (c) 2024-2025 CodePros
 
 const std = @import("std");
+const json = @import("json");
 
 pub const Error = error{
     InvalidFormat,
@@ -159,6 +160,18 @@ pub const UUID = struct {
         var buf: [36]u8 = undefined;
         try writer.writeAll(self.toString(&buf));
     }
+
+    pub fn jsonMarshal(self: UUID, allocator: std.mem.Allocator) !json.Value {
+        var buf: [36]u8 = undefined;
+        return .{ .str = try allocator.dupe(u8, self.toString(&buf)) };
+    }
+
+    /// allocator parameter exists for interface conformance; UUID.fromString is zero-alloc.
+    pub fn jsonUnmarshal(allocator: std.mem.Allocator, v: json.Value) !UUID {
+        _ = allocator;
+        if (v != .str) return Error.InvalidFormat;
+        return fromString(v.str);
+    }
 };
 
 fn parseCanonical(s: []const u8) Error!UUID {
@@ -306,4 +319,13 @@ test "format via std.fmt" {
     const s = try std.fmt.allocPrint(std.testing.allocator, "{f}", .{u});
     defer std.testing.allocator.free(s);
     try std.testing.expectEqualStrings("00000000-0000-0000-0000-000000000000", s);
+}
+
+test "UUID.jsonMarshal round-trip" {
+    const alloc = std.testing.allocator;
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const v = try u.jsonMarshal(alloc);
+    defer alloc.free(v.str);
+    const parsed = try UUID.jsonUnmarshal(alloc, v);
+    try std.testing.expect(u.eql(parsed));
 }
