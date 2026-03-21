@@ -34,6 +34,7 @@ pub const Generator = struct {
     // V1/V6 state
     clock_seq: u14 = 0,
     clock_seq_initialized: bool = false,
+    last_v1_ts: u60 = 0,
 
     pub fn init() Generator {
         return .{};
@@ -122,6 +123,124 @@ pub const Generator = struct {
         u.setVariant(.rfc9562);
         return u;
     }
+
+    fn initClockSeq(self: *Generator) void {
+        if (self.clock_seq_initialized) return;
+        var buf: [2]u8 = undefined;
+        self.rand(&buf) catch {
+            buf = .{ 0x12, 0x34 }; // fallback
+        };
+        self.clock_seq = @truncate(std.mem.readInt(u16, &buf, .little) & 0x3FFF);
+        self.clock_seq_initialized = true;
+    }
+
+    fn getNode(self: *Generator) Error![6]u8 {
+        if (self.hwaddr_fn()) |mac| return mac else |_| {
+            // Random node ID with multicast bit set (RFC-9562 §6.10)
+            var node: [6]u8 = undefined;
+            self.rand(&node) catch return Error.RandomError;
+            node[0] |= 0x01; // set multicast bit
+            return node;
+        }
+    }
+
+    pub fn newV1(self: *Generator) Error!UUID {
+        const ts = Timestamp.now();
+        return self.newV1AtTime(ts);
+    }
+
+    pub fn newV1AtTime(self: *Generator, ts: Timestamp) Error!UUID {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.initClockSeq();
+        // Increment clock_seq on clock regression (RFC-9562 §6.1)
+        if (ts.value < self.last_v1_ts) {
+            self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
+        }
+        self.last_v1_ts = ts.value;
+        const node = try self.getNode();
+        var u: UUID = undefined;
+        const t = ts.value;
+        // time_low: bits 0-31
+        std.mem.writeInt(u32, u.bytes[0..4], @truncate(t), .big);
+        // time_mid: bits 32-47
+        std.mem.writeInt(u16, u.bytes[4..6], @truncate(t >> 32), .big);
+        // time_high: bits 48-59 (version nibble set below)
+        std.mem.writeInt(u16, u.bytes[6..8], @truncate(t >> 48), .big);
+        // clock_seq: 14 bits in bytes 8-9 (variant set below)
+        std.mem.writeInt(u16, u.bytes[8..10], self.clock_seq, .big);
+        @memcpy(u.bytes[10..16], &node);
+        u.setVersion(.v1);
+        u.setVariant(.rfc9562);
+        return u;
+    }
+
+    pub fn newV6(self: *Generator) Error!UUID {
+        const ts = Timestamp.now();
+        return self.newV6AtTime(ts);
+    }
+
+    pub fn newV6AtTime(self: *Generator, ts: Timestamp) Error!UUID {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.initClockSeq();
+        const node = try self.getNode();
+        var u: UUID = undefined;
+        const t = ts.value;
+        // V6: reorder timestamp for lexicographic sort
+        // bytes 0-3: bits 28-59 (high 32 bits)
+        std.mem.writeInt(u32, u.bytes[0..4], @truncate(t >> 28), .big);
+        // bytes 4-5: bits 12-27
+        std.mem.writeInt(u16, u.bytes[4..6], @truncate((t >> 12) & 0xFFFF), .big);
+        // bytes 6-7: bits 0-11 (version nibble set below)
+        std.mem.writeInt(u16, u.bytes[6..8], @truncate(t & 0x0FFF), .big);
+        // bytes 8-9: clock_seq (variant set below)
+        std.mem.writeInt(u16, u.bytes[8..10], self.clock_seq, .big);
+        @memcpy(u.bytes[10..16], &node);
+        u.setVersion(.v6);
+        u.setVariant(.rfc9562);
+        return u;
+    }
+
+    pub fn newV3(self: *Generator, ns: UUID, name: []const u8) UUID {
+        _ = self;
+        var md5 = std.crypto.hash.Md5.init(.{});
+        md5.update(&ns.bytes);
+        md5.update(name);
+        var digest: [16]u8 = undefined;
+        md5.final(&digest);
+        var u = UUID{ .bytes = digest };
+        u.setVersion(.v3);
+        u.setVariant(.rfc9562);
+        return u;
+    }
+
+    pub fn newV5(self: *Generator, ns: UUID, name: []const u8) UUID {
+        _ = self;
+        var sha1 = std.crypto.hash.Sha1.init(.{});
+        sha1.update(&ns.bytes);
+        sha1.update(name);
+        var digest: [20]u8 = undefined;
+        sha1.final(&digest);
+        var u = UUID{ .bytes = digest[0..16].* };
+        u.setVersion(.v5);
+        u.setVariant(.rfc9562);
+        return u;
+    }
+
+    pub fn newV8(self: *Generator, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
+        _ = self;
+        var u: UUID = undefined;
+        // custom_a: bits 0-47 → bytes 0-5
+        @memcpy(u.bytes[0..6], &a);
+        // custom_b: lower 12 bits used → bytes 6-7 (version nibble will overlay high 4 bits)
+        @memcpy(u.bytes[6..8], &b);
+        // custom_c: lower 62 bits used → bytes 8-15 (variant bits will overlay high 2 bits)
+        @memcpy(u.bytes[8..16], &c);
+        u.setVersion(.v8);
+        u.setVariant(.rfc9562);
+        return u;
+    }
 };
 
 pub var default_generator: Generator = Generator.init();
@@ -182,4 +301,111 @@ test "Generator injectable rand" {
     // bytes should be zero except version/variant bits
     try std.testing.expectEqual(Version.v4, u.version());
     try std.testing.expectEqual(Variant.rfc9562, u.variant());
+}
+
+test "Generator.newV1: version=1, variant=rfc9562" {
+    const mock_hwaddr = struct {
+        fn getHW() Error![6]u8 {
+            return .{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55 };
+        }
+    };
+    var gen = Generator.withHWAddr(mock_hwaddr.getHW);
+    const u = try gen.newV1();
+    try std.testing.expectEqual(Version.v1, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+    // Node bytes (10-15) should match our mock MAC
+    try std.testing.expectEqualSlices(u8, &.{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55 }, u.bytes[10..16]);
+}
+
+test "Generator.newV6: version=6, variant=rfc9562" {
+    const mock_hwaddr = struct {
+        fn getHW() Error![6]u8 {
+            return .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+        }
+    };
+    var gen = Generator.withHWAddr(mock_hwaddr.getHW);
+    const u = try gen.newV6();
+    try std.testing.expectEqual(Version.v6, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+}
+
+test "Generator.newV6AtTime: timestamp round-trips" {
+    const ts_mod = @import("timestamp.zig");
+    const mock_hwaddr = struct {
+        fn getHW() Error![6]u8 {
+            return .{ 0, 1, 2, 3, 4, 5 };
+        }
+    };
+    var gen = Generator{ .clock = defaultClock, .hwaddr_fn = mock_hwaddr.getHW };
+    const ts = Timestamp.now();
+    const u = try gen.newV6AtTime(ts);
+    const extracted = try ts_mod.timestampFromV6(u);
+    try std.testing.expectEqual(ts.value, extracted.value);
+}
+
+test "Generator.newV3: RFC Appendix B — DNS namespace + 'www.example.com'" {
+    // RFC-9562 Appendix B V3 vector:
+    // name=www.example.com, ns=DNS → 5df41881-3aed-3515-88a7-2f4a814cf09e
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const u = gen.newV3(ns_mod.namespace_dns, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "5df41881-3aed-3515-88a7-2f4a814cf09e",
+        u.toString(&buf),
+    );
+}
+
+test "Generator.newV5: RFC Appendix B — DNS namespace + 'www.example.com'" {
+    // V5 vector verified against RFC-9562 and Python's uuid.uuid5():
+    // name=www.example.com, ns=DNS → 2ed6657d-e927-568b-95e1-2665a8aea6a2
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const u = gen.newV5(ns_mod.namespace_dns, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "2ed6657d-e927-568b-95e1-2665a8aea6a2",
+        u.toString(&buf),
+    );
+}
+
+test "Generator.newV1: clock_seq increments on clock regression" {
+    // Supply a clock that moves backward between calls to trigger clock_seq increment
+    const State = struct {
+        var call: usize = 0;
+        fn clock() i128 {
+            call += 1;
+            // First call: future time; second call: past time (regression)
+            return if (call == 1) 2_000_000_000 * std.time.ns_per_s else 1_000_000_000 * std.time.ns_per_s;
+        }
+    };
+    const mock_hw = struct {
+        fn getHW() Error![6]u8 {
+            return .{ 0, 1, 2, 3, 4, 5 };
+        }
+    };
+    var gen = Generator{ .clock = State.clock, .hwaddr_fn = mock_hw.getHW };
+    // Initialize clock_seq by calling newV1 once at "future" time
+    const uuid1 = try gen.newV1();
+    const seq1 = std.mem.readInt(u16, uuid1.bytes[8..10], .big) & 0x3FFF;
+    // Reinitialize State.call so next call uses "past" time to simulate regression
+    State.call = 1; // next clock() call will return past time
+    // Force a clock regression by calling newV1AtTime with an earlier timestamp
+    const past_ts = Timestamp{ .value = @truncate(@as(u64, 0)) };
+    const uuid2 = try gen.newV1AtTime(past_ts);
+    const seq2 = std.mem.readInt(u16, uuid2.bytes[8..10], .big) & 0x3FFF;
+    // clock_seq must change (increment mod 2^14) on regression
+    try std.testing.expect(seq1 != seq2);
+}
+
+test "Generator.newV8: version=8, variant=rfc9562" {
+    var gen = Generator.init();
+    const a: [6]u8 = .{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
+    const b_data: [2]u8 = .{ 0x07, 0x08 };
+    const c_data: [8]u8 = .{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
+    const u = try gen.newV8(a, b_data, c_data);
+    try std.testing.expectEqual(Version.v8, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+    // custom_a: bytes 0-5 should match a
+    try std.testing.expectEqualSlices(u8, &a, u.bytes[0..6]);
 }
