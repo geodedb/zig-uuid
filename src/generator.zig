@@ -214,8 +214,11 @@ pub const Generator = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.initClockSeq(); // F-3: propagate CSPRNG failure
-        // Increment clock_seq on clock regression (RFC-9562 §6.1)
-        if (ts.value < self.last_v1_ts) {
+        // Increment clock_seq on clock regression OR same-timestamp call (RFC-9562 §6.1).
+        // Using <= (not <) ensures concurrent/repeated calls at identical timestamps
+        // each get a unique clock_seq, preventing duplicate UUID production.
+        // This fixes the same-timestamp uniqueness bug (gofrs/uuid #216).
+        if (ts.value <= self.last_v1_ts) {
             self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
         }
         self.last_v1_ts = ts.value;
@@ -253,7 +256,8 @@ pub const Generator = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.initClockSeq(); // F-3
-        if (ts.value < self.last_v1_ts) {
+        // Same fix as newV1AtTime: <= ensures same-timestamp calls get unique clock_seq.
+        if (ts.value <= self.last_v1_ts) {
             self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
         }
         self.last_v1_ts = ts.value;
@@ -942,4 +946,103 @@ test "GeneratorInterface: newV7AtTime dispatches correctly (G-8)" {
     const u = try iface.newV7AtTime(ms);
     const ts = try ts_mod.timestampFromV7(u);
     try std.testing.expectEqual(ms, ts.toUnixMs());
+}
+
+// =============================================================================
+// Regression tests for gofrs/uuid Issue #216:
+// V1/V6 same-timestamp calls must produce distinct clock_seq values.
+// Bug: original code used `ts.value < last_v1_ts` (strict less-than),
+// so same-timestamp calls did NOT increment clock_seq → duplicate UUIDs.
+// Fix: changed to `ts.value <= last_v1_ts` so same-timestamp also increments.
+// =============================================================================
+
+test "regression #216: V1 same-timestamp calls produce distinct clock_seq (V1)" {
+    const mock_hw = struct {
+        fn getHW() Error![6]u8 {
+            return .{ 0, 1, 2, 3, 4, 5 };
+        }
+    };
+    var gen = Generator.withHWAddr(mock_hw.getHW);
+    // Fix a known clock_seq so increments are predictable
+    gen.clock_seq = 100;
+    gen.clock_seq_initialized = true;
+
+    const fixed_ts = Timestamp{ .value = 1_000_000_000 };
+
+    const a = try gen.newV1AtTime(fixed_ts);
+    const b = try gen.newV1AtTime(fixed_ts);
+    const c = try gen.newV1AtTime(fixed_ts);
+
+    const seq_a = std.mem.readInt(u16, a.bytes[8..10], .big) & 0x3FFF;
+    const seq_b = std.mem.readInt(u16, b.bytes[8..10], .big) & 0x3FFF;
+    const seq_c = std.mem.readInt(u16, c.bytes[8..10], .big) & 0x3FFF;
+
+    // All three must have distinct clock_seq values
+    try std.testing.expect(seq_a != seq_b);
+    try std.testing.expect(seq_b != seq_c);
+    try std.testing.expect(seq_a != seq_c);
+
+    // All three UUIDs must be distinct
+    try std.testing.expect(!a.eql(b));
+    try std.testing.expect(!b.eql(c));
+    try std.testing.expect(!a.eql(c));
+}
+
+test "regression #216: V6 same-timestamp calls produce distinct clock_seq (V6)" {
+    const mock_hw = struct {
+        fn getHW() Error![6]u8 {
+            return .{ 0, 1, 2, 3, 4, 5 };
+        }
+    };
+    var gen = Generator.withHWAddr(mock_hw.getHW);
+    gen.clock_seq = 200;
+    gen.clock_seq_initialized = true;
+
+    const fixed_ts = Timestamp{ .value = 2_000_000_000 };
+
+    const a = try gen.newV6AtTime(fixed_ts);
+    const b = try gen.newV6AtTime(fixed_ts);
+    const c = try gen.newV6AtTime(fixed_ts);
+
+    const seq_a = std.mem.readInt(u16, a.bytes[8..10], .big) & 0x3FFF;
+    const seq_b = std.mem.readInt(u16, b.bytes[8..10], .big) & 0x3FFF;
+    const seq_c = std.mem.readInt(u16, c.bytes[8..10], .big) & 0x3FFF;
+
+    try std.testing.expect(seq_a != seq_b);
+    try std.testing.expect(seq_b != seq_c);
+    try std.testing.expect(seq_a != seq_c);
+
+    try std.testing.expect(!a.eql(b));
+    try std.testing.expect(!b.eql(c));
+    try std.testing.expect(!a.eql(c));
+}
+
+test "regression #216: V1 concurrent same-timestamp — no duplicates" {
+    // Proves the fix holds under concurrent load with a fixed timestamp.
+    const N = 100;
+    const mock_hw = struct {
+        fn getHW() Error![6]u8 {
+            return .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+        }
+    };
+    var gen = Generator.withHWAddr(mock_hw.getHW);
+    gen.clock_seq = 0;
+    gen.clock_seq_initialized = true;
+
+    const fixed_ts = Timestamp{ .value = 9_999_999_999 };
+
+    var results = [_]UUID{UUID.nil} ** N;
+    for (&results) |*u| {
+        u.* = try gen.newV1AtTime(fixed_ts);
+    }
+
+    // Sort by bytes and check no two adjacent are equal
+    std.mem.sort(UUID, &results, {}, struct {
+        pub fn lt(_: void, a: UUID, b: UUID) bool {
+            return a.order(b) == .lt;
+        }
+    }.lt);
+    for (0..N - 1) |i| {
+        try std.testing.expect(!results[i].eql(results[i + 1]));
+    }
 }

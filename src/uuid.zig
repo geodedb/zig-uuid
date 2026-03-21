@@ -71,6 +71,31 @@ pub const UUID = struct {
         return std.mem.eql(u8, &self.bytes, &nil.bytes);
     }
 
+    /// Returns true when this UUID has a known RFC-9562 version nibble (1–8)
+    /// and the RFC-9562 variant bits.  Useful for strict conformance checking
+    /// without mandating it at parse time (RFC-9562 §6.12 opacity guidance).
+    ///
+    /// The nil UUID and max UUID return false (version nibble 0 and 0xF are
+    /// not defined RFC-9562 versions).
+    ///
+    /// Implements the validation pattern requested in gofrs/uuid issue #198.
+    pub fn isValid(self: UUID) bool {
+        const is_known_version = switch (self.version()) {
+            .v1, .v3, .v4, .v5, .v6, .v7, .v8 => true,
+            _ => false,
+        };
+        return is_known_version and self.variant() == .rfc9562;
+    }
+
+    /// Strict RFC-9562 conformance check.  Returns error.InvalidVersion when
+    /// the UUID has an unknown version nibble or a non-rfc9562 variant.
+    ///
+    /// Callers that need to accept any well-formed UUID regardless of version
+    /// should use isNil()/version()/variant() directly instead.
+    pub fn validate(self: UUID) Error!void {
+        if (!self.isValid()) return Error.InvalidVersion;
+    }
+
     /// Alias for isNil(). Satisfies the bsoncodec.Zeroer-style interface
     /// pattern used in some serialization frameworks (G-9).
     pub fn isZero(self: UUID) bool {
@@ -525,4 +550,68 @@ test "isZero alias for isNil (G-9)" {
     try std.testing.expect(!UUID.max.isZero());
     const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
     try std.testing.expect(!u.isZero());
+}
+
+// =============================================================================
+// isValid / validate — gofrs/uuid issue #198
+// =============================================================================
+
+test "isValid: known RFC-9562 versions with rfc9562 variant return true" {
+    // V4 random UUID — version nibble 4, rfc9562 variant
+    const v4 = try UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+    try std.testing.expect(v4.isValid());
+
+    // V7 UUID — version nibble 7, rfc9562 variant
+    const v7 = try UUID.fromString("017f22e2-79b0-7cc3-98c4-dc0c0c07398f");
+    try std.testing.expect(v7.isValid());
+
+    // V1 namespace UUID
+    const v1 = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expect(v1.isValid());
+
+    // V3 MD5 UUID
+    const v3 = try UUID.fromString("5df41881-3aed-3515-88a7-2f4a814cf09e");
+    try std.testing.expect(v3.isValid());
+
+    // V5 SHA-1 UUID
+    const v5 = try UUID.fromString("2ed6657d-e927-568b-95e1-2665a8aea6a2");
+    try std.testing.expect(v5.isValid());
+}
+
+test "isValid: nil UUID returns false (version nibble = 0)" {
+    try std.testing.expect(!UUID.nil.isValid());
+}
+
+test "isValid: max UUID returns false (version nibble = 0xF)" {
+    try std.testing.expect(!UUID.max.isValid());
+}
+
+test "isValid: unknown version nibble returns false" {
+    var u = UUID{ .bytes = [_]u8{0} ** 16 };
+    u.setVariant(.rfc9562);
+    u.bytes[6] = 0x20; // version nibble = 2 (DCE Security, not in our Version enum)
+    try std.testing.expect(!u.isValid());
+}
+
+test "isValid: wrong variant returns false" {
+    var u = UUID{ .bytes = [_]u8{0} ** 16 };
+    u.setVersion(.v4);
+    u.setVariant(.microsoft); // wrong variant
+    try std.testing.expect(!u.isValid());
+}
+
+test "validate: valid UUID returns void" {
+    const v4 = try UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+    try v4.validate();
+}
+
+test "validate: nil UUID returns InvalidVersion" {
+    try std.testing.expectError(Error.InvalidVersion, UUID.nil.validate());
+}
+
+test "validate: unknown version nibble returns InvalidVersion" {
+    var u = UUID{ .bytes = [_]u8{0} ** 16 };
+    u.setVariant(.rfc9562);
+    u.bytes[6] = 0x90; // version nibble = 9 (future, unknown)
+    try std.testing.expectError(Error.InvalidVersion, u.validate());
 }
