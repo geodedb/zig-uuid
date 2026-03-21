@@ -46,6 +46,10 @@ pub fn getHWAddr() Error![6]u8 {
     );
     if (ifc_ret != 0) return Error.NoHWAddressFound;
 
+    // SEC-3 / CWE-190: ifc_len is a signed c_int; a negative value (kernel
+    // bug or pathological response) would cause @intCast to panic in safe
+    // builds and produce a very large count in ReleaseFast.  Guard first.
+    if (ifc.ifc_len < 0) return Error.NoHWAddressFound;
     const count: usize = @intCast(@divTrunc(ifc.ifc_len, @sizeOf(ifreq)));
 
     for (ifreqs[0..count]) |*ifr| {

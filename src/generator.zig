@@ -287,6 +287,21 @@ pub const Generator = struct {
         return u;
     }
 
+    /// Generate a Version 3 (MD5 name-based) UUID (RFC-9562 §5.3).
+    ///
+    /// **SECURITY WARNING (SEC-8 / CWE-327):** MD5 is a cryptographically
+    /// broken hash algorithm.  V3 UUIDs are deterministic — the same
+    /// namespace+name pair always produces the same UUID — and MD5 collisions
+    /// are computationally trivial to engineer.
+    ///
+    /// **Do NOT** use V3 UUIDs where collision resistance is required (e.g., as
+    /// content-addressable identifiers, surrogate auth tokens, or de-duplication
+    /// keys over attacker-controlled input).  Use V5 (SHA-1) for slightly
+    /// stronger hashing, or V8 with a modern hash (SHA-256/BLAKE3) for
+    /// collision-resistant name-based UUIDs.
+    ///
+    /// V3 exists for backward compatibility with systems that already use it.
+    /// Prefer V5 for new deployments.  See RFC-9562 §6.4.
     pub fn newV3(self: *Generator, ns: UUID, name: []const u8) UUID {
         _ = self;
         var md5 = std.crypto.hash.Md5.init(.{});
@@ -300,6 +315,19 @@ pub const Generator = struct {
         return u;
     }
 
+    /// Generate a Version 5 (SHA-1 name-based) UUID (RFC-9562 §5.3).
+    ///
+    /// **SECURITY WARNING (SEC-8 / CWE-327):** SHA-1 is cryptographically
+    /// weakened — chosen-prefix collisions have been demonstrated (SHAttered,
+    /// 2017).  V5 UUIDs are deterministic: same namespace+name always yields the
+    /// same UUID.
+    ///
+    /// **Do NOT** use V5 UUIDs where strong collision resistance is required.
+    /// For new systems that need name-based UUIDs without the SHA-1 limitation,
+    /// consider V8 with SHA-256 or another modern hash.
+    ///
+    /// V5 is substantially safer than V3 (MD5) and is the recommended
+    /// name-based UUID version for interoperability.  See RFC-9562 §6.5.
     pub fn newV5(self: *Generator, ns: UUID, name: []const u8) UUID {
         _ = self;
         var sha1 = std.crypto.hash.Sha1.init(.{});
@@ -331,29 +359,50 @@ pub const Generator = struct {
     // Persistent state (F-9, RFC §6.3 SHOULD)
     // -------------------------------------------------------------------------
 
-    /// Binary state file format (22 bytes):
-    /// [0..4]  magic "UUID"
-    /// [4]     format version = 1
-    /// [5]     flags: bit0=clock_seq_initialized, bit1=has_node_cache
-    /// [6..8]  clock_seq as u16 little-endian
-    /// [8..16] last_v1_ts as u64 little-endian
-    /// [16..22] node_cache (6 bytes; only meaningful when flags bit1 set)
-    pub const state_magic: [4]u8 = "UUID".*;
-    pub const state_format_version: u8 = 1;
-    pub const state_size: usize = 22;
-
-    /// Save V1/V6 generator state to stable storage (F-9).
+    /// Binary state file format.
     ///
-    /// Writes a 22-byte binary blob so clock_seq and last timestamp survive a
-    /// process restart.  If the state file already exists it is overwritten.
-    /// Errors from file operations are returned to the caller.
+    /// **Version 1 (22 bytes, legacy — read-only support):**
+    /// [0..4]   magic "UUID"
+    /// [4]      format version = 1
+    /// [5]      flags: bit0=clock_seq_initialized, bit1=has_node_cache
+    /// [6..8]   clock_seq as u16 LE
+    /// [8..16]  last_v1_ts as u64 LE
+    /// [16..22] node_cache [6]u8
+    ///
+    /// **Version 2 (32 bytes, current):**
+    /// [0..4]   magic "UUID"
+    /// [4]      format version = 2
+    /// [5]      flags: bit0=clock_seq_initialized, bit1=has_node_cache
+    /// [6..8]   clock_seq as u16 LE
+    /// [8..16]  last_v1_ts as u64 LE
+    /// [16..22] node_cache [6]u8
+    /// [22..30] last_ms as i64 LE  (SEC-10: V7 last-used timestamp)
+    /// [30..32] mono_seq as u16 LE (SEC-10: V7 counter; loaded as 0x0FFF to force tick)
+    ///
+    /// saveState() always writes version 2.  loadState() accepts both versions.
+    pub const state_magic: [4]u8 = "UUID".*;
+    pub const state_format_version_v1: u8 = 1;
+    pub const state_format_version: u8 = 2; // current write version
+    pub const state_size_v1: usize = 22;
+    pub const state_size: usize = 32;
+
+    /// Save generator state to stable storage (F-9, SEC-1, SEC-9, SEC-10).
+    ///
+    /// Persists V1/V6 state (clock_seq, last_v1_ts, node_cache) AND V7 state
+    /// (last_ms, mono_seq) so that all UUID versions remain monotone and
+    /// collision-free across process restarts.
+    ///
+    /// **SEC-1:** File is created with mode 0o600 (owner read/write only).
+    /// **SEC-9:** Uses an atomic write-then-rename to prevent torn-write state.
+    /// **SEC-10:** Persists V7 state; on load mono_seq is set to 0x0FFF so
+    ///             the first post-restart V7 call forces a new clock tick.
     pub fn saveState(self: *Generator, path: []const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         var buf: [state_size]u8 = undefined;
         @memcpy(buf[0..4], &state_magic);
-        buf[4] = state_format_version;
+        buf[4] = state_format_version; // = 2
 
         var flags: u8 = 0;
         if (self.clock_seq_initialized) flags |= 0x01;
@@ -367,27 +416,45 @@ pub const Generator = struct {
         } else {
             @memset(buf[16..22], 0);
         }
+        // SEC-10: persist V7 state.
+        std.mem.writeInt(i64, buf[22..30], self.last_ms, .little);
+        std.mem.writeInt(u16, buf[30..32], @as(u16, self.mono_seq), .little);
 
-        const f = try std.fs.createFileAbsolute(path, .{});
-        defer f.close();
-        try f.writeAll(&buf);
+        // SEC-9: atomic write — write to <path>.tmp then rename so that a
+        // crash or signal between write and close never leaves a torn file.
+        // SEC-1: mode 0o600 prevents other local users reading the state,
+        // which may contain the node ID (hardware MAC when hwaddr_fn is set).
+        var tmp_path_buf: [4100]u8 = undefined;
+        const tmp_path = try std.fmt.bufPrint(&tmp_path_buf, "{s}.tmp", .{path});
+        {
+            const f = try std.fs.createFileAbsolute(tmp_path, .{ .mode = 0o600 });
+            errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
+            defer f.close();
+            try f.writeAll(&buf);
+        }
+        try std.fs.renameAbsolute(tmp_path, path);
     }
 
-    /// Load V1/V6 generator state from stable storage (F-9).
+    /// Load generator state from stable storage (F-9, SEC-10).
     ///
-    /// Restores clock_seq, last_v1_ts, and node_cache from a file previously
-    /// written by saveState().  Returns error.InvalidFormat if the file is
-    /// corrupted or written by an incompatible version.
+    /// Accepts both state format version 1 (22 bytes, V1/V6 state only) and
+    /// version 2 (32 bytes, V1/V6 + V7 state).  Returns error.InvalidFormat
+    /// for corrupted or version-mismatched files.
+    ///
+    /// When loading V7 state (version 2), mono_seq is set to 0x0FFF so that
+    /// the first post-restart V7 call forces a fresh clock tick rather than
+    /// risking a collision with the pre-restart sequence.
     pub fn loadState(self: *Generator, path: []const u8) !void {
         const f = try std.fs.openFileAbsolute(path, .{});
         defer f.close();
 
         var buf: [state_size]u8 = undefined;
         const n = try f.readAll(&buf);
-        if (n != state_size) return Error.InvalidFormat;
 
+        // Accept both v1 (22 bytes) and v2 (32 bytes).
+        if (n != state_size_v1 and n != state_size) return Error.InvalidFormat;
         if (!std.mem.eql(u8, buf[0..4], &state_magic)) return Error.InvalidFormat;
-        if (buf[4] != state_format_version) return Error.InvalidFormat;
+        if (buf[4] != state_format_version_v1 and buf[4] != state_format_version) return Error.InvalidFormat;
 
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -401,9 +468,33 @@ pub const Generator = struct {
         } else {
             self.node_cache = null;
         }
+
+        // SEC-10: restore V7 state only from version-2 files.
+        if (buf[4] == state_format_version and n == state_size) {
+            self.last_ms = std.mem.readInt(i64, buf[22..30], .little);
+            // Force mono_seq to max so the next V7 call spins to a new tick,
+            // preventing any collision with pre-restart UUIDs.
+            self.mono_seq = 0x0FFF;
+        }
     }
 };
 
+/// Package-level default generator used by the module-level convenience
+/// functions (newV4, newV7, …) in root.zig.
+///
+/// **SEC-11 / CWE-362 — Shared mutable state:**
+/// This is a single Generator instance shared across all callers that use the
+/// convenience functions.  The Generator mutex protects its own internal
+/// fields, so concurrent generation is safe.  However, callers that also
+/// mutate the generator (clearNodeCache(), loadState(), etc.) on this shared
+/// instance may interact unexpectedly with other callers.
+///
+/// **When to create your own generator:**
+/// - You need a different node ID (e.g., per-tenant V1/V6 UUIDs).
+/// - You need persistent state isolation (different saveState paths).
+/// - You need a different random or clock source (testing).
+///
+/// Use `Generator.init()` to create an independent, isolated instance.
 pub var default_generator: Generator = Generator.init();
 
 // =============================================================================
@@ -869,13 +960,12 @@ test "RFC Appendix A.6 — V7 test vector (F-6)" {
 
 // --- F-9: saveState / loadState ---
 
-test "Generator.saveState and loadState round-trip (F-9)" {
+test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
     const alloc = std.testing.allocator;
-    const tmp_dir = std.testing.tmpDir(.{});
-    _ = tmp_dir;
+    _ = alloc;
 
-    // Use a temp file path
     const path = "/tmp/uuid_generator_state_test.bin";
+    defer std.fs.deleteFileAbsolute(path) catch {};
 
     const mock_hw = struct {
         fn getHW() Error![6]u8 {
@@ -887,19 +977,45 @@ test "Generator.saveState and loadState round-trip (F-9)" {
     gen.clock_seq_initialized = true;
     gen.last_v1_ts = 0xDEADBEEF;
     gen.node_cache = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+    // SEC-10: set V7 state that should be persisted.
+    gen.last_ms = 1_700_000_000_123;
+    gen.mono_seq = 0x0ABC;
 
     try gen.saveState(path);
 
     var gen2 = Generator.init();
     try gen2.loadState(path);
 
+    // V1/V6 state preserved.
     try std.testing.expectEqual(gen.clock_seq, gen2.clock_seq);
     try std.testing.expectEqual(gen.clock_seq_initialized, gen2.clock_seq_initialized);
     try std.testing.expectEqual(gen.last_v1_ts, gen2.last_v1_ts);
     try std.testing.expectEqualSlices(u8, &(gen.node_cache.?), &(gen2.node_cache.?));
 
-    std.fs.deleteFileAbsolute(path) catch {};
-    _ = alloc;
+    // SEC-10: V7 last_ms preserved; mono_seq loaded as 0x0FFF (max) so that
+    // the first post-restart V7 call forces a fresh clock tick.
+    try std.testing.expectEqual(gen.last_ms, gen2.last_ms);
+    try std.testing.expectEqual(@as(u12, 0x0FFF), gen2.mono_seq);
+}
+
+test "Generator.saveState is atomic: no .tmp file lingers on success (SEC-9)" {
+    const path = "/tmp/uuid_state_atomic_test.bin";
+    const tmp_path = "/tmp/uuid_state_atomic_test.bin.tmp";
+    defer std.fs.deleteFileAbsolute(path) catch {};
+
+    var gen = Generator.init();
+    gen.clock_seq = 0x0042;
+    gen.clock_seq_initialized = true;
+    try gen.saveState(path);
+
+    // After a successful save the .tmp file must not exist.
+    std.fs.accessAbsolute(tmp_path, .{}) catch |err| {
+        // Expected: FileNotFound (or equivalent) means the tmp was cleaned up.
+        try std.testing.expect(err == error.FileNotFound);
+        return;
+    };
+    // If we reach here the tmp file still exists — that is a bug.
+    return error.TmpFileLingers;
 }
 
 test "Generator.loadState: corrupt magic returns error (F-9)" {
@@ -914,6 +1030,31 @@ test "Generator.loadState: corrupt magic returns error (F-9)" {
     var gen = Generator.init();
     try std.testing.expectError(Error.InvalidFormat, gen.loadState(path));
     std.fs.deleteFileAbsolute(path) catch {};
+}
+
+test "Generator.loadState: v1 format (22 bytes) accepted for backward compat (SEC-10)" {
+    // Manually write a version-1 state blob and confirm it loads cleanly.
+    const path = "/tmp/uuid_state_v1_compat_test.bin";
+    defer std.fs.deleteFileAbsolute(path) catch {};
+
+    var blob: [Generator.state_size_v1]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version_v1; // version 1
+    blob[5] = 0x01; // flags: clock_seq_initialized
+    std.mem.writeInt(u16, blob[6..8], 0x0ABC, .little);
+    std.mem.writeInt(u64, blob[8..16], 0xDEADBEEF_CAFEBABE, .little);
+    @memset(blob[16..22], 0); // no node cache
+
+    const f = try std.fs.createFileAbsolute(path, .{});
+    try f.writeAll(&blob);
+    f.close();
+
+    var gen = Generator.init();
+    try gen.loadState(path);
+    try std.testing.expectEqual(@as(u14, 0x0ABC), gen.clock_seq);
+    try std.testing.expect(gen.clock_seq_initialized);
+    // V7 state defaults to zero (no data in v1 blob).
+    try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
 }
 
 // --- G-8: GeneratorInterface ---

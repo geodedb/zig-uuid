@@ -123,6 +123,20 @@ pub const UUID = struct {
         return std.mem.order(u8, &self.bytes, &other.bytes);
     }
 
+    /// A zero-size HashMap context for UUID keys using Wyhash with a fixed
+    /// seed of zero.
+    ///
+    /// **SEC-6 / CWE-330 — HashDoS warning:**
+    /// The fixed seed means that two UUIDs which collide under this seed will
+    /// **always** collide, across every run and every process.  An adversary
+    /// who can control which UUIDs are inserted into a HashMap using this
+    /// context can engineer O(n²) worst-case behaviour.
+    ///
+    /// **Use `HashContext` only when UUID keys are fully trusted** (e.g.,
+    /// internally-generated V4 UUIDs, compile-time constants, or values from
+    /// a controlled internal datastore).  When keys arrive from untrusted
+    /// sources (parsed from user input, external APIs, log files, etc.) use
+    /// `SecureHashContext` instead.
     pub const HashContext = struct {
         pub fn hash(_: HashContext, key: UUID) u64 {
             var hasher = std.hash.Wyhash.init(0);
@@ -130,6 +144,43 @@ pub const UUID = struct {
             return hasher.final();
         }
         pub fn eql(_: HashContext, a: UUID, b: UUID) bool {
+            return a.eql(b);
+        }
+    };
+
+    /// A HashMap context for UUID keys using a randomly-seeded Wyhash instance,
+    /// providing HashDoS resistance when UUID keys may be attacker-controlled.
+    ///
+    /// **SEC-6:** Use this context instead of `HashContext` whenever UUIDs are
+    /// received from untrusted sources (user input, external APIs, network
+    /// messages) and inserted into a HashMap.
+    ///
+    /// Because `SecureHashContext` carries the random seed as instance state,
+    /// it is used with Zig's context-aware map APIs.  Example:
+    ///
+    /// ```zig
+    /// var ctx = UUID.SecureHashContext.init();
+    /// var map = std.HashMapUnmanaged(UUID, MyVal, UUID.SecureHashContext, 80){};
+    /// try map.putContext(allocator, key, value, ctx);
+    /// ```
+    ///
+    /// The seed is sampled from `std.crypto.random` at construction time; each
+    /// `SecureHashContext.init()` call produces a different seed.
+    pub const SecureHashContext = struct {
+        seed: u64,
+
+        /// Create a new SecureHashContext with a cryptographically random seed.
+        pub fn init() SecureHashContext {
+            return .{ .seed = std.crypto.random.int(u64) };
+        }
+
+        pub fn hash(self: SecureHashContext, key: UUID) u64 {
+            var hasher = std.hash.Wyhash.init(self.seed);
+            hasher.update(&key.bytes);
+            return hasher.final();
+        }
+
+        pub fn eql(_: SecureHashContext, a: UUID, b: UUID) bool {
             return a.eql(b);
         }
     };
@@ -371,6 +422,38 @@ test "UUID HashContext" {
     const h2 = ctx.hash(UUID.nil);
     try std.testing.expectEqual(h1, h2);
     try std.testing.expect(ctx.hash(UUID.max) != ctx.hash(UUID.nil));
+}
+
+// --- SEC-6: SecureHashContext ---
+
+test "SecureHashContext.init produces distinct seeds (SEC-6)" {
+    const ctx1 = UUID.SecureHashContext.init();
+    const ctx2 = UUID.SecureHashContext.init();
+    // Astronomically unlikely to collide; catches a broken RNG immediately.
+    try std.testing.expect(ctx1.seed != ctx2.seed);
+}
+
+test "SecureHashContext.hash is deterministic for a given seed (SEC-6)" {
+    const ctx = UUID.SecureHashContext{ .seed = 0xCAFEBABE_DEADBEEF };
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expectEqual(ctx.hash(u), ctx.hash(u));
+}
+
+test "SecureHashContext.hash differs from HashContext (fixed-seed=0) (SEC-6)" {
+    // With a non-zero seed the secure context produces a different digest
+    // than the fixed-seed HashContext, confirming the seed is applied.
+    const sctx = UUID.SecureHashContext{ .seed = 0xDEAD_BEEF };
+    const hctx = UUID.HashContext{};
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expect(sctx.hash(u) != hctx.hash(u));
+}
+
+test "SecureHashContext.eql delegates to UUID.eql (SEC-6)" {
+    const ctx = UUID.SecureHashContext.init();
+    const a = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const b = a;
+    try std.testing.expect(ctx.eql(a, b));
+    try std.testing.expect(!ctx.eql(a, UUID.nil));
 }
 
 test "fromString: canonical format" {

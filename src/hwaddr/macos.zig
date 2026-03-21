@@ -26,7 +26,18 @@ const c = struct {
         sdl_nlen: u8,
         sdl_alen: u8,
         sdl_slen: u8,
-        sdl_data: [12]u8,
+        // SEC-7 / CWE-131: the Apple SDK header declares sdl_data as [12]u8
+        // (the MINSOCKADDRLEN placeholder), but the kernel allocates enough
+        // space for the interface name (up to IFNAMSIZ=16 bytes) followed by
+        // the MAC address (sdl_alen=6 bytes).  With [12]u8 any interface whose
+        // name is longer than 6 characters is silently skipped by the bounds
+        // guard below, causing NoHWAddressFound even when a valid MAC exists.
+        //
+        // We declare sdl_data as [22]u8 (IFNAMSIZ=16 + max sdl_alen=6) which
+        // covers all valid names.  We are casting from kernel-allocated memory,
+        // so reading within sdl_len is always safe.  The sdl_len-based guard
+        // below is the primary safety check.
+        sdl_data: [22]u8,
     };
 
     pub const ifaddrs = extern struct {
@@ -57,8 +68,15 @@ pub fn getHWAddr() Error![6]u8 {
         const sdl: *c.sockaddr_dl = @ptrCast(@alignCast(addr));
         if (sdl.sdl_alen != 6) continue;
 
-        // MAC follows the interface name in sdl_data
+        // MAC follows the interface name in sdl_data.
+        // Primary bounds guard: use sdl_len (the kernel-authoritative total
+        // struct size) to confirm that the name + MAC bytes fit within the
+        // actual allocation.  The fixed-size header occupies 8 bytes, so the
+        // data region is sdl_len - 8 bytes long.
         const mac_offset: usize = sdl.sdl_nlen;
+        const header_size: usize = 8; // sdl_len+sdl_family+sdl_index+sdl_type+sdl_nlen+sdl_alen+sdl_slen
+        if (@as(usize, sdl.sdl_len) < header_size + mac_offset + 6) continue;
+        // Secondary guard against our declared array size (defensive):
         if (mac_offset + 6 > sdl.sdl_data.len) continue;
         const mac = sdl.sdl_data[mac_offset .. mac_offset + 6];
         if (std.mem.allEqual(u8, mac, 0)) continue;
