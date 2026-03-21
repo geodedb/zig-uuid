@@ -72,6 +72,7 @@ pub const Generator = struct {
     }
 
     pub fn newV7AtTime(self: *Generator, ts: i64) Error!UUID {
+        if (ts < 0) return Error.InvalidFormat;
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -184,6 +185,10 @@ pub const Generator = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         self.initClockSeq();
+        if (ts.value < self.last_v1_ts) {
+            self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
+        }
+        self.last_v1_ts = ts.value;
         const node = try self.getNode();
         var u: UUID = undefined;
         const t = ts.value;
@@ -370,32 +375,38 @@ test "Generator.newV5: RFC Appendix B — DNS namespace + 'www.example.com'" {
 }
 
 test "Generator.newV1: clock_seq increments on clock regression" {
-    // Supply a clock that moves backward between calls to trigger clock_seq increment
-    const State = struct {
-        var call: usize = 0;
-        fn clock() i128 {
-            call += 1;
-            // First call: future time; second call: past time (regression)
-            return if (call == 1) 2_000_000_000 * std.time.ns_per_s else 1_000_000_000 * std.time.ns_per_s;
-        }
-    };
     const mock_hw = struct {
         fn getHW() Error![6]u8 {
             return .{ 0, 1, 2, 3, 4, 5 };
         }
     };
-    var gen = Generator{ .clock = State.clock, .hwaddr_fn = mock_hw.getHW };
-    // Initialize clock_seq by calling newV1 once at "future" time
-    const uuid1 = try gen.newV1();
+    var gen = Generator{ .hwaddr_fn = mock_hw.getHW };
+    // Initialize clock_seq and set last_v1_ts to some timestamp
+    const ts_future = Timestamp{ .value = 1_000_000_000 };
+    const uuid1 = try gen.newV1AtTime(ts_future);
     const seq1 = std.mem.readInt(u16, uuid1.bytes[8..10], .big) & 0x3FFF;
-    // Reinitialize State.call so next call uses "past" time to simulate regression
-    State.call = 1; // next clock() call will return past time
-    // Force a clock regression by calling newV1AtTime with an earlier timestamp
-    const past_ts = Timestamp{ .value = @truncate(@as(u64, 0)) };
-    const uuid2 = try gen.newV1AtTime(past_ts);
+    // Regress the clock: earlier timestamp triggers clock_seq increment
+    const ts_past = Timestamp{ .value = 0 };
+    const uuid2 = try gen.newV1AtTime(ts_past);
     const seq2 = std.mem.readInt(u16, uuid2.bytes[8..10], .big) & 0x3FFF;
     // clock_seq must change (increment mod 2^14) on regression
     try std.testing.expect(seq1 != seq2);
+}
+
+test "Generator.newV6: sequential calls produce distinct UUIDs" {
+    const mock_hwaddr = struct {
+        fn getHW() Error![6]u8 {
+            return .{ 0, 1, 2, 3, 4, 5 };
+        }
+    };
+    var gen = Generator.withHWAddr(mock_hwaddr.getHW);
+    const ts1 = Timestamp{ .value = 1_000_000 };
+    const ts2 = Timestamp{ .value = 2_000_000 };
+    const a = try gen.newV6AtTime(ts1);
+    const b = try gen.newV6AtTime(ts2);
+    try std.testing.expect(!a.eql(b));
+    // V6 is k-sortable: later timestamp → lexicographically greater UUID
+    try std.testing.expectEqual(std.math.Order.lt, a.order(b));
 }
 
 test "Generator.newV8: version=8, variant=rfc9562" {
