@@ -49,6 +49,7 @@ pub const namespace_x500 = @import("namespace.zig").namespace_x500;
 
 // Generator
 pub const Generator = @import("generator.zig").Generator;
+pub const GeneratorInterface = @import("generator.zig").GeneratorInterface;
 pub const default_generator = @import("generator.zig").default_generator;
 
 // Package-level convenience functions

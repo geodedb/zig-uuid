@@ -33,14 +33,14 @@ pub fn main() !void {
     const v5 = uuid.newV5(uuid.namespace_dns, "www.example.com");
     try stdout.print("V5 (SHA1/DNS):          {s}\n", .{v5.toString(&buf)});
 
-    // V1: time + MAC
+    // V1: time + random node (MAC opt-in via withHWAddr)
     const v1 = uuid.newV1() catch |e| blk: {
         try stdout.print("V1: skipped ({s})\n", .{@errorName(e)});
         break :blk uuid.UUID.nil;
     };
-    if (!v1.isNil()) try stdout.print("V1 (time+MAC):          {s}\n", .{v1.toString(&buf)});
+    if (!v1.isNil()) try stdout.print("V1 (time+node):         {s}\n", .{v1.toString(&buf)});
 
-    // V6: k-sortable time + MAC
+    // V6: k-sortable time + random node
     const v6 = uuid.newV6() catch |e| blk: {
         try stdout.print("V6: skipped ({s})\n", .{@errorName(e)});
         break :blk uuid.UUID.nil;
@@ -60,9 +60,21 @@ pub fn main() !void {
         try stdout.print("  parse({s})\n         → {s}\n", .{ s, u.toString(&buf) });
     }
 
-    // Timestamp extraction
+    // Output format variants (G-2)
+    try stdout.print("\nOutput formats:\n", .{});
+    var buf36: [36]u8 = undefined;
+    var buf32: [32]u8 = undefined;
+    var buf45: [45]u8 = undefined;
+    try stdout.print("  lowercase+dashes:   {s}\n", .{v4.toString(&buf36)});
+    try stdout.print("  uppercase+dashes:   {s}\n", .{v4.toStringUpper(&buf36)});
+    try stdout.print("  lowercase hex:      {s}\n", .{v4.toHex(&buf32)});
+    try stdout.print("  uppercase hex:      {s}\n", .{v4.toHexUpper(&buf32)});
+    try stdout.print("  URN:                {s}\n", .{v4.toURN(&buf45)});
+
+    // Timestamp extraction (G-4: timestampFromV7 now returns Timestamp)
     const ts = try uuid.timestampFromV7(v7);
-    try stdout.print("\nV7 timestamp (Unix ms): {d}\n", .{ts});
+    try stdout.print("\nV7 timestamp (Unix ms): {d}\n", .{ts.toUnixMs()});
+    try stdout.print("V7 timestamp (Unix s):  {d}\n", .{ts.toUnixSec()});
 
     // NullUUID
     const nu_valid = uuid.NullUUID.from(v4);

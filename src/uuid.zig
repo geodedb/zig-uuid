@@ -15,8 +15,16 @@ pub const Error = error{
     InvalidVersion,
     V8FieldLength,
     RandomError,
+    /// Returned by Timestamp.now() when the system clock is before the Unix epoch.
+    InvalidTimestamp,
 };
 
+/// UUID version nibble (bits 76-79 of byte 6).
+///
+/// This is a non-exhaustive enum: unrecognised nibble values (e.g. `0` for
+/// the nil UUID, `2` for DCE Security, or `9`–`15` for future versions) are
+/// returned as unnamed enum members rather than causing a safety-checked panic.
+/// Callers that switch on Version must include an `else` branch.
 pub const Version = enum(u8) {
     v1 = 1,
     v3 = 3,
@@ -25,6 +33,7 @@ pub const Version = enum(u8) {
     v6 = 6,
     v7 = 7,
     v8 = 8,
+    _, // non-exhaustive: allows @enumFromInt on unknown nibbles without panic
 };
 
 pub const Variant = enum(u8) {
@@ -34,22 +43,18 @@ pub const Variant = enum(u8) {
     future,
 };
 
-test "Version enum values" {
-    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(Version.v1));
-    try std.testing.expectEqual(@as(u8, 7), @intFromEnum(Version.v7));
-}
-
-test "Variant enum" {
-    const v = Variant.rfc9562;
-    try std.testing.expect(v == .rfc9562);
-}
-
 pub const UUID = struct {
     bytes: [16]u8,
 
     pub const nil: UUID = .{ .bytes = [_]u8{0x00} ** 16 };
     pub const max: UUID = .{ .bytes = [_]u8{0xFF} ** 16 };
 
+    /// Return the version nibble as a Version enum value.
+    ///
+    /// Because Version is a non-exhaustive enum, this never panics — unknown
+    /// nibbles (nil UUID version=0, DCE Security version=2, future versions
+    /// 9–15) are returned as unnamed members. Use `switch (u.version()) { .v4
+    /// => ..., else => ... }` to handle unknown values safely.
     pub fn version(self: UUID) Version {
         return @enumFromInt(self.bytes[6] >> 4);
     }
@@ -64,6 +69,12 @@ pub const UUID = struct {
 
     pub fn isNil(self: UUID) bool {
         return std.mem.eql(u8, &self.bytes, &nil.bytes);
+    }
+
+    /// Alias for isNil(). Satisfies the bsoncodec.Zeroer-style interface
+    /// pattern used in some serialization frameworks (G-9).
+    pub fn isZero(self: UUID) bool {
+        return self.isNil();
     }
 
     pub fn setVersion(self: *UUID, v: Version) void {
@@ -105,6 +116,18 @@ pub const UUID = struct {
         return u;
     }
 
+    /// Parse any supported UUID format (canonical, braced, URN, 32-hex).
+    /// Returns nil UUID on parse error — useful for initializing package-level
+    /// variables from known-good literals (G-7).
+    pub fn fromStringOrNil(s: []const u8) UUID {
+        return UUID.fromString(s) catch UUID.nil;
+    }
+
+    /// Wrap a 16-byte slice — returns nil UUID on wrong length (G-7).
+    pub fn fromBytesOrNil(b: []const u8) UUID {
+        return UUID.fromBytes(b) catch UUID.nil;
+    }
+
     pub fn fromString(s: []const u8) Error!UUID {
         // Detect and strip URN prefix
         var rest = s;
@@ -127,33 +150,55 @@ pub const UUID = struct {
         };
     }
 
+    /// Return the raw 16 bytes as a value copy (G-1).
+    /// Equivalent to reading .bytes directly but more explicit at call sites.
+    pub fn toBytes(self: UUID) [16]u8 {
+        return self.bytes;
+    }
+
+    /// Canonical lowercase with dashes: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
     pub fn toString(self: UUID, buf: *[36]u8) []u8 {
-        const hex = "0123456789abcdef";
-        const groups = [_]struct { start: usize, len: usize }{
-            .{ .start = 0, .len = 4 },
-            .{ .start = 4, .len = 2 },
-            .{ .start = 6, .len = 2 },
-            .{ .start = 8, .len = 2 },
-            .{ .start = 10, .len = 6 },
-        };
-        var pos: usize = 0;
-        for (groups, 0..) |g, gi| {
-            if (gi > 0) {
-                buf[pos] = '-';
-                pos += 1;
-            }
-            for (self.bytes[g.start .. g.start + g.len]) |byte| {
-                buf[pos] = hex[byte >> 4];
-                buf[pos + 1] = hex[byte & 0x0F];
-                pos += 2;
-            }
-        }
-        return buf[0..36];
+        return toStringImpl(self, buf, "0123456789abcdef");
+    }
+
+    /// Canonical uppercase with dashes: `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` (G-2)
+    pub fn toStringUpper(self: UUID, buf: *[36]u8) []u8 {
+        return toStringImpl(self, buf, "0123456789ABCDEF");
+    }
+
+    /// Lowercase hex without dashes: `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (G-2)
+    pub fn toHex(self: UUID, buf: *[32]u8) []u8 {
+        return toHexImpl(self, buf, "0123456789abcdef");
+    }
+
+    /// Uppercase hex without dashes: `XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` (G-2)
+    pub fn toHexUpper(self: UUID, buf: *[32]u8) []u8 {
+        return toHexImpl(self, buf, "0123456789ABCDEF");
+    }
+
+    /// URN format: `urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (F-5 / G-3).
+    /// buf must be exactly 45 bytes.
+    pub fn toURN(self: UUID, buf: *[45]u8) []u8 {
+        @memcpy(buf[0..9], "urn:uuid:");
+        _ = self.toString(buf[9..45]);
+        return buf[0..45];
+    }
+
+    /// Allocating URN format (F-5 / G-3).
+    pub fn toURNAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
+        var buf: [45]u8 = undefined;
+        return alloc.dupe(u8, self.toURN(&buf));
     }
 
     pub fn toStringAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
         var buf: [36]u8 = undefined;
         return alloc.dupe(u8, self.toString(&buf));
+    }
+
+    /// Allocating uppercase string (G-2).
+    pub fn toStringUpperAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
+        var buf: [36]u8 = undefined;
+        return alloc.dupe(u8, self.toStringUpper(&buf));
     }
 
     pub fn format(self: UUID, writer: anytype) !void {
@@ -173,6 +218,39 @@ pub const UUID = struct {
         return fromString(v.str);
     }
 };
+
+// --- private helpers ---
+
+fn toStringImpl(self: UUID, buf: *[36]u8, hex: *const [16]u8) []u8 {
+    const groups = [_]struct { start: usize, len: usize }{
+        .{ .start = 0, .len = 4 },
+        .{ .start = 4, .len = 2 },
+        .{ .start = 6, .len = 2 },
+        .{ .start = 8, .len = 2 },
+        .{ .start = 10, .len = 6 },
+    };
+    var pos: usize = 0;
+    for (groups, 0..) |g, gi| {
+        if (gi > 0) {
+            buf[pos] = '-';
+            pos += 1;
+        }
+        for (self.bytes[g.start .. g.start + g.len]) |byte| {
+            buf[pos] = hex[byte >> 4];
+            buf[pos + 1] = hex[byte & 0x0F];
+            pos += 2;
+        }
+    }
+    return buf[0..36];
+}
+
+fn toHexImpl(self: UUID, buf: *[32]u8, hex: *const [16]u8) []u8 {
+    for (self.bytes, 0..) |byte, i| {
+        buf[i * 2] = hex[byte >> 4];
+        buf[i * 2 + 1] = hex[byte & 0x0F];
+    }
+    return buf[0..32];
+}
 
 fn parseCanonical(s: []const u8) Error!UUID {
     // Validate dash positions: 8-4-4-4-12
@@ -204,6 +282,20 @@ fn parseHash(s: []const u8) Error!UUID {
     return u;
 }
 
+// =============================================================================
+// Tests
+// =============================================================================
+
+test "Version enum values" {
+    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(Version.v1));
+    try std.testing.expectEqual(@as(u8, 7), @intFromEnum(Version.v7));
+}
+
+test "Variant enum" {
+    const v = Variant.rfc9562;
+    try std.testing.expect(v == .rfc9562);
+}
+
 test "UUID nil sentinel" {
     const u = UUID.nil;
     try std.testing.expect(u.isNil());
@@ -216,6 +308,22 @@ test "UUID setVersion and version()" {
     try std.testing.expectEqual(Version.v4, u.version());
     u.setVersion(.v7);
     try std.testing.expectEqual(Version.v7, u.version());
+}
+
+test "UUID.version() is safe for nil UUID (nibble=0, non-exhaustive)" {
+    // F-2 / G-10: version() must NOT panic on unrecognised nibbles.
+    // nil UUID has version nibble = 0, which is not a named Version member.
+    const u = UUID.nil;
+    const v = u.version(); // must not panic
+    try std.testing.expect(v != .v1); // just confirming it returns something
+    try std.testing.expectEqual(@as(u8, 0), @intFromEnum(v));
+}
+
+test "UUID.version() is safe for future nibble (nibble=15)" {
+    var u = UUID{ .bytes = [_]u8{0} ** 16 };
+    u.bytes[6] = 0xF0; // version nibble = 15
+    const v = u.version(); // must not panic
+    try std.testing.expectEqual(@as(u8, 15), @intFromEnum(v));
 }
 
 test "UUID setVariant and variant()" {
@@ -328,4 +436,93 @@ test "UUID.jsonMarshal round-trip" {
     defer alloc.free(v.str);
     const parsed = try UUID.jsonUnmarshal(alloc, v);
     try std.testing.expect(u.eql(parsed));
+}
+
+// --- New tests for G-1, G-2, F-5/G-3, G-7, G-9 ---
+
+test "toBytes returns 16-byte copy (G-1)" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const b = u.toBytes();
+    try std.testing.expectEqualSlices(u8, &u.bytes, &b);
+}
+
+test "toStringUpper produces uppercase with dashes (G-2)" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var buf: [36]u8 = undefined;
+    const s = u.toStringUpper(&buf);
+    try std.testing.expectEqualStrings("6BA7B810-9DAD-11D1-80B4-00C04FD430C8", s);
+}
+
+test "toHex produces lowercase without dashes (G-2)" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var buf: [32]u8 = undefined;
+    const s = u.toHex(&buf);
+    try std.testing.expectEqualStrings("6ba7b8109dad11d180b400c04fd430c8", s);
+}
+
+test "toHexUpper produces uppercase without dashes (G-2)" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var buf: [32]u8 = undefined;
+    const s = u.toHexUpper(&buf);
+    try std.testing.expectEqualStrings("6BA7B8109DAD11D180B400C04FD430C8", s);
+}
+
+test "toStringUpperAlloc (G-2)" {
+    const alloc = std.testing.allocator;
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const s = try u.toStringUpperAlloc(alloc);
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("6BA7B810-9DAD-11D1-80B4-00C04FD430C8", s);
+}
+
+test "toURN produces urn:uuid: prefix (F-5 / G-3)" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var buf: [45]u8 = undefined;
+    const s = u.toURN(&buf);
+    try std.testing.expectEqualStrings("urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8", s);
+}
+
+test "toURNAlloc (F-5 / G-3)" {
+    const alloc = std.testing.allocator;
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const s = try u.toURNAlloc(alloc);
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8", s);
+}
+
+test "toURN round-trip with fromString (F-5 / G-3)" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var buf: [45]u8 = undefined;
+    const urn = u.toURN(&buf);
+    const parsed = try UUID.fromString(urn);
+    try std.testing.expect(u.eql(parsed));
+}
+
+test "fromStringOrNil: valid input returns UUID (G-7)" {
+    const u = UUID.fromStringOrNil("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
+}
+
+test "fromStringOrNil: invalid input returns nil (G-7)" {
+    const u = UUID.fromStringOrNil("not-a-uuid");
+    try std.testing.expect(u.isNil());
+}
+
+test "fromBytesOrNil: valid 16 bytes (G-7)" {
+    const b = [_]u8{0x01} ** 16;
+    const u = UUID.fromBytesOrNil(&b);
+    try std.testing.expectEqualSlices(u8, &b, &u.bytes);
+}
+
+test "fromBytesOrNil: wrong length returns nil (G-7)" {
+    const b = [_]u8{0x01} ** 8;
+    const u = UUID.fromBytesOrNil(&b);
+    try std.testing.expect(u.isNil());
+}
+
+test "isZero alias for isNil (G-9)" {
+    try std.testing.expect(UUID.nil.isZero());
+    try std.testing.expect(!UUID.max.isZero());
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expect(!u.isZero());
 }

@@ -3,20 +3,27 @@
 
 const std = @import("std");
 const UUID = @import("uuid.zig").UUID;
+const Version = @import("uuid.zig").Version;
 const Error = @import("uuid.zig").Error;
 
 /// 100-nanosecond intervals since 1582-10-15 (Gregorian epoch).
-/// Used exclusively by V1 and V6. V7 uses bare i64 Unix milliseconds.
+/// Used by V1 and V6 natively. V7 Unix-ms timestamps are converted to/from
+/// this type via fromUnixMs() / toUnixMs() (G-4, G-5).
 pub const Timestamp = struct {
     value: u60,
 
     /// Offset between Gregorian epoch (1582-10-15) and Unix epoch (1970-01-01)
-    /// in 100-ns intervals.
+    /// in 100-ns intervals: 122,192,928 seconds × 10,000,000 intervals/second.
     pub const gregorian_offset: u64 = 122_192_928_000_000_000;
 
-    /// Current time as a Gregorian Timestamp.
-    pub fn now() Timestamp {
+    /// Current time as a Gregorian Timestamp (F-7).
+    ///
+    /// Returns Error.InvalidTimestamp if the system clock reports a time
+    /// before the Unix epoch (1970-01-01). Pre-1970 clocks are rare but would
+    /// cause an unchecked @intCast panic without this guard.
+    pub fn now() Error!Timestamp {
         const ns: i128 = std.time.nanoTimestamp();
+        if (ns < 0) return Error.InvalidTimestamp;
         const intervals_since_unix: u64 = @intCast(@divTrunc(ns, 100));
         return .{ .value = @truncate(intervals_since_unix + gregorian_offset) };
     }
@@ -27,10 +34,28 @@ pub const Timestamp = struct {
         return intervals * 100;
     }
 
+    /// Convert to Unix milliseconds (G-5).
+    pub fn toUnixMs(self: Timestamp) i64 {
+        return @intCast(@divTrunc(self.toUnixNano(), 1_000_000));
+    }
+
+    /// Convert to Unix seconds (G-5).
+    pub fn toUnixSec(self: Timestamp) i64 {
+        return @intCast(@divTrunc(self.toUnixNano(), 1_000_000_000));
+    }
+
     /// Create from Unix nanoseconds.
-    pub fn fromUnixNano(ns: i128) Timestamp {
+    pub fn fromUnixNano(ns: i128) Error!Timestamp {
+        if (ns < 0) return Error.InvalidTimestamp;
         const intervals_since_unix: u64 = @intCast(@divTrunc(ns, 100));
         return .{ .value = @truncate(intervals_since_unix + gregorian_offset) };
+    }
+
+    /// Create from Unix milliseconds (G-4 helper for timestampFromV7).
+    pub fn fromUnixMs(ms: i64) Error!Timestamp {
+        if (ms < 0) return Error.InvalidTimestamp;
+        const ns: i128 = @as(i128, ms) * 1_000_000;
+        return fromUnixNano(ns);
     }
 };
 
@@ -57,28 +82,68 @@ pub fn timestampFromV6(u: UUID) Error!Timestamp {
     return .{ .value = ts };
 }
 
-/// Extract Unix millisecond timestamp from a V7 UUID.
-/// Returns i64 (not Timestamp) — V7 uses Unix epoch, not Gregorian epoch.
-pub fn timestampFromV7(u: UUID) Error!i64 {
+/// Extract timestamp from a V7 UUID as a Gregorian Timestamp (G-4).
+///
+/// V7 UUIDs embed a Unix millisecond timestamp. This function converts that
+/// value to the same Gregorian Timestamp type returned by timestampFromV1 and
+/// timestampFromV6, making the API consistent. Use .toUnixMs() to recover the
+/// original millisecond value.
+pub fn timestampFromV7(u: UUID) Error!Timestamp {
     if (u.version() != .v7) return Error.InvalidVersion;
     // unix_ts_ms is in bytes 0-5 (48 bits, big-endian)
     const hi: u64 = std.mem.readInt(u32, u.bytes[0..4], .big);
     const lo: u64 = std.mem.readInt(u16, u.bytes[4..6], .big);
-    return @intCast((hi << 16) | lo);
+    const ms: i64 = @intCast((hi << 16) | lo);
+    return Timestamp.fromUnixMs(ms);
 }
 
+// =============================================================================
+// Tests
+// =============================================================================
+
 test "Timestamp now() is after Unix epoch" {
-    const ts = Timestamp.now();
+    const ts = try Timestamp.now();
     try std.testing.expect(ts.value > Timestamp.gregorian_offset);
 }
 
+test "Timestamp now() pre-1970 guard (F-7)" {
+    // We can't easily mock std.time, but we can verify fromUnixNano rejects negative ns.
+    const result = Timestamp.fromUnixNano(-1);
+    try std.testing.expectError(Error.InvalidTimestamp, result);
+}
+
+test "Timestamp fromUnixMs: negative ms returns error (F-7)" {
+    try std.testing.expectError(Error.InvalidTimestamp, Timestamp.fromUnixMs(-1));
+}
+
 test "Timestamp round-trip through Unix nanoseconds" {
-    const ts = Timestamp.now();
+    const ts = try Timestamp.now();
     const ns = ts.toUnixNano();
-    const ts2 = Timestamp.fromUnixNano(ns);
+    const ts2 = try Timestamp.fromUnixNano(ns);
     // Allow 1 interval (100ns) of rounding error
     const diff = if (ts.value > ts2.value) ts.value - ts2.value else ts2.value - ts.value;
     try std.testing.expect(diff <= 1);
+}
+
+test "Timestamp.toUnixMs round-trip (G-5)" {
+    const ms_in: i64 = 1_700_000_000_000; // 2023-11-14
+    const ts = try Timestamp.fromUnixMs(ms_in);
+    const ms_out = ts.toUnixMs();
+    try std.testing.expectEqual(ms_in, ms_out);
+}
+
+test "Timestamp.toUnixSec round-trip (G-5)" {
+    const ms_in: i64 = 1_700_000_000_000;
+    const ts = try Timestamp.fromUnixMs(ms_in);
+    const sec = ts.toUnixSec();
+    try std.testing.expectEqual(@as(i64, 1_700_000_000), sec);
+}
+
+test "Timestamp.toUnixNano is consistent with toUnixMs (G-5)" {
+    const ts = try Timestamp.now();
+    const ns = ts.toUnixNano();
+    const ms = ts.toUnixMs();
+    try std.testing.expectEqual(@divTrunc(ns, 1_000_000), ms);
 }
 
 test "timestampFromV1: RFC Appendix B vector" {
@@ -107,7 +172,7 @@ test "timestampFromV6: bit reassembly is correct" {
     try std.testing.expectEqual(ts_known, ts.value);
 }
 
-test "timestampFromV7: extracts Unix ms" {
+test "timestampFromV7: returns Timestamp with correct Unix ms (G-4)" {
     // Build a V7 UUID with known timestamp (1000 ms = 0x3E8)
     var u = UUID{ .bytes = [_]u8{0} ** 16 };
     const ms: u64 = 1000;
@@ -115,8 +180,21 @@ test "timestampFromV7: extracts Unix ms" {
     std.mem.writeInt(u16, u.bytes[4..6], @truncate(ms), .big);
     u.setVersion(.v7);
     u.setVariant(.rfc9562);
-    const extracted = try timestampFromV7(u);
-    try std.testing.expectEqual(@as(i64, 1000), extracted);
+    const ts = try timestampFromV7(u);
+    // Recover Unix ms via toUnixMs() and verify
+    try std.testing.expectEqual(@as(i64, 1000), ts.toUnixMs());
+}
+
+test "timestampFromV7: large real-world timestamp (G-4)" {
+    const ms_in: i64 = 1_700_000_000_000; // 2023-11-14
+    var u = UUID{ .bytes = [_]u8{0} ** 16 };
+    const ms_u: u64 = @intCast(ms_in);
+    std.mem.writeInt(u32, u.bytes[0..4], @truncate(ms_u >> 16), .big);
+    std.mem.writeInt(u16, u.bytes[4..6], @truncate(ms_u), .big);
+    u.setVersion(.v7);
+    u.setVariant(.rfc9562);
+    const ts = try timestampFromV7(u);
+    try std.testing.expectEqual(ms_in, ts.toUnixMs());
 }
 
 test "timestampFromV1: error on wrong version" {

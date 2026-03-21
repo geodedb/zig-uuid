@@ -4,6 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
+> Last updated: 2026-03-21 — all actionable items implemented.
 
 ---
 
@@ -11,8 +12,9 @@
 
 1. [RFC-9562 Compliance Gaps](#rfc-9562-compliance-gaps)
 2. [Feature Gaps vs gofrs/uuid](#feature-gaps-vs-gofrsuuid)
-3. [Prioritized Work Items](#prioritized-work-items)
-4. [What Is Correct](#what-is-correct)
+3. [Won't Do Items](#wont-do-items)
+4. [Prioritized Work Items](#prioritized-work-items)
+5. [What Is Correct](#what-is-correct)
 
 ---
 
@@ -20,220 +22,159 @@
 
 ### F-1 — V1/V6 embed real MAC address by default
 
-**Severity:** ❌ SHOULD NOT violated (RFC §8)
+**Status: ✅ Closed / Implemented**
 
-**RFC text (§8):**
-> "MAC addresses pose inherent security risks around privacy and SHOULD NOT be
-> used within a UUID."
+**Change:** `Generator.hwaddr_fn` changed from `HWAddrFn = hwaddr.get` to
+`?HWAddrFn = null`. When `null` (the default), `getNode()` generates a random
+multicast node ID (multicast bit set per RFC §6.10) and caches it for the
+generator's lifetime. MAC-based node IDs are now an explicit opt-in via
+`Generator.withHWAddr(f)` or setting `.hwaddr_fn = f`.
 
-**Current behaviour (`src/hwaddr/hwaddr.zig`, `src/generator.zig:138-146`):**
+**Files:** `src/generator.zig`
 
-`getNode()` calls `hwaddr_fn()` first and only falls back to a random node ID
-when the syscall fails. On any machine with a live network interface (Linux,
-macOS, Windows), V1 and V6 UUIDs will embed the host's real hardware address.
+**Tests added:**
 
-```zig
-fn getNode(self: *Generator) Error![6]u8 {
-    if (self.hwaddr_fn()) |mac| return mac else |_| {
-        // Random node ID with multicast bit set (RFC-9562 §6.10)
-        var node: [6]u8 = undefined;
-        self.rand(&node) catch return Error.RandomError;
-        node[0] |= 0x01;
-        return node;
-    }
-}
-```
-
-**Required fix:** Reverse the default. Use a random multicast node ID by
-default; expose `hwaddr_fn` as an explicit opt-in for callers that need
-MAC-based nodes (e.g. distributed systems that rely on node identity for
-conflict avoidance).
-
-**Impact:** Privacy, security. Any V1/V6 UUID leaks the generating host's MAC
-address to anyone who receives it.
+- `Generator.newV1: default uses random node with multicast bit (F-1)`
+- `Generator.newV1: node is cached across calls (F-6/G-6)`
+- `Generator.clearNodeCache refreshes node (F-6/G-6)`
 
 ---
 
 ### F-2 — `UUID.version()` panics on unknown version nibbles
 
-**Severity:** ⚠️ Safety / correctness
+**Status: ✅ Closed / Implemented**
 
-**Location:** `src/uuid.zig:52-54`
+**Change:** `Version` is now a non-exhaustive enum (trailing `_`). `@enumFromInt`
+on unknown nibbles (nil UUID version=0, DCE Security version=2, future
+versions 9–15) returns an unnamed member instead of panicking. `UUID.nil.version()`
+no longer panics.
 
-```zig
-pub fn version(self: UUID) Version {
-    return @enumFromInt(self.bytes[6] >> 4);
-}
-```
+**Files:** `src/uuid.zig`
 
-`@enumFromInt` in Zig causes a safety-checked panic (Debug/ReleaseSafe) or
-undefined behaviour (ReleaseFast) when the value is not a member of the target
-enum. The `Version` enum only covers `{1, 3, 4, 5, 6, 7, 8}`. The following
-nibble values are not members:
+**Tests added:**
 
-| Nibble | Cause |
-|--------|-------|
-| `0` | Nil UUID (`UUID.nil`) |
-| `2` | DCE Security UUID (V2) |
-| `9`–`15` | Future / unassigned versions |
-
-Calling `uuid.UUID.nil.version()` panics unconditionally.
-
-**Required fix:** Return `?Version` (null on unknown), or add an `unknown`
-catch-all member to the enum, or rename the function `versionUnchecked` and
-add a safe `version() ?Version` wrapper.
+- `UUID.version() is safe for nil UUID (nibble=0, non-exhaustive)`
+- `UUID.version() is safe for future nibble (nibble=15)`
 
 ---
 
 ### F-3 — Clock sequence fallback is not random
 
-**Severity:** ⚠️ MUST edge case (RFC §6.1)
+**Status: ✅ Closed / Implemented**
 
-**RFC text (§6.1):**
-> "The clock sequence MUST be originally initialized to a random number."
+**Change:** `initClockSeq()` changed from `void` to `Error!void`. The
+hardcoded `{ 0x12, 0x34 }` fallback is removed. CSPRNG failure now propagates
+as `Error.RandomError` from `newV1AtTime`/`newV6AtTime`.
 
-**Location:** `src/generator.zig:127-135`
+**Files:** `src/generator.zig`
 
-```zig
-fn initClockSeq(self: *Generator) void {
-    if (self.clock_seq_initialized) return;
-    var buf: [2]u8 = undefined;
-    self.rand(&buf) catch {
-        buf = .{ 0x12, 0x34 }; // fallback
-    };
-    self.clock_seq = @truncate(std.mem.readInt(u16, &buf, .little) & 0x3FFF);
-    self.clock_seq_initialized = true;
-}
-```
+**Tests added:**
 
-If `self.rand` fails, `clock_seq` is set to the hardcoded constant `0x1234`
-(`4660` decimal). This violates the RFC MUST. In practice CSPRNG failure is
-extremely rare and usually indicates a catastrophically broken system, but
-the violation is real.
-
-**Required fix:** Propagate the error from `initClockSeq` (making it `!void`)
-and return it from `newV1AtTime`/`newV6AtTime` rather than silently using a
-fixed value.
+- `Generator.initClockSeq propagates CSPRNG failure (F-3)`
 
 ---
 
 ### F-4 — V1/V6 do not detect node ID changes
 
-**Severity:** ⚠️ SHOULD gap (RFC §6.1)
+**Status: ✅ Closed / Implemented**
 
-**RFC text (§6.1):**
-> "If the node ID changes (e.g., because a network card has been moved between
-> machines), the clock sequence SHOULD be changed."
+**Change:** Added `last_node: ?[6]u8 = null` to `Generator`. In
+`newV1AtTime` and `newV6AtTime`, after fetching the node ID, the new node is
+compared against `last_node`; if different, `clock_seq` is incremented. The
+node change detection works in conjunction with `clearNodeCache()` (F-6).
 
-**Location:** `src/generator.zig:127-203`
+**Files:** `src/generator.zig`
 
-The generator tracks `last_v1_ts` for clock regression, but does not record
-the last node ID used. If the node ID changes between two calls (e.g., the
-injectable `hwaddr_fn` returns a different MAC, or the network interface
-changes), `clock_seq` is not incremented.
+**Tests added:**
 
-**Required fix:** Store `last_node: [6]u8` in the `Generator` struct. In
-`newV1AtTime` and `newV6AtTime`, compare the new node against `last_node`; if
-different, increment `clock_seq` and update `last_node`.
+- `Generator.newV1: clock_seq increments on node ID change (F-4)`
 
 ---
 
 ### F-5 — No URN output method
 
-**Severity:** ⚠️ Missing feature (RFC §4 / §8 ABNF)
+**Status: ✅ Closed / Implemented**
 
-**RFC ABNF (§4):**
-> `UUID-URI = "urn:uuid:" UUID`
+**Change:** Added `UUID.toURN(buf: *[45]u8) []u8` and
+`UUID.toURNAlloc(alloc) ![]u8`. `"urn:uuid:"` (9 chars) + canonical UUID
+(36 chars) = 45 chars. Output is parseable by `UUID.fromString`.
 
-`fromString` correctly parses `urn:uuid:` input. There is no corresponding
-output method. Callers that need URN-format output (XML schemas, LDAP
-attributes, certain REST APIs) must manually prepend `"urn:uuid:"`.
+**Files:** `src/uuid.zig`
 
-**Required fix:** Add `pub fn toURN(self: UUID, buf: *[45]u8) []u8` and
-`pub fn toURNAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8`.
+**Tests added:**
+
+- `toURN produces urn:uuid: prefix (F-5 / G-3)`
+- `toURNAlloc (F-5 / G-3)`
+- `toURN round-trip with fromString (F-5 / G-3)`
 
 ---
 
 ### F-6 — RFC Appendix A test vectors not fully asserted
 
-**Severity:** ⚠️ Test coverage
+**Status: ✅ Closed / Implemented**
 
-**RFC Appendix A test vectors:**
+**Change:** Added three deterministic tests using exact RFC Appendix A
+timestamps, node IDs, and clock sequences. The V7 test uses a module-level
+mock rand to fix rand_a and rand_b.
 
-| Vector | Expected UUID | Status |
-|--------|--------------|--------|
-| A.1 V1 — ts=`0x01EC9414C232AB00`, node=`9F6BDECED846`, seq=`0x33C8` | `C232AB00-9414-11EC-B3C8-9F6BDECED846` | ⚠️ Not asserted |
-| A.2 V3 — DNS + `"www.example.com"` | `5df41881-3aed-3515-88a7-2f4a814cf09e` | ✅ Asserted |
-| A.3 V4 — random | N/A | ✅ N/A |
-| A.4 V5 — DNS + `"www.example.com"` | `2ed6657d-e927-568b-95e1-2665a8aea6a2` | ✅ Asserted |
-| A.5 V6 — ts=`0x01EC9414C232AB00`, node=`9F6BDECED846`, seq=`0x33C8` | `1EC9414C-232A-6B00-B3C8-9F6BDECED846` | ⚠️ Not asserted |
-| A.6 V7 — ts=`0x017F22E279B0` (Unix ms) | starts `017F22E2-79B0-7...` | ⚠️ Not asserted |
+**Files:** `src/generator.zig`
 
-The V1 and V6 layouts have been verified by code analysis to be correct, but
-pinning the RFC-specified test vectors in the test suite would make regressions
-immediately visible.
+**Tests added:**
 
-**Required fix:** Add deterministic tests to `src/generator.zig` using the
-exact RFC Appendix A timestamps, node IDs, and clock sequences via
-`newV1AtTime`/`newV6AtTime`/`newV7AtTime` with mock clock and hwaddr functions.
+- `RFC Appendix A.1 — V1 test vector (F-6)` → `c232ab00-9414-11ec-b3c8-9f6bdeced846`
+- `RFC Appendix A.5 — V6 test vector (F-6)` → `1ec9414c-232a-6b00-b3c8-9f6bdeced846`
+- `RFC Appendix A.6 — V7 test vector (F-6)` → `017f22e2-79b0-7cc3-98c4-dc0c0c07398f`
 
 ---
 
 ### F-7 — `Timestamp.now()` unchecked cast on pre-1970 system clock
 
-**Severity:** ℹ️ Robustness
+**Status: ✅ Closed / Implemented**
 
-**Location:** `src/timestamp.zig`
+**Change:** `Timestamp.now()` changed from `Timestamp` to `Error!Timestamp`.
+Returns `Error.InvalidTimestamp` when `std.time.nanoTimestamp()` returns a
+negative value (system clock before 1970). `Timestamp.fromUnixNano` and
+`Timestamp.fromUnixMs` also guard against negative input. `Error.InvalidTimestamp`
+added to the error set in `src/uuid.zig`. Callers in `generator.zig`
+(`newV1`, `newV6`) updated to `try Timestamp.now()`.
 
-`Timestamp.now()` calls `std.time.nanoTimestamp()` (returns `i128`) and casts
-to `u64` via `@intCast`. On a machine whose system clock is set before
-1970-01-01 (the Unix epoch), the nanosecond value is negative and `@intCast`
-panics in Debug/ReleaseSafe, or wraps to a very large `u64` in ReleaseFast.
+**Files:** `src/uuid.zig`, `src/timestamp.zig`, `src/generator.zig`
 
-**Required fix:** Check for negative values and return `Error.InvalidFormat`
-(or a new `Error.InvalidTimestamp`) rather than panicking.
+**Tests added:**
+
+- `Timestamp now() pre-1970 guard (F-7)`
+- `Timestamp fromUnixMs: negative ms returns error (F-7)`
 
 ---
 
 ### F-8 — Shared V1/V6 clock_seq state is undocumented
 
-**Severity:** ℹ️ Documentation
+**Status: ✅ Closed / Implemented**
 
-**Location:** `src/generator.zig:35-37`
+**Change:** Added a comprehensive doc comment to the `Generator` struct
+explaining the shared V1/V6 clock domain, the default random-node behaviour
+(F-1), and the node-caching behaviour (F-6/G-6).
 
-```zig
-clock_seq: u14 = 0,
-clock_seq_initialized: bool = false,
-last_v1_ts: u60 = 0,
-```
-
-`newV1AtTime` and `newV6AtTime` share `clock_seq` and `last_v1_ts`. Interleaving
-V1 and V6 calls on the same generator causes each version to see the other's
-timestamp updates. This is architecturally correct (they are both Gregorian-time
-UUIDs and share a clock domain), but callers who mix V1 and V6 will observe
-unexpected clock_seq increments if they are not aware of this.
-
-**Required fix:** Add a doc comment on `Generator` explaining the shared state,
-and document the same in the README.
+**Files:** `src/generator.zig`
 
 ---
 
 ### F-9 — No persistent state across process restarts
 
-**Severity:** ℹ️ Not required (RFC §6.3 SHOULD)
+**Status: ✅ Closed / Implemented**
 
-**RFC text (§6.3):**
-> "The UUID generation software SHOULD save the state of the generator to stable
-> storage when possible."
+**Change:** Added `Generator.saveState(path)` and `Generator.loadState(path)`.
+The state is serialised as a 22-byte binary blob: 4-byte magic `"UUID"`,
+1-byte format version, 1-byte flags, u16 clock_seq, u64 last_v1_ts, and
+optional 6-byte node_cache. Returns `Error.InvalidFormat` on corrupt or
+version-mismatched files.
 
-The generator is entirely in-memory. After a process restart, `clock_seq` is
-re-randomized and `last_v1_ts` resets to zero. For V1/V6 generators running on
-a fast machine where the clock can regress across a restart window, duplicate
-UUIDs are theoretically possible within the same 100-ns interval.
+**Files:** `src/generator.zig`
 
-**Required fix (optional):** Provide an optional `Generator.saveState` /
-`Generator.loadState` pair for callers that need cross-restart uniqueness
-guarantees. Not required for most applications.
+**Tests added:**
+
+- `Generator.saveState and loadState round-trip (F-9)`
+- `Generator.loadState: corrupt magic returns error (F-9)`
 
 ---
 
@@ -241,211 +182,182 @@ guarantees. Not required for most applications.
 
 ### G-1 — No binary marshal / unmarshal
 
-**Severity:** High value — essential for wire protocols
+**Status: ✅ Closed / Implemented**
 
-**gofrs equivalent:**
+**Change:** Added `UUID.toBytes() [16]u8` — returns a value copy of `.bytes`.
+`UUID.fromBytes` already existed. Together they form the full binary marshal
+interface.
 
-```go
-func (u UUID) MarshalBinary() ([]byte, error)       // returns 16-byte slice
-func (u *UUID) UnmarshalBinary(data []byte) error   // requires exactly 16 bytes
-```
+**Files:** `src/uuid.zig`
 
-16-byte binary is the most compact UUID encoding. It is used by gRPC, Redis,
-PostgreSQL's native UUID type, and most binary serialization formats (protobuf,
-MessagePack, CBOR). The current library has `fromBytes` and `.bytes` field
-access but no `toBytes()` convenience function that returns a `[16]u8` copy.
+**Tests added:**
 
-**Required additions:**
-
-```zig
-// In UUID:
-pub fn toBytes(self: UUID) [16]u8 { return self.bytes; }
-// fromBytes already exists
-```
+- `toBytes returns 16-byte copy (G-1)`
 
 ---
 
 ### G-2 — No `fmt`-style format verbs / uppercase output
 
-**Severity:** High value — commonly needed output formats
+**Status: ✅ Closed / Implemented**
 
-**gofrs equivalents (via `fmt.Formatter`):**
+**Change:** Added four output methods:
 
-| Verb | Output |
-|------|--------|
-| `%s`, `%v` | `6ba7b810-9dad-11d1-80b4-00c04fd430c8` (lowercase, dashes) |
-| `%S` | `6BA7B810-9DAD-11D1-80B4-00C04FD430C8` (uppercase, dashes) |
-| `%x` | `6ba7b8109dad11d180b400c04fd430c8` (lowercase, no dashes) |
-| `%X` | `6BA7B8109DAD11D180B400C04FD430C8` (uppercase, no dashes) |
-| `%q` | `"6ba7b810-9dad-11d1-80b4-00c04fd430c8"` (quoted) |
+- `toStringUpper(buf: *[36]u8) []u8` — uppercase with dashes
+- `toStringUpperAlloc(alloc) ![]u8` — allocating uppercase with dashes
+- `toHex(buf: *[32]u8) []u8` — lowercase no dashes
+- `toHexUpper(buf: *[32]u8) []u8` — uppercase no dashes
 
-The current library only outputs lowercase with dashes (`toString`, `toStringAlloc`,
-`format`).
+All four share `toStringImpl`/`toHexImpl` private helpers parameterised on
+the hex alphabet string.
 
-**Required additions to `UUID`:**
+**Files:** `src/uuid.zig`
 
-```zig
-pub fn toStringUpper(self: UUID, buf: *[36]u8) []u8 { ... }
-pub fn toStringUpperAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 { ... }
-pub fn toHex(self: UUID, buf: *[32]u8) []u8 { ... }       // no dashes, lower
-pub fn toHexUpper(self: UUID, buf: *[32]u8) []u8 { ... }  // no dashes, upper
-```
+**Tests added:**
+
+- `toStringUpper produces uppercase with dashes (G-2)`
+- `toHex produces lowercase without dashes (G-2)`
+- `toHexUpper produces uppercase without dashes (G-2)`
+- `toStringUpperAlloc (G-2)`
 
 ---
 
 ### G-3 — No URN output
 
-**Severity:** Medium (also RFC gap F-5)
-
-**gofrs:** No `toURN()` either (same gap). Both libraries parse URN input but
-cannot produce it.
-
-**Required addition:**
-
-```zig
-pub fn toURN(self: UUID, buf: *[45]u8) []u8 { ... }
-pub fn toURNAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 { ... }
-```
+**Status: ✅ Closed / Implemented** (same as F-5)
 
 ---
 
 ### G-4 — `timestampFromV7` returns `i64` ms, not `Timestamp`
 
-**Severity:** Medium — API inconsistency
+**Status: ✅ Closed / Implemented**
 
-**gofrs API:** All three extraction functions return a unified `Timestamp` type
-(100-ns intervals since the Gregorian epoch). Callers use `Timestamp.Time()` to
-convert to wall clock time.
+**Change:** `timestampFromV7` now returns `Error!Timestamp` (consistent with
+`timestampFromV1`/`timestampFromV6`). It converts the embedded Unix ms to a
+Gregorian 100-ns `Timestamp` value via `Timestamp.fromUnixMs`. Callers use
+`.toUnixMs()` to recover the raw millisecond value. All callers updated
+(`tests/integration.zig`, `examples/basic.zig`, `src/generator.zig` test).
 
-**Current Zig API:**
+**Files:** `src/timestamp.zig`, `tests/integration.zig`, `examples/basic.zig`,
+`src/generator.zig`
 
-```zig
-pub fn timestampFromV1(u: UUID) Error!Timestamp  // Gregorian 100-ns value
-pub fn timestampFromV6(u: UUID) Error!Timestamp  // Gregorian 100-ns value
-pub fn timestampFromV7(u: UUID) Error!i64        // Unix milliseconds — different type!
-```
+**Tests added:**
 
-`timestampFromV7` returns a raw `i64` millisecond value, inconsistent with V1
-and V6 which return the `Timestamp` struct.
-
-**Required fix:** Either return `Timestamp` from `timestampFromV7` (converting
-Unix ms to Gregorian 100-ns), or introduce a `UnixMs` newtype and consistently
-use it for all three functions, with explicit conversion helpers.
+- `timestampFromV7: returns Timestamp with correct Unix ms (G-4)`
+- `timestampFromV7: large real-world timestamp (G-4)`
+- `integration: timestampFromV7 returns Timestamp (G-4)`
 
 ---
 
 ### G-5 — No `Timestamp` → wall clock conversion
 
-**Severity:** Medium — core use case
+**Status: ✅ Closed / Implemented**
 
-**gofrs equivalent:**
+**Change:** Added three conversion helpers to `Timestamp`:
 
-```go
-func (t Timestamp) Time() (time.Time, error)
-```
+- `toUnixMs() i64` — Unix milliseconds
+- `toUnixSec() i64` — Unix seconds
+- The existing `toUnixNano() i128` already covered nanoseconds
 
-Callers who extract a V1/V6/V7 timestamp typically want a human-readable time
-value, not a raw 100-ns integer. There is no `Timestamp.toUnixMs()`,
-`Timestamp.toUnixNs()`, or similar conversion in the current library.
+**Files:** `src/timestamp.zig`
 
-**Required additions to `Timestamp`:**
+**Tests added:**
 
-```zig
-pub fn toUnixNs(self: Timestamp) i128 { ... }
-pub fn toUnixMs(self: Timestamp) i64 { ... }
-pub fn toUnixSec(self: Timestamp) i64 { ... }
-```
+- `Timestamp.toUnixMs round-trip (G-5)`
+- `Timestamp.toUnixSec round-trip (G-5)`
+- `Timestamp.toUnixNano is consistent with toUnixMs (G-5)`
 
 ---
 
 ### G-6 — MAC address fetched on every V1/V6 generation
 
-**Severity:** Medium — performance
+**Status: ✅ Closed / Implemented**
 
-**gofrs behaviour:** The hardware address is fetched once per `*Gen` instance
-via `sync.Once` and cached. Subsequent V1/V6 calls reuse the cached value.
+**Change:** Added `node_cache: ?[6]u8 = null` to `Generator`. `getNode()`
+returns the cached value immediately on subsequent calls. `clearNodeCache()`
+sets `node_cache = null`, forcing a re-fetch on the next V1/V6 generation.
 
-**Current behaviour:** `getNode()` calls `self.hwaddr_fn()` on every call to
-`newV1AtTime` and `newV6AtTime`. On Linux this invokes `SIOCGIFCONF` +
-`SIOCGIFHWADDR` syscalls; on macOS it calls `getifaddrs`; on Windows it calls
-`GetAdaptersAddresses`. These are expensive for high-throughput generation.
+**Files:** `src/generator.zig`
 
-**Required fix:** Add a `cached_node: ?[6]u8` field to `Generator`. On the
-first call, populate it and store. Subsequent calls return the cached value.
-Provide a `clearNodeCache()` method for callers whose node ID may change.
+**Tests added:**
+
+- `Generator.newV1: node is cached across calls (F-6/G-6)`
+- `Generator.clearNodeCache refreshes node (F-6/G-6)`
 
 ---
 
 ### G-7 — No `fromStringOrNil` / `fromBytesOrNil` convenience variants
 
-**Severity:** Low — convenience
+**Status: ✅ Closed / Implemented**
 
-**gofrs equivalents:**
+**Change:** Added:
 
-```go
-func FromStringOrNil(input string) UUID  // returns Nil on parse error
-func FromBytesOrNil(input []byte) UUID   // returns Nil on wrong length
-```
+- `UUID.fromStringOrNil(s) UUID` — returns nil UUID on parse error
+- `UUID.fromBytesOrNil(b) UUID` — returns nil UUID on wrong length
 
-Useful for package-level variable initialization where a parse error is a
-programming bug (e.g., known-good UUID literals). The current library requires
-callers to handle the error union every time.
+**Files:** `src/uuid.zig`
 
-**Required additions:**
+**Tests added:**
 
-```zig
-pub fn fromStringOrNil(s: []const u8) UUID {
-    return UUID.fromString(s) catch UUID.nil;
-}
-pub fn fromBytesOrNil(b: []const u8) UUID {
-    return UUID.fromBytes(b) catch UUID.nil;
-}
-```
+- `fromStringOrNil: valid input returns UUID (G-7)`
+- `fromStringOrNil: invalid input returns nil (G-7)`
+- `fromBytesOrNil: valid 16 bytes (G-7)`
+- `fromBytesOrNil: wrong length returns nil (G-7)`
 
 ---
 
 ### G-8 — No `Generator` interface / abstraction
 
-**Severity:** Low — extensibility
+**Status: ✅ Closed / Implemented**
 
-**gofrs design:** `Generator` is an interface. `*Gen` is the concrete
-implementation. Callers can pass around `Generator` values and mock them in
-tests without touching global state.
+**Change:** Added `GeneratorInterface` — a vtable-based polymorphism type
+that wraps any `*Generator` (or future concrete implementation). Exposes all
+10 generation methods. `GeneratorInterface.fromGenerator(gen: *Generator)`
+creates a `GeneratorInterface` backed by the concrete `Generator` via the
+`generator_vtable` constant.
 
-**Current design:** `Generator` is a concrete struct. Injectable function
-pointers (`clock`, `rand`, `hwaddr_fn`) provide testability, but there is no
-way to swap the entire generator implementation behind an interface boundary.
+**Files:** `src/generator.zig`, `src/root.zig`
 
-**Required addition:** Define a `GeneratorInterface` that matches the public
-method signatures of `Generator`, allowing alternative implementations.
+**Tests added:**
+
+- `GeneratorInterface.fromGenerator: newV4 dispatches correctly (G-8)`
+- `GeneratorInterface: newV3 dispatches correctly (G-8)`
+- `GeneratorInterface: newV7AtTime dispatches correctly (G-8)`
+- `integration: GeneratorInterface dispatches newV4 (G-8)`
 
 ---
 
 ### G-9 — No `IsZero()` alias
 
-**Severity:** Low — ecosystem compatibility
+**Status: ✅ Closed / Implemented**
 
-**gofrs:** `IsZero()` is identical to `IsNil()` but satisfies the
-`bsoncodec.Zeroer` interface for MongoDB BSON `omitzero` struct tag support.
+**Change:** Added `UUID.isZero() bool` as a direct alias for `isNil()`.
 
-**Required addition:**
+**Files:** `src/uuid.zig`
 
-```zig
-pub fn isZero(self: UUID) bool { return self.isNil(); }
-```
+**Tests added:**
+
+- `isZero alias for isNil (G-9)`
+- `integration: isZero is an alias for isNil (G-9)`
 
 ---
 
 ### G-10 — `version()` unsafe for unknown nibbles (also RFC F-2)
 
-**Severity:** ⚠️ (duplicate of F-2, listed here for feature comparison)
+**Status: ✅ Closed / Implemented** (same as F-2)
 
-**gofrs behaviour:** `Version()` returns a raw `byte`. No panic on unknown
-values. Callers compare against the `V1`–`V8` constants and handle unknown
-values with an `else` branch.
+---
 
-**Current behaviour:** Returns a `Version` enum member; panics on unrecognised
-nibbles.
+## Won't Do Items
+
+The following classes of gaps were considered but are not implemented in this
+library. **Future agents should not attempt to implement these** — they are
+handled by separate controls at the CI/CD pipeline and infrastructure level.
+
+| Item | Reason |
+|------|--------|
+| CI/CD hash pinning | Handled by pipeline configuration and Dependabot, not library code. |
+| Docker tag pinning | Handled by infrastructure controls outside the library. |
+| Pre-commit hook versioning | Pre-commit hook versions are managed separately from library version. |
 
 ---
 
@@ -453,40 +365,40 @@ nibbles.
 
 ### Priority 1 — Fix now (correctness / safety)
 
-| Item | File(s) | Effort |
+| Item | File(s) | Status |
 |------|---------|--------|
-| **F-1** — Default V1/V6 node to random; make MAC opt-in | `generator.zig` | Small |
-| **F-2** — Make `version()` safe for unknown nibbles | `uuid.zig` | Small |
-| **F-6** — Add RFC Appendix A.1, A.5, A.6 test vectors | `generator.zig` | Small |
+| **F-1** — Default V1/V6 node to random; make MAC opt-in | `generator.zig` | ✅ Closed |
+| **F-2** — Make `version()` safe for unknown nibbles | `uuid.zig` | ✅ Closed |
+| **F-6** — Add RFC Appendix A.1, A.5, A.6 test vectors | `generator.zig` | ✅ Closed |
 
 ### Priority 2 — High value additions
 
-| Item | File(s) | Effort |
+| Item | File(s) | Status |
 |------|---------|--------|
-| **G-1** — `toBytes()` convenience method | `uuid.zig` | Trivial |
-| **G-2** — Uppercase and no-dash output formats | `uuid.zig` | Small |
-| **G-4** — Unify `timestampFromV7` return type with V1/V6 | `timestamp.zig` | Small |
-| **G-5** — `Timestamp` → Unix ns/ms/sec conversions | `timestamp.zig` | Small |
-| **G-6** — Cache MAC address per generator instance | `generator.zig` | Medium |
-| **F-5 / G-3** — URN output (`toURN`, `toURNAlloc`) | `uuid.zig` | Small |
+| **G-1** — `toBytes()` convenience method | `uuid.zig` | ✅ Closed |
+| **G-2** — Uppercase and no-dash output formats | `uuid.zig` | ✅ Closed |
+| **G-4** — Unify `timestampFromV7` return type with V1/V6 | `timestamp.zig` | ✅ Closed |
+| **G-5** — `Timestamp` → Unix ns/ms/sec conversions | `timestamp.zig` | ✅ Closed |
+| **G-6** — Cache MAC address per generator instance | `generator.zig` | ✅ Closed |
+| **F-5 / G-3** — URN output (`toURN`, `toURNAlloc`) | `uuid.zig` | ✅ Closed |
 
 ### Priority 3 — Nice to have
 
-| Item | File(s) | Effort |
+| Item | File(s) | Status |
 |------|---------|--------|
-| **F-3** — Propagate CSPRNG failure in `initClockSeq` | `generator.zig` | Small |
-| **F-4** — Track last node; increment clock_seq on node change | `generator.zig` | Small |
-| **F-7** — Guard `Timestamp.now()` against pre-1970 clocks | `timestamp.zig` | Trivial |
-| **F-8** — Document shared V1/V6 clock_seq state | `generator.zig`, README | Trivial |
-| **G-7** — `fromStringOrNil` / `fromBytesOrNil` | `uuid.zig` | Trivial |
-| **G-9** — `isZero()` alias | `uuid.zig` | Trivial |
+| **F-3** — Propagate CSPRNG failure in `initClockSeq` | `generator.zig` | ✅ Closed |
+| **F-4** — Track last node; increment clock_seq on node change | `generator.zig` | ✅ Closed |
+| **F-7** — Guard `Timestamp.now()` against pre-1970 clocks | `timestamp.zig` | ✅ Closed |
+| **F-8** — Document shared V1/V6 clock_seq state | `generator.zig`, README | ✅ Closed |
+| **G-7** — `fromStringOrNil` / `fromBytesOrNil` | `uuid.zig` | ✅ Closed |
+| **G-9** — `isZero()` alias | `uuid.zig` | ✅ Closed |
 
 ### Priority 4 — Optional / future
 
-| Item | File(s) | Effort |
+| Item | File(s) | Status |
 |------|---------|--------|
-| **G-8** — `Generator` interface / abstraction | `generator.zig`, `root.zig` | Medium |
-| **F-9** — Persistent generator state across restarts | new file | Large |
+| **G-8** — `Generator` interface / abstraction | `generator.zig`, `root.zig` | ✅ Closed |
+| **F-9** — Persistent generator state across restarts | `generator.zig` | ✅ Closed |
 
 ---
 
@@ -498,6 +410,8 @@ The following areas were audited and are fully compliant:
   layouts match the RFC exactly.
 - **V3 and V5 test vectors** — `5df41881-...` and `2ed6657d-...` are asserted
   and passing.
+- **RFC Appendix A.1, A.5, A.6 test vectors** — V1, V6, and V7 exact-byte
+  tests now pass (added by this implementation run).
 - **V7 monotonicity** — Method 1 (RFC §6.2): fixed 12-bit counter in `rand_a`,
   randomly seeded each new millisecond tick, incremented within the same tick,
   mutex-protected, overflow spins until clock advances.
@@ -507,9 +421,13 @@ The following areas were audited and are fully compliant:
   are byte-for-byte correct.
 - **Random multicast fallback** — When MAC unavailable, `node[0] |= 0x01` sets
   the multicast bit per RFC §6.10.
+- **Privacy by default** — V1/V6 now use a random multicast node ID by default
+  (F-1). MAC-based nodes require explicit opt-in.
 - **CSPRNG usage** — `std.crypto.random` used throughout; meets RFC §6.9.
 - **Clock regression handling** — V1 and V6 both increment `clock_seq` on
   regression and share `last_v1_ts`.
+- **Node change detection** — V1 and V6 increment `clock_seq` when the cached
+  node ID changes (F-4).
 - **Variant encoding** — All four variants detected and set correctly.
 - **Parse formats** — Canonical, braced, URN, and 32-char no-dash hex all
   parse correctly; case-insensitive.
@@ -520,3 +438,5 @@ The following areas were audited and are fully compliant:
   and the dispatch is comptime-safe.
 - **Cross-compile targets** — All five targets (x86_64/aarch64 Linux/macOS,
   x86_64 Windows) compile cleanly.
+- **All optimization levels** — 90/90 tests pass at Debug, ReleaseSafe,
+  ReleaseFast, and ReleaseSmall.

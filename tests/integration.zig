@@ -164,3 +164,62 @@ test "integration: all six parse formats produce identical UUID" {
         try std.testing.expect(base.eql(u));
     }
 }
+
+// =============================================================================
+// timestampFromV7 returns Timestamp (G-4) — verify toUnixMs() round-trip
+// =============================================================================
+
+test "integration: timestampFromV7 returns Timestamp (G-4)" {
+    const v7 = try uuid.newV7();
+    const ts = try uuid.timestampFromV7(v7);
+    // The extracted Unix ms should be a recent timestamp (after 2020-01-01)
+    const ms = ts.toUnixMs();
+    try std.testing.expect(ms > 1_577_836_800_000); // 2020-01-01 in Unix ms
+}
+
+// =============================================================================
+// URN output round-trip (F-5 / G-3)
+// =============================================================================
+
+test "integration: toURN produces parseable URN" {
+    const u = try uuid.newV4();
+    var buf: [45]u8 = undefined;
+    const urn = u.toURN(&buf);
+    const parsed = try uuid.UUID.fromString(urn);
+    try std.testing.expect(u.eql(parsed));
+}
+
+// =============================================================================
+// Uppercase / nodash output (G-2)
+// =============================================================================
+
+test "integration: toStringUpper and toHexUpper produce uppercase" {
+    const u = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var buf36: [36]u8 = undefined;
+    var buf32: [32]u8 = undefined;
+    const upper = u.toStringUpper(&buf36);
+    const hex_upper = u.toHexUpper(&buf32);
+    try std.testing.expectEqualStrings("6BA7B810-9DAD-11D1-80B4-00C04FD430C8", upper);
+    try std.testing.expectEqualStrings("6BA7B8109DAD11D180B400C04FD430C8", hex_upper);
+}
+
+// =============================================================================
+// isZero alias (G-9)
+// =============================================================================
+
+test "integration: isZero is an alias for isNil (G-9)" {
+    try std.testing.expect(uuid.UUID.nil.isZero());
+    const u = try uuid.newV4();
+    try std.testing.expect(!u.isZero());
+}
+
+// =============================================================================
+// GeneratorInterface (G-8)
+// =============================================================================
+
+test "integration: GeneratorInterface dispatches newV4 (G-8)" {
+    var gen = uuid.Generator.init();
+    var iface = uuid.GeneratorInterface.fromGenerator(&gen);
+    const u = try iface.newV4();
+    try std.testing.expectEqual(uuid.Version.v4, u.version());
+}
