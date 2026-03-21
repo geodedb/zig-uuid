@@ -54,7 +54,7 @@ pub fn getHWAddr() Error![6]u8 {
         const addr = ifa.ifa_addr orelse continue;
         if (addr.sa_family != c.AF_LINK) continue;
 
-        const sdl: *c.sockaddr_dl = @ptrCast(addr);
+        const sdl: *c.sockaddr_dl = @ptrCast(@alignCast(addr));
         if (sdl.sdl_alen != 6) continue;
 
         // MAC follows the interface name in sdl_data

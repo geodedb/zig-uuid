@@ -39,7 +39,7 @@ extern "iphlpapi" fn GetAdaptersAddresses(
     Reserved: ?*anyopaque,
     AdapterAddresses: ?*IP_ADAPTER_ADDRESSES,
     SizePointer: *windows.ULONG,
-) callconv(windows.WINAPI) windows.DWORD;
+) callconv(.winapi) windows.DWORD;
 
 const ERROR_BUFFER_OVERFLOW: windows.DWORD = 111;
 const NO_ERROR: windows.DWORD = 0;
