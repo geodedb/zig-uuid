@@ -96,7 +96,66 @@ pub const UUID = struct {
             return a.eql(b);
         }
     };
+
+    pub fn fromBytes(b: []const u8) Error!UUID {
+        if (b.len != 16) return Error.IncorrectByteLength;
+        var u: UUID = undefined;
+        @memcpy(&u.bytes, b);
+        return u;
+    }
+
+    pub fn fromString(s: []const u8) Error!UUID {
+        // Detect and strip URN prefix
+        var rest = s;
+        if (std.mem.startsWith(u8, rest, "urn:uuid:")) {
+            rest = rest[9..];
+        } else if (rest.len > 4 and std.mem.startsWith(u8, rest, "urn:")) {
+            return Error.InvalidURNPrefix;
+        }
+
+        // Detect and strip braces
+        if (rest.len > 0 and rest[0] == '{') {
+            if (rest[rest.len - 1] != '}') return Error.InvalidBraces;
+            rest = rest[1 .. rest.len - 1];
+        }
+
+        return switch (rest.len) {
+            36 => parseCanonical(rest), // with dashes
+            32 => parseHash(rest), // no dashes
+            else => Error.InvalidLength,
+        };
+    }
 };
+
+fn parseCanonical(s: []const u8) Error!UUID {
+    // Validate dash positions: 8-4-4-4-12
+    if (s[8] != '-' or s[13] != '-' or s[18] != '-' or s[23] != '-')
+        return Error.InvalidDashes;
+    var u: UUID = undefined;
+    var out: usize = 0;
+    var i: usize = 0;
+    while (i < s.len) : (i += 1) {
+        if (s[i] == '-') continue;
+        const hi = std.fmt.charToDigit(s[i], 16) catch return Error.InvalidFormat;
+        i += 1;
+        const lo = std.fmt.charToDigit(s[i], 16) catch return Error.InvalidFormat;
+        u.bytes[out] = (hi << 4) | lo;
+        out += 1;
+    }
+    if (out != 16) return Error.InvalidFormat;
+    return u;
+}
+
+fn parseHash(s: []const u8) Error!UUID {
+    var u: UUID = undefined;
+    var i: usize = 0;
+    while (i < 16) : (i += 1) {
+        const hi = std.fmt.charToDigit(s[i * 2], 16) catch return Error.InvalidFormat;
+        const lo = std.fmt.charToDigit(s[i * 2 + 1], 16) catch return Error.InvalidFormat;
+        u.bytes[i] = (hi << 4) | lo;
+    }
+    return u;
+}
 
 test "UUID nil sentinel" {
     const u = UUID.nil;
@@ -132,4 +191,56 @@ test "UUID HashContext" {
     const h2 = ctx.hash(UUID.nil);
     try std.testing.expectEqual(h1, h2);
     try std.testing.expect(ctx.hash(UUID.max) != ctx.hash(UUID.nil));
+}
+
+test "fromString: canonical format" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
+    try std.testing.expectEqual(@as(u8, 0xc8), u.bytes[15]);
+}
+
+test "fromString: braced canonical" {
+    const u = try UUID.fromString("{6ba7b810-9dad-11d1-80b4-00c04fd430c8}");
+    try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
+}
+
+test "fromString: hash (no dashes)" {
+    const u = try UUID.fromString("6ba7b8109dad11d180b400c04fd430c8");
+    try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
+}
+
+test "fromString: braced hash" {
+    const u = try UUID.fromString("{6ba7b8109dad11d180b400c04fd430c8}");
+    try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
+}
+
+test "fromString: URN canonical" {
+    const u = try UUID.fromString("urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
+}
+
+test "fromString: URN hash" {
+    const u = try UUID.fromString("urn:uuid:6ba7b8109dad11d180b400c04fd430c8");
+    try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
+}
+
+test "fromString: nil UUID" {
+    const u = try UUID.fromString("00000000-0000-0000-0000-000000000000");
+    try std.testing.expect(u.isNil());
+}
+
+test "fromString: error on bad format" {
+    // 35-char string (malformed mix): hits InvalidLength
+    try std.testing.expectError(Error.InvalidLength, UUID.fromString("6ba7b8109dad-11d1-80b4-00c04fd430c8"));
+    // Short string: InvalidLength
+    try std.testing.expectError(Error.InvalidLength, UUID.fromString("6ba7b810-9dad-11d1-80b4"));
+    // Invalid URN namespace: InvalidURNPrefix
+    try std.testing.expectError(Error.InvalidURNPrefix, UUID.fromString("urn:bad:6ba7b8109dad11d180b400c04fd430c8"));
+}
+
+test "fromBytes: 16-byte slice" {
+    const b = [_]u8{ 0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+    const u = try UUID.fromBytes(&b);
+    try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
+    try std.testing.expectError(Error.IncorrectByteLength, UUID.fromBytes(b[0..8]));
 }
