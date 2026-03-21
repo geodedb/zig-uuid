@@ -4,6 +4,7 @@
 const std = @import("std");
 const json = @import("json");
 const UUID = @import("uuid.zig").UUID;
+const Error = @import("uuid.zig").Error;
 
 /// A nullable UUID wrapper with JSON marshaling support.
 /// Serializes to null JSON or "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx".
@@ -36,7 +37,7 @@ pub const NullUUID = struct {
         return switch (v) {
             .null => .{},
             .str => |s| .{ .uuid = try UUID.fromString(s), .valid = true },
-            else => error.InvalidFormat,
+            else => Error.InvalidFormat,
         };
     }
 };
@@ -74,6 +75,11 @@ test "NullUUID.jsonMarshal: string when valid" {
 test "NullUUID.jsonUnmarshal: null input → invalid NullUUID" {
     const nu = try NullUUID.jsonUnmarshal(std.testing.allocator, .null);
     try std.testing.expect(!nu.valid);
+}
+
+test "NullUUID.jsonUnmarshal: non-string non-null input → error" {
+    const v = json.Value{ .bool = true };
+    try std.testing.expectError(Error.InvalidFormat, NullUUID.jsonUnmarshal(std.testing.allocator, v));
 }
 
 test "NullUUID.jsonUnmarshal: string input → valid NullUUID" {
