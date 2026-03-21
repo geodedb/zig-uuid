@@ -125,6 +125,40 @@ pub const UUID = struct {
             else => Error.InvalidLength,
         };
     }
+
+    pub fn toString(self: UUID, buf: *[36]u8) []u8 {
+        const hex = "0123456789abcdef";
+        const groups = [_]struct { start: usize, len: usize }{
+            .{ .start = 0, .len = 4 },
+            .{ .start = 4, .len = 2 },
+            .{ .start = 6, .len = 2 },
+            .{ .start = 8, .len = 2 },
+            .{ .start = 10, .len = 6 },
+        };
+        var pos: usize = 0;
+        for (groups, 0..) |g, gi| {
+            if (gi > 0) {
+                buf[pos] = '-';
+                pos += 1;
+            }
+            for (self.bytes[g.start .. g.start + g.len]) |byte| {
+                buf[pos] = hex[byte >> 4];
+                buf[pos + 1] = hex[byte & 0x0F];
+                pos += 2;
+            }
+        }
+        return buf[0..36];
+    }
+
+    pub fn toStringAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
+        var buf: [36]u8 = undefined;
+        return alloc.dupe(u8, self.toString(&buf));
+    }
+
+    pub fn format(self: UUID, writer: anytype) !void {
+        var buf: [36]u8 = undefined;
+        try writer.writeAll(self.toString(&buf));
+    }
 };
 
 fn parseCanonical(s: []const u8) Error!UUID {
@@ -243,4 +277,33 @@ test "fromBytes: 16-byte slice" {
     const u = try UUID.fromBytes(&b);
     try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);
     try std.testing.expectError(Error.IncorrectByteLength, UUID.fromBytes(b[0..8]));
+}
+
+test "toString: canonical format" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var buf: [36]u8 = undefined;
+    const s = u.toString(&buf);
+    try std.testing.expectEqualStrings("6ba7b810-9dad-11d1-80b4-00c04fd430c8", s);
+}
+
+test "toString round-trip" {
+    const input = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+    const u = try UUID.fromString(input);
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings(input, u.toString(&buf));
+}
+
+test "toStringAlloc" {
+    const alloc = std.testing.allocator;
+    const u = UUID.nil;
+    const s = try u.toStringAlloc(alloc);
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("00000000-0000-0000-0000-000000000000", s);
+}
+
+test "format via std.fmt" {
+    const u = UUID.nil;
+    const s = try std.fmt.allocPrint(std.testing.allocator, "{f}", .{u});
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("00000000-0000-0000-0000-000000000000", s);
 }
