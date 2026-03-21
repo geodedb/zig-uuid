@@ -84,6 +84,28 @@ test-release-safe:
   needs:
     - build
 
+# ReleaseFast tests — verifies correctness under the production optimization
+# level and catches issues that Debug safety checks obscure (PERF-06).
+test-release-fast:
+  stage: test
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+  script:
+    - zig build test -Doptimize=ReleaseFast --summary all
+  needs:
+    - build
+
+test-integration-release-fast:
+  stage: test
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+  script:
+    - zig build test-integration -Doptimize=ReleaseFast --summary all
+  needs:
+    - build
+
 # Cross-compilation tests
 test-cross-build:
   stage: test

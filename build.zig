@@ -66,6 +66,23 @@ pub fn build(b: *std.Build) void {
     });
     check_step.dependOn(&check.step);
 
+    // Benchmark binary (PERF-03)
+    // Run with: zig build bench -Doptimize=ReleaseFast
+    const bench_step = b.step("bench", "Run benchmarks (use -Doptimize=ReleaseFast for accurate results)");
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "uuid", .module = module },
+            },
+        }),
+    });
+    const run_bench = b.addRunArtifact(bench_exe);
+    bench_step.dependOn(&run_bench.step);
+
     // Cross-compile check step — all five target triples are compiled unconditionally.
     // Each invocation of `zig build check-cross` compiles all five targets,
     // so `make cross-compile-required` (which calls this once) checks everything.

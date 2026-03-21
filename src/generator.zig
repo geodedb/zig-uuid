@@ -108,32 +108,51 @@ pub const Generator = struct {
     }
 
     pub fn newV7(self: *Generator) Error!UUID {
+        // PERF-07: Read clock inside the mutex to use the freshest possible
+        // timestamp and avoid stale-timestamp collisions under high contention.
+        self.mutex.lock();
         const ns = self.clock();
-        if (ns < 0) return Error.InvalidTimestamp;
-        const now_ms: i64 = @intCast(@divTrunc(ns, 1_000_000));
-        return self.newV7AtTime(now_ms);
+        if (ns < 0) {
+            self.mutex.unlock();
+            return Error.InvalidTimestamp;
+        }
+        const ms: i64 = @intCast(@divTrunc(ns, 1_000_000));
+        return self.newV7Locked(ms);
     }
 
     pub fn newV7AtTime(self: *Generator, ts: i64) Error!UUID {
         if (ts < 0) return Error.InvalidFormat;
         self.mutex.lock();
-        defer self.mutex.unlock();
+        return self.newV7Locked(ts);
+    }
 
+    /// V7 generation core. Caller must hold `mutex` on entry; this function
+    /// always releases `mutex` before returning (on success or error path).
+    ///
+    /// PERF-01: Uses Thread.yield() (~10–50 ns) in the overflow spin-wait
+    ///   instead of Thread.sleep(100_000) (~100 µs+), dramatically reducing
+    ///   burst-throughput stalls when the 12-bit counter overflows.
+    ///
+    /// PERF-02: Releases the mutex before the 8-byte rand_b CSPRNG call so
+    ///   concurrent threads are not serialised on the getrandom syscall.
+    ///   Only the lightweight state update (last_ms, mono_seq) is held.
+    fn newV7Locked(self: *Generator, ts: i64) Error!UUID {
         var ms = ts;
-        // seq is always set before use in every branch below — declared here for scope.
+        // seq is always assigned before use in every branch below.
         var seq: u12 = 0;
 
         if (ms == self.last_ms) {
-            // Same ms: increment sequence counter
+            // Same ms: advance the monotonic sequence counter.
             if (self.mono_seq == std.math.maxInt(u12)) {
-                // Overflow: spin-wait until the clock advances.
+                // Counter exhausted: yield until the clock advances to the next ms.
+                // PERF-01: Thread.yield() (~10–50 ns) vs Thread.sleep(100_000) (~100 µs+).
                 while (ms == self.last_ms) {
                     self.mutex.unlock();
-                    std.Thread.sleep(100_000); // 0.1ms yield
+                    std.Thread.yield() catch {}; // yield; ignore spurious errors
                     self.mutex.lock();
                     ms = @intCast(@divTrunc(self.clock(), 1_000_000));
                 }
-                // ms has advanced — fall through to random reset below
+                // ms has advanced — fall through to random reset below.
             } else {
                 self.mono_seq += 1;
                 seq = self.mono_seq;
@@ -141,13 +160,21 @@ pub const Generator = struct {
         }
 
         if (ms != self.last_ms) {
-            // New ms: reset mono_seq to a random 12-bit value for entropy.
+            // New ms: reset mono_seq to a random 12-bit seed for jitter.
             var rand_seq: [2]u8 = undefined;
-            self.rand(&rand_seq) catch return Error.RandomError;
+            self.rand(&rand_seq) catch {
+                self.mutex.unlock();
+                return Error.RandomError;
+            };
             self.mono_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
             seq = self.mono_seq;
             self.last_ms = ms;
         }
+
+        // PERF-02: Release the mutex before the 8-byte rand_b CSPRNG call.
+        // All shared state (last_ms, mono_seq) is committed above; UUID
+        // construction uses only stack-local variables.
+        self.mutex.unlock();
 
         var u: UUID = undefined;
         // unix_ts_ms: 48 bits big-endian in bytes 0-5
@@ -156,7 +183,7 @@ pub const Generator = struct {
         std.mem.writeInt(u16, u.bytes[4..6], @truncate(ms_u), .big);
         // rand_a: 12-bit monotonic counter in low 12 bits of bytes 6-7
         std.mem.writeInt(u16, u.bytes[6..8], seq, .big);
-        // rand_b: 62 bits random in bytes 8-15
+        // rand_b: 62 bits random in bytes 8-15 (outside the mutex, PERF-02)
         self.rand(u.bytes[8..16]) catch return Error.RandomError;
         u.setVersion(.v7);
         u.setVariant(.rfc9562);
@@ -183,9 +210,14 @@ pub const Generator = struct {
     /// is generated and cached. hwaddr_fn is the explicit opt-in.
     /// F-6/G-6: The result is cached in node_cache. Call clearNodeCache() to
     /// force a re-fetch.
-    fn getNode(self: *Generator) Error![6]u8 {
-        if (self.node_cache) |n| return n;
-
+    /// Compute raw node bytes from hwaddr_fn or CSPRNG without touching the cache.
+    ///
+    /// PERF-05: Safe to call without holding the mutex because it only reads
+    /// immutable generator fields (hwaddr_fn, rand) that are set at init time
+    /// and never mutated afterwards.  Used by newV1AtTime / newV6AtTime to
+    /// perform the expensive OS syscall (getifaddrs / ioctl) BEFORE acquiring
+    /// the hot-path mutex, so concurrent UUID generation is not blocked.
+    fn fetchRawNode(self: *Generator) Error![6]u8 {
         var node: [6]u8 = undefined;
         if (self.hwaddr_fn) |f| {
             if (f()) |mac| {
@@ -200,7 +232,12 @@ pub const Generator = struct {
             self.rand(&node) catch return Error.RandomError;
             node[0] |= 0x01;
         }
+        return node;
+    }
 
+    fn getNode(self: *Generator) Error![6]u8 {
+        if (self.node_cache) |n| return n;
+        const node = try self.fetchRawNode();
         self.node_cache = node;
         return node;
     }
@@ -211,6 +248,16 @@ pub const Generator = struct {
     }
 
     pub fn newV1AtTime(self: *Generator, ts: Timestamp) Error!UUID {
+        // PERF-05: Pre-fetch node outside the mutex on the cold path to avoid
+        // blocking all threads during OS syscalls (socket + ioctl on Linux,
+        // getifaddrs on macOS).  On the warm path node_cache is non-null and
+        // this is a cheap null-check with no allocation.  fetchRawNode reads
+        // only immutable generator fields so it is safe without the lock.
+        const prefetched: ?[6]u8 = if (self.node_cache == null)
+            try self.fetchRawNode()
+        else
+            null;
+
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.initClockSeq(); // F-3: propagate CSPRNG failure
@@ -222,9 +269,13 @@ pub const Generator = struct {
             self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
         }
         self.last_v1_ts = ts.value;
+        // Populate cache under lock if it was null (double-check for concurrent warmup).
+        if (self.node_cache == null) {
+            self.node_cache = prefetched orelse try self.fetchRawNode();
+        }
         // F-4: detect node ID change and increment clock_seq
         const old_node = self.last_node;
-        const node = try self.getNode();
+        const node = try self.getNode(); // guaranteed cache hit after the block above
         if (old_node) |on| {
             if (!std.mem.eql(u8, &on, &node)) {
                 self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
@@ -253,6 +304,13 @@ pub const Generator = struct {
     }
 
     pub fn newV6AtTime(self: *Generator, ts: Timestamp) Error!UUID {
+        // PERF-05: Pre-fetch node outside the mutex on the cold path (same
+        // rationale as newV1AtTime — see comment there).
+        const prefetched: ?[6]u8 = if (self.node_cache == null)
+            try self.fetchRawNode()
+        else
+            null;
+
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.initClockSeq(); // F-3
@@ -261,9 +319,13 @@ pub const Generator = struct {
             self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
         }
         self.last_v1_ts = ts.value;
+        // Populate cache under lock if it was null.
+        if (self.node_cache == null) {
+            self.node_cache = prefetched orelse try self.fetchRawNode();
+        }
         // F-4: detect node ID change
         const old_node = self.last_node;
-        const node = try self.getNode();
+        const node = try self.getNode(); // guaranteed cache hit
         if (old_node) |on| {
             if (!std.mem.eql(u8, &on, &node)) {
                 self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
@@ -377,7 +439,7 @@ pub const Generator = struct {
     /// [8..16]  last_v1_ts as u64 LE
     /// [16..22] node_cache [6]u8
     /// [22..30] last_ms as i64 LE  (SEC-10: V7 last-used timestamp)
-    /// [30..32] mono_seq as u16 LE (SEC-10: V7 counter; loaded as 0x0FFF to force tick)
+    /// [30..32] mono_seq as u16 LE (SEC-10: V7 counter; see loadState for clock-based handling)
     ///
     /// saveState() always writes version 2.  loadState() accepts both versions.
     pub const state_magic: [4]u8 = "UUID".*;
@@ -394,36 +456,42 @@ pub const Generator = struct {
     ///
     /// **SEC-1:** File is created with mode 0o600 (owner read/write only).
     /// **SEC-9:** Uses an atomic write-then-rename to prevent torn-write state.
-    /// **SEC-10:** Persists V7 state; on load mono_seq is set to 0x0FFF so
-    ///             the first post-restart V7 call forces a new clock tick.
+    /// **SEC-10:** Persists V7 state; see loadState for clock-based restart handling.
+    /// **PERF:** State is serialised under the mutex into a stack buffer, then the
+    ///           mutex is released before any file I/O.  UUID generation is not
+    ///           blocked by slow storage (NFS, spinning disk, etc.).
     pub fn saveState(self: *Generator, path: []const u8) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
+        // Snapshot state under the mutex; release before I/O.
         var buf: [state_size]u8 = undefined;
-        @memcpy(buf[0..4], &state_magic);
-        buf[4] = state_format_version; // = 2
+        {
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
-        var flags: u8 = 0;
-        if (self.clock_seq_initialized) flags |= 0x01;
-        if (self.node_cache != null) flags |= 0x02;
-        buf[5] = flags;
+            @memcpy(buf[0..4], &state_magic);
+            buf[4] = state_format_version; // = 2
 
-        std.mem.writeInt(u16, buf[6..8], @as(u16, self.clock_seq), .little);
-        std.mem.writeInt(u64, buf[8..16], @as(u64, self.last_v1_ts), .little);
-        if (self.node_cache) |n| {
-            @memcpy(buf[16..22], &n);
-        } else {
-            @memset(buf[16..22], 0);
+            var flags: u8 = 0;
+            if (self.clock_seq_initialized) flags |= 0x01;
+            if (self.node_cache != null) flags |= 0x02;
+            buf[5] = flags;
+
+            std.mem.writeInt(u16, buf[6..8], @as(u16, self.clock_seq), .little);
+            std.mem.writeInt(u64, buf[8..16], @as(u64, self.last_v1_ts), .little);
+            if (self.node_cache) |n| {
+                @memcpy(buf[16..22], &n);
+            } else {
+                @memset(buf[16..22], 0);
+            }
+            // SEC-10: persist V7 state.
+            std.mem.writeInt(i64, buf[22..30], self.last_ms, .little);
+            std.mem.writeInt(u16, buf[30..32], @as(u16, self.mono_seq), .little);
         }
-        // SEC-10: persist V7 state.
-        std.mem.writeInt(i64, buf[22..30], self.last_ms, .little);
-        std.mem.writeInt(u16, buf[30..32], @as(u16, self.mono_seq), .little);
 
         // SEC-9: atomic write — write to <path>.tmp then rename so that a
         // crash or signal between write and close never leaves a torn file.
         // SEC-1: mode 0o600 prevents other local users reading the state,
         // which may contain the node ID (hardware MAC when hwaddr_fn is set).
+        // The mutex is NOT held during I/O (see PERF note above).
         var tmp_path_buf: [4100]u8 = undefined;
         const tmp_path = try std.fmt.bufPrint(&tmp_path_buf, "{s}.tmp", .{path});
         {
@@ -435,15 +503,18 @@ pub const Generator = struct {
         try std.fs.renameAbsolute(tmp_path, path);
     }
 
-    /// Load generator state from stable storage (F-9, SEC-10).
+    /// Load generator state from stable storage (F-9, SEC-10, PERF-04).
     ///
     /// Accepts both state format version 1 (22 bytes, V1/V6 state only) and
     /// version 2 (32 bytes, V1/V6 + V7 state).  Returns error.InvalidFormat
     /// for corrupted or version-mismatched files.
     ///
-    /// When loading V7 state (version 2), mono_seq is set to 0x0FFF so that
-    /// the first post-restart V7 call forces a fresh clock tick rather than
-    /// risking a collision with the pre-restart sequence.
+    /// When loading V7 state (version 2), the current clock is compared against
+    /// the saved last_ms.  On typical restarts (>1ms downtime) the clock has
+    /// already advanced, so both last_ms and mono_seq are reset to zero — no
+    /// spin-wait on the first post-restart V7 call.  Only when last_ms is still
+    /// current (extremely fast restart within the same millisecond) is mono_seq
+    /// set to maxInt(u12) to force a spin-wait and prevent collisions.
     pub fn loadState(self: *Generator, path: []const u8) !void {
         const f = try std.fs.openFileAbsolute(path, .{});
         defer f.close();
@@ -469,12 +540,23 @@ pub const Generator = struct {
             self.node_cache = null;
         }
 
-        // SEC-10: restore V7 state only from version-2 files.
+        // PERF-04 + SEC-10: restore V7 state only from version-2 files.
         if (buf[4] == state_format_version and n == state_size) {
-            self.last_ms = std.mem.readInt(i64, buf[22..30], .little);
-            // Force mono_seq to max so the next V7 call spins to a new tick,
-            // preventing any collision with pre-restart UUIDs.
-            self.mono_seq = 0x0FFF;
+            const saved_ms = std.mem.readInt(i64, buf[22..30], .little);
+            // Compare saved timestamp against current clock.  On typical
+            // restarts (>1ms downtime) the clock has already advanced past
+            // saved_ms, so there is no collision risk — reset both fields for
+            // a clean start with no spin-wait penalty.
+            // Only force mono_seq overflow when saved_ms is still current
+            // (extremely fast restart within the same millisecond).
+            const current_ms: i64 = @intCast(@divTrunc(std.time.nanoTimestamp(), 1_000_000));
+            if (current_ms > saved_ms) {
+                self.last_ms = 0;
+                self.mono_seq = 0;
+            } else {
+                self.last_ms = saved_ms;
+                self.mono_seq = std.math.maxInt(u12);
+            }
         }
     }
 };
@@ -992,10 +1074,40 @@ test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
     try std.testing.expectEqual(gen.last_v1_ts, gen2.last_v1_ts);
     try std.testing.expectEqualSlices(u8, &(gen.node_cache.?), &(gen2.node_cache.?));
 
-    // SEC-10: V7 last_ms preserved; mono_seq loaded as 0x0FFF (max) so that
-    // the first post-restart V7 call forces a fresh clock tick.
-    try std.testing.expectEqual(gen.last_ms, gen2.last_ms);
-    try std.testing.expectEqual(@as(u12, 0x0FFF), gen2.mono_seq);
+    // PERF-04 + SEC-10: gen.last_ms (Nov 2023) is well in the past, so the
+    // clock-advance branch fires and both V7 fields are reset to zero.
+    // No spin-wait penalty on the first post-restart V7 call.
+    try std.testing.expectEqual(@as(i64, 0), gen2.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen2.mono_seq);
+}
+
+test "Generator.loadState: V7 fast-restart forces mono_seq overflow (PERF-04)" {
+    // When the saved last_ms is in the future (or equal to now), the
+    // conservative path activates: last_ms is kept, mono_seq = maxInt.
+    const path = "/tmp/uuid_v7_fast_restart_test.bin";
+    defer std.fs.deleteFileAbsolute(path) catch {};
+
+    // Use a far-future last_ms so that current_ms <= saved_ms always holds.
+    const far_future_ms: i64 = std.math.maxInt(i64);
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version;
+    blob[5] = 0x01; // clock_seq_initialized
+    std.mem.writeInt(u16, blob[6..8], 0, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], far_future_ms, .little);
+    std.mem.writeInt(u16, blob[30..32], 0x0042, .little);
+
+    const f = try std.fs.createFileAbsolute(path, .{});
+    try f.writeAll(&blob);
+    f.close();
+
+    var gen = Generator.init();
+    try gen.loadState(path);
+    // Clock has NOT advanced past far_future_ms → conservative overflow.
+    try std.testing.expectEqual(far_future_ms, gen.last_ms);
+    try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
 }
 
 test "Generator.saveState is atomic: no .tmp file lingers on success (SEC-9)" {

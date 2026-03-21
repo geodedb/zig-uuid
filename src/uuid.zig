@@ -297,53 +297,111 @@ pub const UUID = struct {
 
 // --- private helpers ---
 
-fn toStringImpl(self: UUID, buf: *[36]u8, hex: *const [16]u8) []u8 {
-    const groups = [_]struct { start: usize, len: usize }{
-        .{ .start = 0, .len = 4 },
-        .{ .start = 4, .len = 2 },
-        .{ .start = 6, .len = 2 },
-        .{ .start = 8, .len = 2 },
-        .{ .start = 10, .len = 6 },
-    };
-    var pos: usize = 0;
-    for (groups, 0..) |g, gi| {
-        if (gi > 0) {
-            buf[pos] = '-';
-            pos += 1;
-        }
-        for (self.bytes[g.start .. g.start + g.len]) |byte| {
-            buf[pos] = hex[byte >> 4];
-            buf[pos + 1] = hex[byte & 0x0F];
-            pos += 2;
-        }
+/// PERF-09: Fully unrolled UUID-to-canonical-string encoding.
+///
+/// Using `comptime hex` (compile-time-known table) + `inline for` with
+/// comptime-tracked buffer offsets eliminates all runtime loop overhead:
+/// no loop counter, no conditional dash check, hex table stays in registers.
+/// The compiler emits 36 fixed-offset byte stores with no branches.
+fn toStringImpl(self: UUID, buf: *[36]u8, comptime hex: *const [16]u8) []u8 {
+    // Group 1: UUID bytes 0-3 → buf[0..7]
+    comptime var pos: usize = 0;
+    inline for (0..4) |i| {
+        buf[pos] = hex[self.bytes[i] >> 4];
+        buf[pos + 1] = hex[self.bytes[i] & 0x0F];
+        pos += 2;
+    }
+    buf[pos] = '-';
+    pos += 1;
+    // Group 2: UUID bytes 4-5 → buf[9..12]
+    inline for (0..2) |i| {
+        buf[pos] = hex[self.bytes[4 + i] >> 4];
+        buf[pos + 1] = hex[self.bytes[4 + i] & 0x0F];
+        pos += 2;
+    }
+    buf[pos] = '-';
+    pos += 1;
+    // Group 3: UUID bytes 6-7 → buf[14..17]
+    inline for (0..2) |i| {
+        buf[pos] = hex[self.bytes[6 + i] >> 4];
+        buf[pos + 1] = hex[self.bytes[6 + i] & 0x0F];
+        pos += 2;
+    }
+    buf[pos] = '-';
+    pos += 1;
+    // Group 4: UUID bytes 8-9 → buf[19..22]
+    inline for (0..2) |i| {
+        buf[pos] = hex[self.bytes[8 + i] >> 4];
+        buf[pos + 1] = hex[self.bytes[8 + i] & 0x0F];
+        pos += 2;
+    }
+    buf[pos] = '-';
+    pos += 1;
+    // Group 5: UUID bytes 10-15 → buf[24..35]
+    inline for (0..6) |i| {
+        buf[pos] = hex[self.bytes[10 + i] >> 4];
+        buf[pos + 1] = hex[self.bytes[10 + i] & 0x0F];
+        pos += 2;
     }
     return buf[0..36];
 }
 
-fn toHexImpl(self: UUID, buf: *[32]u8, hex: *const [16]u8) []u8 {
-    for (self.bytes, 0..) |byte, i| {
-        buf[i * 2] = hex[byte >> 4];
-        buf[i * 2 + 1] = hex[byte & 0x0F];
+/// PERF-09: Same inline-for optimization as toStringImpl.
+fn toHexImpl(self: UUID, buf: *[32]u8, comptime hex: *const [16]u8) []u8 {
+    inline for (0..16) |i| {
+        buf[i * 2] = hex[self.bytes[i] >> 4];
+        buf[i * 2 + 1] = hex[self.bytes[i] & 0x0F];
     }
     return buf[0..32];
 }
 
+/// PERF-10: Decode a single hex character to its 4-bit value.
+/// A switch-with-ranges pattern that LLVM typically lowers to branchless code.
+inline fn hexVal(c: u8) Error!u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
+        else => Error.InvalidFormat,
+    };
+}
+
+/// PERF-10: Fixed-offset canonical UUID parse.
+///
+/// Dash positions are validated once upfront, then each of the 16 UUID bytes
+/// is decoded at a compile-time-known string offset via `inline for`.  This
+/// eliminates the loop counter variable, the `if (s[i] == '-') continue`
+/// branch per iteration, and the post-loop `out != 16` check.
 fn parseCanonical(s: []const u8) Error!UUID {
     // Validate dash positions: 8-4-4-4-12
     if (s[8] != '-' or s[13] != '-' or s[18] != '-' or s[23] != '-')
         return Error.InvalidDashes;
+
+    // Precomputed string offsets for each of the 16 UUID bytes.
+    // Groups: [0..7], [9..12], [14..17], [19..22], [24..35]
+    // Verified: offsets[15] = 34, s[34]+s[35] encodes bytes[15]. ✓
+    const offsets = comptime blk: {
+        var off: [16]usize = undefined;
+        var byte_i: usize = 0;
+        var str_p: usize = 0;
+        for ([5]usize{ 4, 2, 2, 2, 6 }, 0..) |n, gi| {
+            if (gi > 0) str_p += 1; // skip dash
+            var j: usize = 0;
+            while (j < n) : (j += 1) {
+                off[byte_i] = str_p;
+                byte_i += 1;
+                str_p += 2;
+            }
+        }
+        break :blk off;
+    };
+
     var u: UUID = undefined;
-    var out: usize = 0;
-    var i: usize = 0;
-    while (i < s.len) : (i += 1) {
-        if (s[i] == '-') continue;
-        const hi = std.fmt.charToDigit(s[i], 16) catch return Error.InvalidFormat;
-        i += 1;
-        const lo = std.fmt.charToDigit(s[i], 16) catch return Error.InvalidFormat;
-        u.bytes[out] = (hi << 4) | lo;
-        out += 1;
+    inline for (offsets, 0..) |off, i| {
+        const hi = try hexVal(s[off]);
+        const lo = try hexVal(s[off + 1]);
+        u.bytes[i] = (hi << 4) | lo;
     }
-    if (out != 16) return Error.InvalidFormat;
     return u;
 }
 
