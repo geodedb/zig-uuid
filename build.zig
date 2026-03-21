@@ -7,26 +7,36 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Dependencies
+    const json_dep = b.dependency("json", .{ .target = target, .optimize = optimize });
+    const json_module = json_dep.module("json");
+
     // Main library module
     const module = b.addModule("uuid", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "json", .module = json_module },
+        },
     });
 
-    // Unit tests (run tests defined in the module itself)
+    // Unit tests
     const test_step = b.step("test", "Run unit tests");
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "json", .module = json_module },
+            },
         }),
     });
     const run_unit_tests = b.addRunArtifact(unit_tests);
     test_step.dependOn(&run_unit_tests.step);
 
-    // Integration tests (separate test file with module import)
+    // Integration tests
     const integration_step = b.step("test-integration", "Run integration tests");
     const integration_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -35,20 +45,53 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "uuid", .module = module },
+                .{ .name = "json", .module = json_module },
             },
         }),
     });
     const run_integration_tests = b.addRunArtifact(integration_tests);
     integration_step.dependOn(&run_integration_tests.step);
 
-    // Check step for IDE integration (fast syntax validation)
+    // Check step (fast syntax validation)
     const check_step = b.step("check", "Check for compilation errors");
     const check = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "json", .module = json_module },
+            },
         }),
     });
     check_step.dependOn(&check.step);
+
+    // Cross-compile check step — one check artifact per target triple.
+    // The Makefile calls `zig build check-cross -Dtarget=<triple>` per target,
+    // which works because standardTargetOptions picks up -Dtarget from the CLI.
+    // Per-target artifacts are wired here matching the spec's build.zig design.
+    const cross_step = b.step("check-cross", "Cross-compile check for the active -Dtarget");
+    const cross_targets = [_][]const u8{
+        "x86_64-linux",
+        "aarch64-linux",
+        "x86_64-macos",
+        "aarch64-macos",
+        "x86_64-windows",
+    };
+    for (cross_targets) |triple| {
+        const cross_target = b.resolveTargetQuery(
+            std.Target.Query.parse(.{ .arch_os_abi = triple }) catch unreachable,
+        );
+        const cross_check = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/root.zig"),
+                .target = cross_target,
+                .optimize = .Debug,
+                .imports = &.{
+                    .{ .name = "json", .module = json_module },
+                },
+            }),
+        });
+        cross_step.dependOn(&cross_check.step);
+    }
 }

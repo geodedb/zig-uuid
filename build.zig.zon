@@ -3,11 +3,18 @@
     .version = "0.1.0",
     .fingerprint = 0xd17f50a6ae62bdb4,
     .minimum_zig_version = "0.15.1",
-    .dependencies = .{},
+    .dependencies = .{
+        .json = .{
+            .url = "git+https://gitlab.com/devnw/zig/json.git#4c2032be31443f4504427c205419fced275d4263",
+            .hash = "json-0.1.0-tOue4fSoCwDuFpNLxdd4yUQyL3g9o3su9jiX5W08e3x5",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "examples",
+        "docs",
         "LICENSE",
         "README.md",
     },

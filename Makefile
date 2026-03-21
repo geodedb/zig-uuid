@@ -5,6 +5,7 @@
 .PHONY: all build test test-unit test-integration clean check fmt help dev ci
 .PHONY: test-release-safe test-release-fast test-release-small test-all-optimizations
 .PHONY: pre-commit-install pre-commit pre-commit-run
+.PHONY: cross-compile-required cross-compile
 
 # Default target: build and run tests
 all: build test-unit
@@ -42,7 +43,7 @@ check:
 # Format source code
 fmt:
 	@echo "📝 Formatting code..."
-	@zig fmt src/ tests/ build.zig
+	@zig fmt src/ tests/ examples/ build.zig
 
 # Quick development iteration loop
 dev: fmt check test-unit
@@ -67,6 +68,19 @@ test-release-small:
 
 test-all-optimizations: test-unit test-release-safe test-release-fast test-release-small
 	@echo "✅ All optimization levels passed"
+
+# Cross-compilation (zig build check for required targets)
+CROSS_TARGETS = x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows
+
+cross-compile-required:
+	@echo "🔀 Cross-compile check for required targets..."
+	@for target in $(CROSS_TARGETS); do \
+		echo "  Checking $$target..."; \
+		zig build check-cross -Dtarget=$$target || exit 1; \
+	done
+	@echo "✅ All cross-compile targets pass"
+
+cross-compile: cross-compile-required
 
 # Pre-commit hook management
 pre-commit-install:
@@ -107,6 +121,10 @@ help:
 	@echo "  check                Check for compilation errors"
 	@echo "  pre-commit           Run pre-commit hooks"
 	@echo "  pre-commit-install   Install pre-commit hooks"
+	@echo ""
+	@echo "Cross-compilation:"
+	@echo "  cross-compile-required  Check required targets (x86_64/aarch64 linux/macos, x86_64-windows)"
+	@echo "  cross-compile           Alias for cross-compile-required"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  clean                Remove build artifacts"
