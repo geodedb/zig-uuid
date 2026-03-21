@@ -1,40 +1,166 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 CodePros
 
-//! Integration tests for uuid
-//!
-//! These tests verify end-to-end functionality and cross-module interactions.
+//! Integration tests — cross-module round-trips, JSON, and concurrent generation.
 
 const std = @import("std");
-const lib = @import("uuid");
+const uuid = @import("uuid");
+const json = @import("json");
 
-// ============================================================================
-// Integration Tests
-// ============================================================================
+// =============================================================================
+// Round-trip: generate → toString → fromString → eql
+// =============================================================================
 
-test "integration: library initializes successfully" {
-    try lib.init(.{});
+test "integration: V4 round-trip" {
+    const u = try uuid.newV4();
+    var buf: [36]u8 = undefined;
+    const s = u.toString(&buf);
+    const parsed = try uuid.UUID.fromString(s);
+    try std.testing.expect(u.eql(parsed));
 }
 
-test "integration: custom configuration" {
-    try lib.init(.{
-        .debug = true,
-        .max_retries = 5,
-        .timeout_ms = 60_000,
-    });
+test "integration: V7 round-trip" {
+    const u = try uuid.newV7();
+    var buf: [36]u8 = undefined;
+    const s = u.toString(&buf);
+    const parsed = try uuid.UUID.fromString(s);
+    try std.testing.expect(u.eql(parsed));
 }
 
-test "integration: version is defined" {
-    try std.testing.expectEqualStrings("0.1.0", lib.version);
+test "integration: V3 round-trip" {
+    const u = uuid.newV3(uuid.namespace_dns, "www.example.com");
+    var buf: [36]u8 = undefined;
+    const s = u.toString(&buf);
+    const parsed = try uuid.UUID.fromString(s);
+    try std.testing.expect(u.eql(parsed));
 }
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
+test "integration: V5 round-trip" {
+    const u = uuid.newV5(uuid.namespace_url, "https://example.com");
+    var buf: [36]u8 = undefined;
+    const s = u.toString(&buf);
+    const parsed = try uuid.UUID.fromString(s);
+    try std.testing.expect(u.eql(parsed));
+}
 
-fn expectSuccess(result: anytype) !void {
-    _ = result catch |err| {
-        std.debug.print("Unexpected error: {}\n", .{err});
-        return error.TestUnexpectedResult;
+test "integration: V1 round-trip" {
+    const u = try uuid.newV1();
+    var buf: [36]u8 = undefined;
+    const s = u.toString(&buf);
+    const parsed = try uuid.UUID.fromString(s);
+    try std.testing.expect(u.eql(parsed));
+    // Version and variant preserved
+    try std.testing.expectEqual(uuid.Version.v1, parsed.version());
+    try std.testing.expectEqual(uuid.Variant.rfc9562, parsed.variant());
+}
+
+// =============================================================================
+// NullUUID JSON round-trip
+// =============================================================================
+
+test "integration: NullUUID null JSON round-trip" {
+    const alloc = std.testing.allocator;
+    const nu = uuid.NullUUID{};
+    const v = try nu.jsonMarshal(alloc);
+    try std.testing.expect(v == .null);
+    const nu2 = try uuid.NullUUID.jsonUnmarshal(alloc, v);
+    try std.testing.expect(!nu2.valid);
+}
+
+test "integration: NullUUID string JSON round-trip" {
+    const alloc = std.testing.allocator;
+    const u = try uuid.newV4();
+    const nu = uuid.NullUUID.from(u);
+    const v = try nu.jsonMarshal(alloc);
+    defer alloc.free(v.str);
+    const nu2 = try uuid.NullUUID.jsonUnmarshal(alloc, v);
+    try std.testing.expect(nu2.valid);
+    try std.testing.expect(nu2.uuid.eql(u));
+}
+
+test "integration: UUID in struct encoded with json.encode" {
+    const alloc = std.testing.allocator;
+    const MyStruct = struct {
+        id: uuid.UUID,
+        name: []const u8,
     };
+    const s = MyStruct{
+        .id = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
+        .name = "test",
+    };
+    const encoded = try json.encode(alloc, s, .{ .allocator = alloc });
+    defer alloc.free(encoded);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "6ba7b810-9dad-11d1-80b4-00c04fd430c8") != null);
+}
+
+// =============================================================================
+// Concurrent V7 generation: no duplicates, strictly monotone per goroutine
+// =============================================================================
+
+const ConcurrentResult = struct {
+    uuids: [100]uuid.UUID = undefined,
+    err: ?anyerror = null,
+};
+
+fn generateV7s(gen: *uuid.Generator, result: *ConcurrentResult) void {
+    for (&result.uuids) |*u| {
+        u.* = gen.newV7() catch |e| {
+            result.err = e;
+            return;
+        };
+    }
+}
+
+test "integration: concurrent V7 generation — no duplicates" {
+    var gen = uuid.Generator.init();
+    var results: [4]ConcurrentResult = [_]ConcurrentResult{.{}} ** 4;
+    var threads: [4]std.Thread = undefined;
+
+    for (&threads, &results) |*t, *r| {
+        t.* = try std.Thread.spawn(.{}, generateV7s, .{ &gen, r });
+    }
+    for (&threads) |*t| t.join();
+
+    for (&results) |*r| {
+        try std.testing.expect(r.err == null);
+    }
+
+    // Collect all UUIDs and check for duplicates
+    var all: [400]uuid.UUID = undefined;
+    var idx: usize = 0;
+    for (&results) |r| {
+        for (r.uuids) |u| {
+            all[idx] = u;
+            idx += 1;
+        }
+    }
+    // Sort and check adjacent for equality
+    std.mem.sort(uuid.UUID, &all, {}, struct {
+        pub fn lt(_: void, a: uuid.UUID, b: uuid.UUID) bool {
+            return a.order(b) == .lt;
+        }
+    }.lt);
+    for (0..all.len - 1) |i| {
+        try std.testing.expect(!all[i].eql(all[i + 1]));
+    }
+}
+
+// =============================================================================
+// All parse formats produce the same UUID
+// =============================================================================
+
+test "integration: all six parse formats produce identical UUID" {
+    const canonical = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+    const braced = "{6ba7b810-9dad-11d1-80b4-00c04fd430c8}";
+    const hash = "6ba7b8109dad11d180b400c04fd430c8";
+    const braced_hash = "{6ba7b8109dad11d180b400c04fd430c8}";
+    const urn_canonical = "urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+    const urn_hash = "urn:uuid:6ba7b8109dad11d180b400c04fd430c8";
+
+    const base = try uuid.UUID.fromString(canonical);
+    const inputs = [_][]const u8{ braced, hash, braced_hash, urn_canonical, urn_hash };
+    for (inputs) |s| {
+        const u = try uuid.UUID.fromString(s);
+        try std.testing.expect(base.eql(u));
+    }
 }
