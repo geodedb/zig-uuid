@@ -409,8 +409,8 @@ fn parseHash(s: []const u8) Error!UUID {
     var u: UUID = undefined;
     var i: usize = 0;
     while (i < 16) : (i += 1) {
-        const hi = std.fmt.charToDigit(s[i * 2], 16) catch return Error.InvalidFormat;
-        const lo = std.fmt.charToDigit(s[i * 2 + 1], 16) catch return Error.InvalidFormat;
+        const hi = try hexVal(s[i * 2]);
+        const lo = try hexVal(s[i * 2 + 1]);
         u.bytes[i] = (hi << 4) | lo;
     }
     return u;

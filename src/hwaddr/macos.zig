@@ -74,7 +74,7 @@ pub fn getHWAddr() Error![6]u8 {
         // actual allocation.  The fixed-size header occupies 8 bytes, so the
         // data region is sdl_len - 8 bytes long.
         const mac_offset: usize = sdl.sdl_nlen;
-        const header_size: usize = 8; // sdl_len+sdl_family+sdl_index+sdl_type+sdl_nlen+sdl_alen+sdl_slen
+        const header_size: usize = @offsetOf(c.sockaddr_dl, "sdl_data"); // validated by compiler
         if (@as(usize, sdl.sdl_len) < header_size + mac_offset + 6) continue;
         // Secondary guard against our declared array size (defensive):
         if (mac_offset + 6 > sdl.sdl_data.len) continue;

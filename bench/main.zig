@@ -22,6 +22,7 @@ pub fn main() !void {
     try benchV4();
     try benchV7();
     try benchV1();
+    try benchV6();
     try benchToString();
     try benchFromString();
 }
@@ -54,6 +55,16 @@ fn benchV1() !void {
         _ = try gen.newV1();
     }
     report("newV1", start);
+}
+
+fn benchV6() !void {
+    var gen = uuid.Generator.init();
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        _ = try gen.newV6();
+    }
+    report("newV6", start);
 }
 
 fn benchToString() !void {

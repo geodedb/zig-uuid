@@ -20,7 +20,7 @@ include:
   - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.7.1
 
 variables:
-  ZIG_VERSION: "0.15.1"
+  ZIG_VERSION: "0.15.2"
 
 stages:
   - lint
@@ -106,7 +106,17 @@ test-integration-release-fast:
   needs:
     - build
 
-# Cross-compilation tests
+# Examples build verification (QC-15: ensures API drift is caught in CI)
+build-examples:
+  stage: build
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+  script:
+    - zig build examples
+  needs: []
+
+# Cross-compilation tests (QC-8: includes x86_64-windows)
 test-cross-build:
   stage: test
   image: debian:bookworm-slim
@@ -117,5 +127,6 @@ test-cross-build:
     - zig build -Dtarget=aarch64-linux
     - zig build -Dtarget=x86_64-macos
     - zig build -Dtarget=aarch64-macos
+    - zig build -Dtarget=x86_64-windows
   needs:
     - build

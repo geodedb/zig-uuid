@@ -1,16 +1,17 @@
 # uuid
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Zig](https://img.shields.io/badge/Zig-0.15.1+-orange.svg)](https://ziglang.org/)
+[![Zig](https://img.shields.io/badge/Zig-0.15.2+-orange.svg)](https://ziglang.org/)
 
-A Zig library for uuid
+A fully RFC-9562-compliant UUID library for Zig.
 
 ## Features
 
-- **Zero Dependencies**: Pure Zig standard library only
+- **RFC-9562 Compliant**: Full V1, V3, V4, V5, V6, V7, V8 support
 - **Memory Safe**: Proper allocation patterns with no leaks
 - **Cross-Platform**: Linux, macOS, Windows support
 - **Well Tested**: Comprehensive unit and integration tests
+- **Injectable**: Clock, random, and hardware-address functions are swappable
 
 ## Installation
 
@@ -44,9 +45,18 @@ const std = @import("std");
 const uuid = @import("uuid");
 
 pub fn main() !void {
-    try uuid.init(.{
-        .debug = true,
-    });
+    // Generate a V7 UUID (recommended: Unix-ms timestamp + monotonic counter)
+    const v7 = try uuid.newV7();
+    var buf: [36]u8 = undefined;
+    std.debug.print("V7: {s}\n", .{v7.toString(&buf)});
+
+    // Generate a V4 UUID (random)
+    const v4 = try uuid.newV4();
+    std.debug.print("V4: {s}\n", .{v4.toString(&buf)});
+
+    // Parse any supported format (canonical, braced, hash, URN)
+    const parsed = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    std.debug.print("parsed: {s}\n", .{parsed.toString(&buf)});
 }
 ```
 

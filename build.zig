@@ -83,6 +83,21 @@ pub fn build(b: *std.Build) void {
     const run_bench = b.addRunArtifact(bench_exe);
     bench_step.dependOn(&run_bench.step);
 
+    // Examples build step (QC-15: ensures examples compile and API drift is caught)
+    const examples_step = b.step("examples", "Build examples");
+    const example_exe = b.addExecutable(.{
+        .name = "basic",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/basic.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "uuid", .module = module },
+            },
+        }),
+    });
+    examples_step.dependOn(&example_exe.step);
+
     // Cross-compile check step — all five target triples are compiled unconditionally.
     // Each invocation of `zig build check-cross` compiles all five targets,
     // so `make cross-compile-required` (which calls this once) checks everything.

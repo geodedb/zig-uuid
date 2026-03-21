@@ -81,7 +81,7 @@ test {
     _ = @import("uuid.zig");
     _ = @import("namespace.zig");
     _ = @import("timestamp.zig");
-    _ = @import("generator.zig");
+    _ = @import("generator.zig"); // transitively imports generator_test.zig (QC-4)
     _ = @import("versions.zig");
     _ = @import("null_uuid.zig");
     _ = @import("hwaddr/hwaddr.zig");
