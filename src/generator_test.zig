@@ -175,6 +175,57 @@ test "Generator.newV5: RFC Appendix B — DNS namespace + 'www.example.com'" {
     );
 }
 
+// QC-66: Additional namespace test vectors for V3 and V5.
+// Reference values verified with Python's uuid.uuid3() / uuid.uuid5().
+
+test "Generator.newV3: URL namespace + 'www.example.com' (QC-66)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const u = gen.newV3(ns_mod.namespace_url, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings("a777199a-c522-31c4-8f4b-335feec7215b", u.toString(&buf));
+}
+
+test "Generator.newV3: OID namespace + 'www.example.com' (QC-66)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const u = gen.newV3(ns_mod.namespace_oid, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings("c2c1e4de-6589-389e-9375-32a90c6a83a8", u.toString(&buf));
+}
+
+test "Generator.newV3: X500 namespace + 'www.example.com' (QC-66)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const u = gen.newV3(ns_mod.namespace_x500, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings("f4ea5e25-91d4-38b0-b74f-af6c57210cae", u.toString(&buf));
+}
+
+test "Generator.newV5: URL namespace + 'www.example.com' (QC-66)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const u = gen.newV5(ns_mod.namespace_url, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings("b63cdfa4-3df9-568e-97ae-006c5b8fd652", u.toString(&buf));
+}
+
+test "Generator.newV5: OID namespace + 'www.example.com' (QC-66)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const u = gen.newV5(ns_mod.namespace_oid, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings("a5e87d3b-479e-52da-b98a-db251a851854", u.toString(&buf));
+}
+
+test "Generator.newV5: X500 namespace + 'www.example.com' (QC-66)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const u = gen.newV5(ns_mod.namespace_x500, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings("a1d3adb1-15b7-5395-a05f-9051a08769a2", u.toString(&buf));
+}
+
 test "Generator.newV1: clock_seq increments on clock regression" {
     const mock_hw = struct {
         fn getHW() Error![6]u8 {

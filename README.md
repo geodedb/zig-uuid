@@ -126,6 +126,9 @@ pub fn main() !void {
 |--------|-------------|
 | `NullUUID.from(u) NullUUID` | Wrap a UUID value (valid = true) |
 | `nu.value() ?UUID` | Returns `?UUID` — null if not valid |
+| `nu.format(w) !void` | Format as canonical UUID string or `"null"` via `{f}` specifier |
+| `nu.jsonMarshal(alloc) !json.Value` | Marshal to JSON string or `json.Value.null` |
+| `NullUUID.jsonUnmarshal(alloc, v) !NullUUID` | Unmarshal from JSON string or null value |
 
 ### Generator
 
@@ -133,6 +136,7 @@ pub fn main() !void {
 |--------|-------------|
 | `Generator.init() Generator` | Default generator (CSPRNG, random node) |
 | `Generator.withClock(f) Generator` | Inject a custom clock function |
+| `Generator.withRand(f) Generator` | Inject a custom random-bytes function (e.g. for testing) |
 | `Generator.withHWAddr(f) Generator` | Opt in to real MAC address embedding |
 | `gen.clearNodeCache()` | Force re-sample of node ID |
 | `gen.saveState(path) !void` | Persist clock state to file (mode 0o600) |

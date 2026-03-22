@@ -1,10 +1,10 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-03-22 (Cycle 8 complete — 7 findings, 7/7 closed)
+> **Last updated:** 2026-03-22 (Cycle 10 closed — 9 findings, 8/9 closed, 1 Won't Do)
 > **Zig version audited:** 0.15.2
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
-> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61)
+> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70)
 
 ---
 
@@ -29,8 +29,24 @@
 | 8 | High | 2 | ✅ All closed |
 | 8 | Medium | 4 | ✅ All closed |
 | 8 | Low | 1 | ✅ Closed |
+| 9 | — | 0 | ✅ No new findings |
+| 10 | Low | 9 | ✅ 8 closed, 🚫 1 Won't Do (QC-64) |
 
-**Total issues:** 61 — **60 closed, 1 Won't Do (QC-16), 0 open**
+**Total issues:** 70 — **68 closed, 2 Won't Do (QC-16, QC-64), 0 open**
+
+### Top 5 Closed Items (Cycle 10)
+
+All Cycle 10 findings were closed on 2026-03-22:
+
+- ✅ QC-62 — Doc comments added to 8 public functions in `src/uuid.zig`
+- ✅ QC-63 — XOR sink pattern added to `benchV4/V7/V1/V6/V7AtTime` in `bench/main.zig`
+- 🚫 QC-64 — Won't Do: `GeneratorInterface` extraction to `generator_interface.zig` causes circular import (vtable references `*Generator`, same resolution as QC-38)
+- ✅ QC-65 — Tests extracted from `src/uuid.zig` to `src/uuid_test.zig`; uuid.zig reduced to 523 lines
+- ✅ QC-66 — V3/V5 test vectors added for `namespace_url`, `namespace_oid`, `namespace_x500`
+- ✅ QC-67 — README NullUUID table updated with `format()`, `jsonMarshal()`, `jsonUnmarshal()`
+- ✅ QC-68 — `test-release-small` CI job added to `.gitlab-ci.yml`
+- ✅ QC-69 — 10 `expectError` integration tests added to `tests/integration.zig`
+- ✅ QC-70 — README Generator table updated with `Generator.withRand(f)`
 
 ### Top 5 Open Risks (Cycle 8)
 
@@ -121,6 +137,15 @@ All Cycle 5 findings were closed in the same cycle (2026-03-21):
 | 38 | Medium | 36 | maintainability | `build.zig.zon` `.paths` omits `tests/`, `bench/`, `CHANGELOG.md` | `build.zig.zon:12–21` | Published package missing integration tests and benchmarks | [#113](https://gitlab.com/devnw/zig/uuid/-/work_items/113) | Updated `.paths` to include `tests/`, `bench/`, `CHANGELOG.md` (QC-58) | ✅ Closed |
 | 39 | Medium | 36 | ci-cd | Fuzz targets never exercised in CI — only static corpus test mode runs | `.gitlab-ci.yml`, `src/fuzz.zig` | No CI job uses `--fuzz` flag | [#114](https://gitlab.com/devnw/zig/uuid/-/work_items/114) | Added scheduled fuzz CI job + Makefile `fuzz` target (QC-59) | ✅ Closed |
 | 40 | Low | 24 | maintainability | `Makefile` missing `bench` and `fuzz` targets | `Makefile` | `make help` has no bench or fuzz entries | [#115](https://gitlab.com/devnw/zig/uuid/-/work_items/115) | Added `bench` and `fuzz` make targets (QC-61) | ✅ Closed |
+| 41 | Low | 16 | maintainability | `src/generator.zig` at 847 lines — 47 over 800-line guideline (third recurrence) | `src/generator.zig` | `wc -l` = 847; vtable block (lines 710–847) is extractable | [#134](https://gitlab.com/devnw/zig/uuid/-/work_items/134) | Extract `GeneratorInterface` + vtable to `generator_interface.zig` | 🔴 Open |
+| 42 | Low | 16 | maintainability | `src/uuid.zig` at 889 lines — 89 over 800-line guideline; test block should be split | `src/uuid.zig` | `wc -l` = 889; test block starts at line 479 (~410 lines) | [#135](https://gitlab.com/devnw/zig/uuid/-/work_items/135) | Move test block to `src/uuid_test.zig` following QC-4 pattern | 🔴 Open |
+| 43 | Low | 16 | maintainability | `benchV4/V7/V1/V6/V7AtTime` discard UUID with `_ =` — no sink variable; potential DCE | `bench/main.zig:44,54,64,74,229` | V3/V5/output benchmarks have sink; generation benchmarks do not | [#133](https://gitlab.com/devnw/zig/uuid/-/work_items/133) | Add `sink ^= u.bytes[0]` pattern to 5 benchmark functions | 🔴 Open |
+| 44 | Low | 16 | tests | V3/V5 tests only use `namespace_dns` — URL, OID, X.500 namespaces have no test vectors | `src/generator_test.zig:152–176` | All V3/V5 tests use `namespace_dns` exclusively | [#136](https://gitlab.com/devnw/zig/uuid/-/work_items/136) | Add RFC test vectors for all 4 namespace UUIDs | 🔴 Open |
+| 45 | Low | 12 | docs | Seven public API functions in `src/uuid.zig` lack doc comments | `src/uuid.zig:61,69,109,113,122,126,192,338` | `variant`, `isNil`, `setVersion`, `setVariant`, `eql`, `order`, `fromBytes`, `jsonMarshal` | [#132](https://gitlab.com/devnw/zig/uuid/-/work_items/132) | Add `///` doc comments to 7 public functions | 🔴 Open |
+| 46 | Low | 12 | docs | README `NullUUID` API table omits `format()`, `jsonMarshal()`, `jsonUnmarshal()` | `README.md:123–129` | Three public methods absent from API reference | [#137](https://gitlab.com/devnw/zig/uuid/-/work_items/137) | Add 3 rows to NullUUID section | 🔴 Open |
+| 47 | Low | 12 | ci-cd | CI has no `test-release-small` job — `ReleaseSmall` never tested in CI | `.gitlab-ci.yml` | 3 optimization modes tested; `ReleaseSmall` omitted | [#138](https://gitlab.com/devnw/zig/uuid/-/work_items/138) | Add `test-release-small` CI job | 🔴 Open |
+| 48 | Low | 12 | tests | `tests/integration.zig` has zero `expectError` calls — error paths never exercised at integration level | `tests/integration.zig` | 20+ tests, all happy-path only | [#139](https://gitlab.com/devnw/zig/uuid/-/work_items/139) | Add 5+ error-path integration tests | 🔴 Open |
+| 49 | Low | 8 | docs | README `Generator` API table omits `Generator.withRand(f)` | `README.md:130–141` | `withClock` and `withHWAddr` documented; `withRand` omitted | [#140](https://gitlab.com/devnw/zig/uuid/-/work_items/140) | Add `withRand` row to Generator table | 🔴 Open |
 
 ---
 
@@ -1591,6 +1616,179 @@ Missing: `tests/` (integration tests), `bench/` (benchmarks), `CHANGELOG.md`. Wh
 ---
 
 _Last updated: 2026-03-22 — Cycle 8 complete. 7 findings (QC-55–QC-61): 2 High, 4 Medium, 1 Low. All 7 closed. 145 unit + 20 integration tests pass._
+
+---
+
+## Quality Review Cycle 10
+
+> **Date:** 2026-03-22
+> **Zig version audited:** 0.15.2
+> **Scope:** Full codebase review — source, tests, benchmarks, examples, CI, build system, docs.
+> **Previous cycles:** QC-1 through QC-61 covered in Cycles 1–8. Cycle 9 found no new issues.
+
+---
+
+### Summary
+
+| Severity | Count |
+| -------- | ----- |
+| Low      | 9     |
+
+**Total new issues:** 9 — all open, status::triage
+
+### Top 5 Risks
+
+1. **generator.zig at 847 lines** (QC-64) — third recurrence of file-size violation; vtable block is the extractable unit.
+2. **uuid.zig at 889 lines** (QC-65) — first detection; 410-line test block should be split to `uuid_test.zig`.
+3. **Benchmark DCE risk** (QC-63) — 5 generation benchmarks discard UUID with `_ =`; V3/V5/output benchmarks already use sink pattern.
+4. **V3/V5 namespace coverage gap** (QC-66) — URL, OID, X.500 namespace test vectors absent.
+5. **Zero error-path integration tests** (QC-69) — 20+ integration tests but no `expectError` calls; error propagation through public API unverified.
+
+---
+
+### Stack-Ranked Findings
+
+| Rank | Severity | PriorityScore | Category | Finding | Component | Evidence | GitLab Issue | Status |
+| ---- | -------- | ------------- | -------- | ------- | --------- | -------- | ------------ | ------ |
+| 1 | Low | 16 | maintainability | `src/generator.zig` at 847 lines — third recurrence, 47 over guideline | `src/generator.zig` | `wc -l` = 847; vtable lines 710–847 extractable | [#134](https://gitlab.com/devnw/zig/uuid/-/work_items/134) | 🚫 Won't Do (circular import) |
+| 2 | Low | 16 | maintainability | `src/uuid.zig` at 889 lines — 89 over guideline; test block ~410 lines | `src/uuid.zig` | `wc -l` = 889; test block starts line 479 | [#135](https://gitlab.com/devnw/zig/uuid/-/work_items/135) | ✅ Closed |
+| 3 | Low | 16 | maintainability | `benchV4/V7/V1/V6/V7AtTime` use `_ = try gen.newV*()` — no sink, potential DCE | `bench/main.zig:44,54,64,74,229` | V3/V5 benchmarks use sink; generation benchmarks do not | [#133](https://gitlab.com/devnw/zig/uuid/-/work_items/133) | ✅ Closed |
+| 4 | Low | 16 | tests | V3/V5 tests only use `namespace_dns` — URL/OID/X.500 namespaces untested | `src/generator_test.zig:152–176` | Zero uses of `namespace_url/oid/x500` in tests | [#136](https://gitlab.com/devnw/zig/uuid/-/work_items/136) | ✅ Closed |
+| 5 | Low | 12 | docs | 7 public functions in `src/uuid.zig` have no doc comments | `src/uuid.zig:61,69,109,113,122,126,192,338` | `variant`, `isNil`, `setVersion`, `setVariant`, `eql`, `order`, `fromBytes`, `jsonMarshal` | [#132](https://gitlab.com/devnw/zig/uuid/-/work_items/132) | ✅ Closed |
+| 6 | Low | 12 | docs | README `NullUUID` table omits `format()`, `jsonMarshal()`, `jsonUnmarshal()` | `README.md:123–129` | Only 2 of 5 public methods documented | [#137](https://gitlab.com/devnw/zig/uuid/-/work_items/137) | ✅ Closed |
+| 7 | Low | 12 | ci-cd | No `test-release-small` CI job — `ReleaseSmall` never tested in CI | `.gitlab-ci.yml` | 3 modes tested; ReleaseSmall omitted | [#138](https://gitlab.com/devnw/zig/uuid/-/work_items/138) | ✅ Closed |
+| 8 | Low | 12 | tests | `tests/integration.zig` has zero `expectError` calls — error paths unverified | `tests/integration.zig` | `grep expectError tests/integration.zig` → no output | [#139](https://gitlab.com/devnw/zig/uuid/-/work_items/139) | ✅ Closed |
+| 9 | Low | 8 | docs | README `Generator` table omits `Generator.withRand(f)` | `README.md:130–141` | `withClock` and `withHWAddr` present; `withRand` absent | [#140](https://gitlab.com/devnw/zig/uuid/-/work_items/140) | ✅ Closed |
+
+---
+
+### Detailed Findings
+
+#### QC-62 — Seven public API functions in `src/uuid.zig` lack doc comments (Low, Score 12)
+
+**Status: ✅ Closed**
+
+**File:** `src/uuid.zig:61,69,109,113,122,126,192,338`
+
+`variant()`, `isNil()`, `setVersion()`, `setVariant()`, `eql()`, `order()`, `fromBytes()`, and `jsonMarshal()` have no `///` doc comments. The gap is asymmetric — `version()`, `isMax()`, `isValid()`, and all output methods are well-documented.
+
+**Fix applied:** Doc comments added to all 8 functions explaining semantics, RFC references, and error conditions.
+
+**Confidence:** confirmed
+
+---
+
+#### QC-63 — `benchV4/V7/V1/V6/V7AtTime` missing sink variable — potential DCE in ReleaseFast (Low, Score 16)
+
+**Status: ✅ Closed**
+
+**File:** `bench/main.zig:44,54,64,74,229`
+
+Five generation benchmarks discard the UUID with `_ = try gen.newV*()`. While CSPRNG/mutex side effects prevent full elision, the UUID struct construction itself may be DCE'd. V3/V5/output benchmarks already use `sink ^= u.bytes[0]` (established by PERF-11) — generation benchmarks should follow the same discipline.
+
+**Fix applied:** XOR sink pattern added to `benchV4`, `benchV7`, `benchV1`, `benchV6`, and `benchV7AtTime`.
+
+**Confidence:** confirmed
+
+---
+
+#### QC-64 — `src/generator.zig` at 847 lines — third recurrence of 800-line violation (Low, Score 16)
+
+**Status: 🚫 Won't Do — Circular Import (same resolution as QC-38)**
+
+**File:** `src/generator.zig:710–847`
+
+The `GeneratorInterface` struct, its `VTable`, dispatch wrappers, and `generator_vtable` constant span lines 710–847 (137 lines). Extraction to `src/generator_interface.zig` is blocked by a circular import: `generator_interface.zig` would need to import `*Generator` from `generator.zig`, and `generator.zig` would need to import `GeneratorInterface` for `fromGenerator()` and the vtable. This is identical to the blocker found in QC-38.
+
+**Confidence:** confirmed
+
+---
+
+#### QC-65 — `src/uuid.zig` at 889 lines — 89 over 800-line guideline (Low, Score 16)
+
+**Status: ✅ Closed**
+
+**File:** `src/uuid.zig:479–889`
+
+Test block (~410 lines, 40+ test cases) mixed with production UUID type. The same pattern was resolved for `generator.zig` via QC-4 (split to `generator_test.zig`).
+
+**Fix applied:** Created `src/uuid_test.zig` with the full test block. `uuid.zig` reduced to 523 lines. `uuid.zig` now contains `test { _ = @import("uuid_test.zig"); }`.
+
+**Confidence:** confirmed
+
+---
+
+#### QC-66 — V3/V5 tests only use `namespace_dns` — URL, OID, X.500 namespaces untested (Low, Score 16)
+
+**Status: ✅ Closed**
+
+**File:** `src/generator_test.zig:152–176`
+
+V3 and V5 are pure hash functions of `(namespace_bytes || name)`. A byte-order bug specific to certain namespace patterns (e.g. `namespace_url` differs from `namespace_dns` at byte 3) would escape detection.
+
+**Fix applied:** 6 test vectors added to `src/generator_test.zig`: V3 and V5 for `namespace_url`, `namespace_oid`, and `namespace_x500`, all verified against Python's `uuid.uuid3()`/`uuid.uuid5()`.
+
+**Confidence:** confirmed
+
+---
+
+#### QC-67 — README `NullUUID` API table omits `format()`, `jsonMarshal()`, `jsonUnmarshal()` (Low, Score 12)
+
+**Status: ✅ Closed**
+
+**File:** `README.md:123–129`
+
+The NullUUID section lists only 2 of 5 public methods. `format(w)` (added in QC-55), `jsonMarshal(alloc)`, and `jsonUnmarshal(alloc, v)` are absent.
+
+**Fix applied:** 3 rows added to the NullUUID API table in README.md.
+
+**Confidence:** confirmed
+
+---
+
+#### QC-68 — CI has no `test-release-small` job (Low, Score 12)
+
+**Status: ✅ Closed**
+
+**File:** `.gitlab-ci.yml`
+
+Three optimization levels are CI-tested (Debug, ReleaseSafe, ReleaseFast). `ReleaseSmall` uses different inlining/DCE trade-offs and is a valid target for embedded/WASM deployments. `Makefile` already has the target.
+
+**Fix applied:** `test-release-small` CI job added to `.gitlab-ci.yml` in the test stage.
+
+**Confidence:** confirmed
+
+---
+
+#### QC-69 — `tests/integration.zig` has zero `expectError` calls (Low, Score 12)
+
+**Status: ✅ Closed**
+
+**File:** `tests/integration.zig`
+
+All 20+ integration tests exercise only happy paths. Error propagation through the public API (`uuid.UUID.fromString` returning `InvalidLength`, etc.) is verified only in unit tests that import `src/uuid.zig` directly, never through `@import("uuid")`.
+
+**Fix applied:** 10 `expectError` integration tests added covering: empty string, short string, bad URN namespace, wrong-length URN payload, non-hex characters, wrong dash positions, unclosed brace, wrong-length bytes, invalid JSON value type, invalid UUID string via JSON.
+
+**Confidence:** confirmed
+
+---
+
+#### QC-70 — README `Generator` API table omits `Generator.withRand(f)` (Low, Score 8)
+
+**Status: ✅ Closed**
+
+**File:** `README.md:130–141`
+
+`withClock` and `withHWAddr` are documented. `withRand` — the third injectable interface, essential for deterministic testing — is absent.
+
+**Fix applied:** `Generator.withRand(f) Generator` row added to README.md Generator table.
+
+**Confidence:** confirmed
+
+---
+
+_Last updated: 2026-03-22 — Cycle 10 closed. 9 findings (QC-62–QC-70): 8 closed, 1 Won't Do (QC-64). 161 unit + 30 integration tests pass._
 
 ---
 

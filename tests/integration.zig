@@ -307,3 +307,76 @@ test "integration: GeneratorInterface dispatches newV4 (G-8)" {
     const u = try iface.newV4();
     try std.testing.expectEqual(uuid.Version.v4, u.version());
 }
+
+// =============================================================================
+// Error path integration tests (QC-69): verify error propagation through the
+// public API.  These are the first integration tests that call expectError.
+// =============================================================================
+
+test "integration: fromString rejects empty string (QC-69)" {
+    try std.testing.expectError(uuid.Error.InvalidLength, uuid.UUID.fromString(""));
+}
+
+test "integration: fromString rejects string that is too short (QC-69)" {
+    try std.testing.expectError(uuid.Error.InvalidLength, uuid.UUID.fromString("6ba7b810-9dad"));
+}
+
+test "integration: fromString rejects bad URN namespace (QC-69)" {
+    // starts with "urn:" but not "urn:uuid:"
+    try std.testing.expectError(
+        uuid.Error.InvalidURNPrefix,
+        uuid.UUID.fromString("urn:nope:6ba7b8109dad11d180b400c04fd430c8"),
+    );
+}
+
+test "integration: fromString rejects URN with wrong-length payload (QC-69)" {
+    // "urn:uuid:" prefix is valid but the UUID part is truncated
+    try std.testing.expectError(
+        uuid.Error.InvalidLength,
+        uuid.UUID.fromString("urn:uuid:6ba7b810-9dad"),
+    );
+}
+
+test "integration: fromString rejects non-hex characters (QC-69)" {
+    try std.testing.expectError(
+        uuid.Error.InvalidFormat,
+        uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430ZZ"),
+    );
+}
+
+test "integration: fromString rejects wrong dash positions (QC-69)" {
+    // A 36-char string with dash at position 9 instead of 8
+    try std.testing.expectError(
+        uuid.Error.InvalidDashes,
+        uuid.UUID.fromString("6ba7b810X9dad-11d1-80b4-00c04fd430c8"),
+    );
+}
+
+test "integration: fromString rejects unclosed brace (QC-69)" {
+    try std.testing.expectError(
+        uuid.Error.InvalidBraces,
+        uuid.UUID.fromString("{6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
+    );
+}
+
+test "integration: fromBytes rejects wrong-length slice (QC-69)" {
+    const short = [_]u8{0x01} ** 8;
+    try std.testing.expectError(uuid.Error.IncorrectByteLength, uuid.UUID.fromBytes(&short));
+}
+
+test "integration: NullUUID.jsonUnmarshal rejects non-string non-null value (QC-69)" {
+    const alloc = std.testing.allocator;
+    // .bool is not a valid JSON representation for a UUID
+    try std.testing.expectError(
+        uuid.Error.InvalidFormat,
+        uuid.NullUUID.jsonUnmarshal(alloc, json.Value{ .bool = true }),
+    );
+}
+
+test "integration: NullUUID.jsonUnmarshal rejects invalid UUID string (QC-69)" {
+    const alloc = std.testing.allocator;
+    try std.testing.expectError(
+        uuid.Error.InvalidLength,
+        uuid.NullUUID.jsonUnmarshal(alloc, json.Value{ .str = "not-a-uuid" }),
+    );
+}

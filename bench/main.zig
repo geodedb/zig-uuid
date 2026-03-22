@@ -38,42 +38,54 @@ pub fn main() !void {
 
 fn benchV4() !void {
     var gen = uuid.Generator.init();
+    var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        _ = try gen.newV4();
+        const u = try gen.newV4();
+        sink ^= u.bytes[0];
     }
     report("newV4", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
 fn benchV7() !void {
     var gen = uuid.Generator.init();
+    var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        _ = try gen.newV7();
+        const u = try gen.newV7();
+        sink ^= u.bytes[0];
     }
     report("newV7", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
 fn benchV1() !void {
     var gen = uuid.Generator.init();
+    var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        _ = try gen.newV1();
+        const u = try gen.newV1();
+        sink ^= u.bytes[0];
     }
     report("newV1", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
 fn benchV6() !void {
     var gen = uuid.Generator.init();
+    var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        _ = try gen.newV6();
+        const u = try gen.newV6();
+        sink ^= u.bytes[0];
     }
     report("newV6", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
 fn benchV3() !void {
@@ -223,13 +235,16 @@ fn benchV7AtTime() !void {
     // Expected ~20-25 ns/op (true V7 encoding cost).
     var gen = uuid.Generator.init();
     var ms: i64 = 1_700_000_000_000;
+    var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        _ = try gen.newV7AtTime(ms);
+        const u = try gen.newV7AtTime(ms);
+        sink ^= u.bytes[0];
         ms += 1;
     }
     report("newV7AtTime", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
 fn benchFromString() !void {

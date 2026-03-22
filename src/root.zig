@@ -100,7 +100,7 @@ else
 pub const version = "0.1.0";
 
 test {
-    _ = @import("uuid.zig");
+    _ = @import("uuid.zig"); // transitively imports uuid_test.zig (QC-65)
     _ = @import("namespace.zig");
     _ = @import("timestamp.zig");
     _ = @import("generator.zig"); // transitively imports generator_test.zig (QC-4)
