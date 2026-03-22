@@ -86,3 +86,67 @@ test "top-level newV3 with DNS namespace" {
         u.toString(&buf),
     );
 }
+
+// QC-30: delegation tests for the 7 previously-untested convenience functions.
+
+test "top-level newV1 delegates to default_generator (QC-30)" {
+    const u = try newV1();
+    try std.testing.expectEqual(uuid_mod.Version.v1, u.version());
+    try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
+}
+
+test "top-level newV1AtTime delegates to default_generator (QC-30)" {
+    const ts_mod = @import("timestamp.zig");
+    const greg_ts = ts_mod.Timestamp{ .value = 139_806_912_000_000_000 }; // 2024-01-01 UTC
+    const u = try newV1AtTime(greg_ts);
+    try std.testing.expectEqual(uuid_mod.Version.v1, u.version());
+    try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
+    // Timestamp round-trip.
+    const got = try ts_mod.timestampFromV1(u);
+    try std.testing.expectEqual(greg_ts.value, got.value);
+}
+
+test "top-level newV5 delegates to default_generator (QC-30)" {
+    const ns = @import("namespace.zig").namespace_dns;
+    const u = newV5(ns, "www.example.com");
+    // RFC-9562 / Python uuid.uuid5() test vector.
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "2ed6657d-e927-568b-95e1-2665a8aea6a2",
+        u.toString(&buf),
+    );
+}
+
+test "top-level newV6 delegates to default_generator (QC-30)" {
+    const u = try newV6();
+    try std.testing.expectEqual(uuid_mod.Version.v6, u.version());
+    try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
+}
+
+test "top-level newV6AtTime delegates to default_generator (QC-30)" {
+    const ts_mod = @import("timestamp.zig");
+    const greg_ts = ts_mod.Timestamp{ .value = 139_806_912_000_000_000 }; // 2024-01-01 UTC
+    const u = try newV6AtTime(greg_ts);
+    try std.testing.expectEqual(uuid_mod.Version.v6, u.version());
+    try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
+    const got = try ts_mod.timestampFromV6(u);
+    try std.testing.expectEqual(greg_ts.value, got.value);
+}
+
+test "top-level newV7AtTime delegates to default_generator (QC-30)" {
+    const ts_mod = @import("timestamp.zig");
+    const ms: i64 = 1_700_000_000_000; // 2023-11-14 in Unix ms
+    const u = try newV7AtTime(ms);
+    try std.testing.expectEqual(uuid_mod.Version.v7, u.version());
+    const got = try ts_mod.timestampFromV7(u);
+    try std.testing.expectEqual(ms, got.toUnixMs());
+}
+
+test "top-level newV8 delegates to default_generator (QC-30)" {
+    const a = [6]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
+    const b = [2]u8{ 0x07, 0x08 };
+    const c = [8]u8{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
+    const u = try newV8(a, b, c);
+    try std.testing.expectEqual(uuid_mod.Version.v8, u.version());
+    try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
+}

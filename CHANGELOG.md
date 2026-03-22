@@ -9,11 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial project structure
-- Core library implementation
-- Unit and integration tests
-- CI/CD pipeline
-- Documentation
+- `toHexAlloc` / `toHexUpperAlloc` — allocating hex-without-dashes variants completing the API surface (QC-42)
+- `benchFromStringHex` / `benchFromStringURN` benchmarks in `bench/main.zig` (QC-45)
+
+### Fixed
+
+- `fromString("urn:")` now returns `Error.InvalidURNPrefix` instead of `Error.InvalidLength` (QC-47)
+
+### Changed
+
+- Aligned minimum Zig version to 0.15.2 in `README.md` and `build.zig.zon` (QC-44)
+
+### Documentation
+
+- Added comprehensive doc comment to `fromString` listing all accepted formats and possible errors (QC-46)
 
 ## [0.1.0] - 2026-03-21
 

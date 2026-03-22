@@ -292,7 +292,8 @@ pub const UUID = struct {
         return buf[0..45];
     }
 
-    /// Allocating URN format (F-5 / G-3).
+    /// Allocating URN format (F-5 / G-3). Returns heap-allocated 45-byte string; caller must free.
+    /// **Hot path note:** page_allocator adds ~1800 ns/op overhead; prefer toURN(&buf) (~6 ns/op) for performance-sensitive code.
     pub fn toURNAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
         var buf: [45]u8 = undefined;
         return alloc.dupe(u8, self.toURN(&buf));
@@ -300,24 +301,28 @@ pub const UUID = struct {
 
     /// Allocating canonical lowercase with dashes: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`.
     /// Returns a heap-allocated 36-byte string; caller must free with the same allocator.
+    /// **Hot path note:** page_allocator adds ~1800 ns/op overhead; prefer toString(&buf) (~6 ns/op) for performance-sensitive code.
     pub fn toStringAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
         var buf: [36]u8 = undefined;
         return alloc.dupe(u8, self.toString(&buf));
     }
 
-    /// Allocating uppercase string (G-2).
+    /// Allocating uppercase string (G-2). Returns heap-allocated 36-byte string; caller must free.
+    /// **Hot path note:** page_allocator adds ~1800 ns/op overhead; prefer toStringUpper(&buf) (~6 ns/op) for performance-sensitive code.
     pub fn toStringUpperAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
         var buf: [36]u8 = undefined;
         return alloc.dupe(u8, self.toStringUpper(&buf));
     }
 
-    /// Allocating lowercase hex without dashes (QC-42).
+    /// Allocating lowercase hex without dashes (QC-42). Returns heap-allocated 32-byte string; caller must free.
+    /// **Hot path note:** page_allocator adds ~1800 ns/op overhead; prefer toHex(&buf) (~6 ns/op) for performance-sensitive code.
     pub fn toHexAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
         var buf: [32]u8 = undefined;
         return alloc.dupe(u8, self.toHex(&buf));
     }
 
-    /// Allocating uppercase hex without dashes (QC-42).
+    /// Allocating uppercase hex without dashes (QC-42). Returns heap-allocated 32-byte string; caller must free.
+    /// **Hot path note:** page_allocator adds ~1800 ns/op overhead; prefer toHexUpper(&buf) (~6 ns/op) for performance-sensitive code.
     pub fn toHexUpperAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
         var buf: [32]u8 = undefined;
         return alloc.dupe(u8, self.toHexUpper(&buf));

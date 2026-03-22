@@ -64,6 +64,12 @@ pub fn main() !void {
         try w.print("  parse({s})\n         → {s}\n", .{ s, u.toString(&buf) });
     }
 
+    // std.fmt {f} specifier (Zig 0.15+, QC-24): no stack buffer needed.
+    // Use {f} anywhere you'd pass a UUID to std.fmt.print / std.log / writer.print.
+    try w.print("\n{{f}} format specifier (zero-alloc, no stack buffer):\n", .{});
+    try w.print("  V4 via {{f}}:          {f}\n", .{v4});
+    try w.print("  V7 via {{f}}:          {f}\n", .{v7});
+
     // Output format variants (G-2)
     try w.print("\nOutput formats:\n", .{});
     var buf36: [36]u8 = undefined;
@@ -74,6 +80,18 @@ pub fn main() !void {
     try w.print("  lowercase hex:      {s}\n", .{v4.toHex(&buf32)});
     try w.print("  uppercase hex:      {s}\n", .{v4.toHexUpper(&buf32)});
     try w.print("  URN:                {s}\n", .{v4.toURN(&buf45)});
+
+    // Allocating hex output (QC-53): heap-allocated, caller must free.
+    // Use std.heap.page_allocator for standalone examples; prefer
+    // an arena or GPA in production code.
+    const page_alloc = std.heap.page_allocator;
+    const hex_lower = try v4.toHexAlloc(page_alloc);
+    defer page_alloc.free(hex_lower);
+    const hex_upper = try v4.toHexUpperAlloc(page_alloc);
+    defer page_alloc.free(hex_upper);
+    try w.print("\nAllocating hex output:\n", .{});
+    try w.print("  toHexAlloc:      {s}\n", .{hex_lower});
+    try w.print("  toHexUpperAlloc: {s}\n", .{hex_upper});
 
     // Timestamp extraction (G-4: timestampFromV7 now returns Timestamp)
     const ts = try uuid.timestampFromV7(v7);

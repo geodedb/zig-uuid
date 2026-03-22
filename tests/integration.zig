@@ -204,6 +204,28 @@ test "integration: toStringUpper and toHexUpper produce uppercase" {
 }
 
 // =============================================================================
+// toHexAlloc / toHexUpperAlloc allocating round-trip (QC-49)
+// =============================================================================
+
+test "integration: toHexAlloc produces lowercase 32-char hex" {
+    const alloc = std.testing.allocator;
+    const u = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const lower = try u.toHexAlloc(alloc);
+    defer alloc.free(lower);
+    try std.testing.expectEqualStrings("6ba7b8109dad11d180b400c04fd430c8", lower);
+    try std.testing.expectEqual(@as(usize, 32), lower.len);
+}
+
+test "integration: toHexUpperAlloc produces uppercase 32-char hex" {
+    const alloc = std.testing.allocator;
+    const u = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const upper = try u.toHexUpperAlloc(alloc);
+    defer alloc.free(upper);
+    try std.testing.expectEqualStrings("6BA7B8109DAD11D180B400C04FD430C8", upper);
+    try std.testing.expectEqual(@as(usize, 32), upper.len);
+}
+
+// =============================================================================
 // isZero alias (G-9)
 // =============================================================================
 
@@ -211,6 +233,68 @@ test "integration: isZero is an alias for isNil (G-9)" {
     try std.testing.expect(uuid.UUID.nil.isZero());
     const u = try uuid.newV4();
     try std.testing.expect(!u.isZero());
+}
+
+// =============================================================================
+// V6 round-trip (QC-27)
+// =============================================================================
+
+test "integration: V6 round-trip" {
+    const u = try uuid.newV6();
+    var buf: [36]u8 = undefined;
+    const s = u.toString(&buf);
+    const parsed = try uuid.UUID.fromString(s);
+    try std.testing.expect(u.eql(parsed));
+    try std.testing.expectEqual(uuid.Version.v6, parsed.version());
+    try std.testing.expectEqual(uuid.Variant.rfc9562, parsed.variant());
+}
+
+// =============================================================================
+// V8 round-trip (QC-27)
+// =============================================================================
+
+test "integration: V8 round-trip" {
+    const a = [6]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
+    const b = [2]u8{ 0x07, 0x08 };
+    const c = [8]u8{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
+    const u = try uuid.newV8(a, b, c);
+    var buf: [36]u8 = undefined;
+    const s = u.toString(&buf);
+    const parsed = try uuid.UUID.fromString(s);
+    try std.testing.expect(u.eql(parsed));
+    try std.testing.expectEqual(uuid.Version.v8, parsed.version());
+    try std.testing.expectEqual(uuid.Variant.rfc9562, parsed.variant());
+}
+
+// =============================================================================
+// saveState / loadState integration (QC-27)
+// =============================================================================
+
+test "integration: saveState + loadState round-trip preserves V1/V7 state" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/uuid.state", .{dir_path});
+
+    // Generate a V1 UUID to populate generator state, then save it.
+    var gen = uuid.Generator.init();
+    _ = try gen.newV1();
+    _ = try gen.newV7();
+    try gen.saveState(path);
+
+    // Load into a fresh generator and verify it can generate valid UUIDs.
+    var gen2 = uuid.Generator.init();
+    try gen2.loadState(path);
+
+    const v1 = try gen2.newV1();
+    try std.testing.expectEqual(uuid.Version.v1, v1.version());
+    try std.testing.expectEqual(uuid.Variant.rfc9562, v1.variant());
+
+    const v7 = try gen2.newV7();
+    try std.testing.expectEqual(uuid.Version.v7, v7.version());
+    try std.testing.expectEqual(uuid.Variant.rfc9562, v7.variant());
 }
 
 // =============================================================================

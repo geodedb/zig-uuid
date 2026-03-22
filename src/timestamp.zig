@@ -222,6 +222,18 @@ test "timestampFromV1: error on wrong version" {
     try std.testing.expectError(Error.InvalidVersion, timestampFromV1(u));
 }
 
+test "timestampFromV6: error on wrong version (QC-37)" {
+    var u = UUID{ .bytes = [_]u8{0} ** 16 };
+    u.setVersion(.v4);
+    try std.testing.expectError(Error.InvalidVersion, timestampFromV6(u));
+}
+
+test "timestampFromV7: error on wrong version (QC-37)" {
+    var u = UUID{ .bytes = [_]u8{0} ** 16 };
+    u.setVersion(.v4);
+    try std.testing.expectError(Error.InvalidVersion, timestampFromV7(u));
+}
+
 test "Timestamp.toUnixMs: i64 cast is safe at extreme u60 values (SEC-R2-15/#48)" {
     // Max u60 value → far future (year ~5236): fits in i64
     const ts_max = Timestamp{ .value = std.math.maxInt(u60) };

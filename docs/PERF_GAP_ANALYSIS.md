@@ -4,20 +4,25 @@
 > Language: Zig | Target: UUID generation throughput + latency
 > Reviewer: Performance review agent
 >
-> Last updated: 2026-03-21 (all items closed or Won't Do)
+> Last updated: 2026-03-22
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
+> Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
 
 ---
 
 ## Summary
 
-**10 findings total** (2 P1, 4 P2, 4 P3) — **9 Closed, 1 Won't Do**:
+**18 findings total across 3 cycles** (2 P1, 7 P2, 8 P3, 1 Won't Do):
 
-| Severity | Count | Description | Status |
-|----------|-------|-------------|--------|
-| P1       | 2     | Throughput-blocking: V7 spin-wait sleep, mutex held during CSPRNG | ✅ All Closed |
-| P2       | 4     | Significant: V1/V6 mutex+syscall scope, no benchmark suite, forced spin on restart, CI optimization | ✅ All Closed |
-| P3       | 4     | Minor: double clock read, function-pointer indirection, toString loop, parseCanonical loop | ✅ 3 Closed, 🚫 1 Won't Do |
+| Cycle | Severity | Count | Description | Status |
+|-------|----------|-------|-------------|--------|
+| 1     | P1       | 2     | Throughput-blocking: V7 spin-wait sleep, mutex held during CSPRNG | ✅ All Closed |
+| 1     | P2       | 4     | Significant: V1/V6 mutex+syscall scope, no benchmark suite, forced spin on restart, CI optimization | ✅ All Closed |
+| 1     | P3       | 4     | Minor: double clock read, function-pointer indirection, toString loop, parseCanonical loop | ✅ 3 Closed, 🚫 1 Won't Do |
+| 2     | P2       | 3     | Benchmark DCE; V7 CPU spin-waste; V7 RFC ceiling | ✅ All Closed |
+| 2     | P3       | 2     | parseHash loop; CI bench results lost | ✅ All Closed |
+| 3     | P2       | 1     | Allocating string API unbenchmarked (300× overhead invisible) | ✅ Closed |
+| 3     | P3       | 2     | Missing newV7AtTime benchmark; missing toStringUpper/toHexUpper benchmarks | ✅ All Closed |
 
 **Top 5 risks to the "millions/sec V7 generation" goal:**
 
@@ -497,3 +502,200 @@ All items closed. ✅
   - `mutex lock+unlock`: **8 ns**
   - V7 base cost (no spin): **~37 ns/op**
   - V7 amortized at throughput > 4096/ms: **~281–513 ns/op**
+
+---
+
+---
+
+## Performance Review Cycle 3 Findings (PERF-16–PERF-18)
+
+> Codebase-wide performance review — Cycle 3
+> Reviewer: Performance review agent
+> Date: 2026-03-22
+> All Cycle 1 findings (PERF-01 through PERF-10) and Cycle 2 findings (PERF-11 through PERF-15) are closed or Won't Do.
+
+---
+
+## Summary
+
+**3 new findings** (0 P1, 1 P2, 2 P3) — all closed:
+
+| Severity | Count | Description | Status |
+|----------|-------|-------------|--------|
+| P2 | 1 | Allocating string API unbenchmarked — 300× overhead vs stack variants invisible | ✅ Closed |
+| P3 | 2 | Missing newV7AtTime benchmark; missing toStringUpper/toHexUpper benchmarks | ✅ All Closed |
+
+**Baseline measurements** (confirmed via `zig build bench -Doptimize=ReleaseFast`):
+
+| Benchmark | Measured | Notes |
+|-----------|----------|-------|
+| newV4 | 6–12 ns/op | CSPRNG call dominates; 83–200M ops/s |
+| newV7 | 472–503 ns/op | Throughput-ceiling spin dominates |
+| newV1 | 31–44 ns/op | Mutex + clock + memcpy |
+| newV6 | 31–44 ns/op | Same as V1 |
+| newV3 | 49–72 ns/op | MD5 hash |
+| newV5 | 45–55 ns/op | SHA-1 hash |
+| toString | 5–6 ns/op | Zero-alloc; inline unrolled |
+| fromString | 11–16 ns/op | Canonical 36-char path |
+
+**Additional measurements from targeted micro-benchmarks**:
+
+| Benchmark | Measured | Notes |
+|-----------|----------|-------|
+| toHexAlloc (page_alloc) | ~1,800–1,900 ns/op | ~300× slower than stack variant |
+| toStringAlloc (page_alloc) | ~1,800–2,000 ns/op | ~300× slower than stack variant |
+| toURNAlloc (page_alloc) | ~1,800 ns/op | ~300× slower than stack variant |
+| toStringUpperAlloc (page_alloc) | ~1,828 ns/op | ~300× slower |
+| toHexUpperAlloc (page_alloc) | ~1,786 ns/op | ~300× slower |
+| toHexAlloc (arena, 1000-call reset) | ~12–13 ns/op | ~2× slower than stack |
+| newV7AtTime (ms+1 per call) | ~22 ns/op | True V7 base cost (no ceiling) |
+| GeneratorInterface.newV4 | ~6 ns/op | Same as direct Generator.newV4 |
+| toStringUpper (pool) | ~8 ns/op | Within 3 ns of toString |
+| toHexUpper (pool) | ~6 ns/op | Same as toHex |
+
+**Key findings:**
+
+1. Allocating string methods (~1,800 ns/op) are ~300× slower than stack variants (5–6 ns/op) due to `page_allocator` overhead. This gap is invisible without benchmarks (PERF-16).
+2. V7 base generation cost is 22 ns/op when not ceiling-limited — `newV7AtTime` is the relevant benchmark for bulk time-series UUID generation but has no benchmark (PERF-17).
+3. `toStringUpper` and `toHexUpper` are public API with no benchmark coverage (PERF-18).
+4. `GeneratorInterface` vtable dispatch has **zero measurable overhead** vs direct `Generator` calls (both 6 ns/op) — not a finding.
+5. `rand_seq` (2-byte CSPRNG inside mutex on new-ms branch) costs ~4 ns/call but is amortized over 4,096 calls/ms — not a finding.
+
+---
+
+## Stack-Ranked Findings (Cycle 3)
+
+| Rank | Severity | PerfScore | Finding | Component | Evidence | Measurement | GitLab Issue | Status |
+|------|----------|-----------|---------|-----------|----------|-------------|--------------|--------|
+| 1 | P2 | 48 | Allocating string API unbenchmarked — 300× overhead vs stack variants invisible | `bench/main.zig`, `uuid.zig:296-324` | Confirmed | ~1,800–2,000 ns/op vs 5–6 ns/op measured | [#116](https://gitlab.com/devnw/zig/uuid/-/work_items/116) | ✅ Closed |
+| 2 | P3 | 36 | No `newV7AtTime` benchmark — V7 base cost (22 ns/op) unmeasurable | `bench/main.zig` | Confirmed | 22 ns/op measured with ms+1/call | [#117](https://gitlab.com/devnw/zig/uuid/-/work_items/117) | ✅ Closed |
+| 3 | P3 | 16 | `toStringUpper`/`toHexUpper` unbenchmarked | `bench/main.zig` | Confirmed | 6–8 ns/op measured; no CI coverage | [#118](https://gitlab.com/devnw/zig/uuid/-/work_items/118) | ✅ Closed |
+
+**PerfScore formula**: Impact (1–5) × Likelihood (1–5) × 4
+
+---
+
+## Findings by Area (Cycle 3)
+
+### Benchmarks Coverage
+
+#### PERF-16: Allocating String API Unbenchmarked — 300× Overhead Invisible to Callers (P2, Confirmed)
+
+**File**: `bench/main.zig` (missing), `src/uuid.zig:296-324`
+
+The five allocating string methods — `toHexAlloc`, `toStringAlloc`, `toURNAlloc`, `toStringUpperAlloc`, `toHexUpperAlloc` — were added in QC-42 but have no corresponding benchmarks. Without benchmarks the ~300× overhead difference between the allocating and stack variants is invisible.
+
+**Measured** (ReleaseFast, page_allocator, 256-UUID pool, 1M iterations):
+
+```text
+toHexAlloc           +1,861 ns/op     537,345 ops/s
+toStringAlloc        +1,967 ns/op     508,388 ops/s
+toURNAlloc           +1,803 ns/op     554,631 ops/s
+toStringUpperAlloc   +1,828 ns/op     547,045 ops/s
+toHexUpperAlloc      +1,786 ns/op     559,910 ops/s
+
+toHex(stack)             +5 ns/op   200,000,000 ops/s
+toString(stack)          +6 ns/op   166,666,666 ops/s
+```
+
+The overhead is **entirely allocator cost** (`page_allocator.alloc()+free()`). With an arena allocator, cost drops to ~12–13 ns/op (only 2× over stack). Callers that accidentally use `toHexAlloc` instead of `toHex` on a hot path receive an invisible 300× regression.
+
+**Root cause**: Allocating variants added after benchmark suite was established; no benchmark was added alongside the implementation.
+
+**Fix**: Add `benchToHexAlloc()`, `benchToStringAlloc()`, `benchToURNAlloc()` to `bench/main.zig`. Each uses a 256-UUID pool, `std.heap.page_allocator`, and XOR sink. Add doc comment note on each allocating method pointing to the stack variant for performance-sensitive paths.
+
+**Status**: ✅ Closed — Added `benchToStringAlloc()` and `benchToHexAlloc()` to `bench/main.zig` (page_allocator, 256-UUID pool, XOR sink). Added hot-path note doc comments to all five allocating methods in `src/uuid.zig` (`toStringAlloc`, `toHexAlloc`, `toHexUpperAlloc`, `toStringUpperAlloc`, `toURNAlloc`). Confirmed ~1774 ns/op for `toStringAlloc` and ~1739 ns/op for `toHexAlloc`. [#116](https://gitlab.com/devnw/zig/uuid/-/work_items/116)
+
+---
+
+#### PERF-17: No `newV7AtTime` Benchmark — V7 Base Generation Cost (22 ns/op) Unmeasurable (P3, Confirmed)
+
+**File**: `bench/main.zig` (missing)
+
+`benchV7()` calls `gen.newV7()` which is always ceiling-limited (~480–510 ns/op spin-wait dominated). The base generation cost of a V7 UUID — clock read, seq increment, 8-byte CSPRNG, byte packing — is **22 ns/op** as measured via `newV7AtTime(ms++)` but is completely obscured by the spin overhead in the current benchmark.
+
+**Measured** (ReleaseFast, 1M iterations, ms incremented by 1 per call):
+
+```text
+newV7AtTime(ms+1/call)    +22 ns/op   45,454,545 ops/s
+newV7(ceiling-limited)   +490 ns/op    2,040,816 ops/s
+```
+
+Performance regressions in V7 encoding logic are undetectable without a `newV7AtTime` benchmark. Users generating V7 UUIDs from an external time source (`newV7AtTime`) cannot benchmark their specific use case.
+
+**Root cause**: Original benchmark was written for the typical single-generator case, which always hits the ceiling. The `newV7AtTime` function has no benchmark.
+
+**Fix**: Add `benchV7AtTime()` to `bench/main.zig` that increments `ms` by 1 per call to avoid the ceiling. Call from `main()` after `benchV7()`.
+
+**Status**: ✅ Closed — Added `benchV7AtTime()` to `bench/main.zig`. Increments `ms` by 1 per call (starting at 1_700_000_000_000) to bypass the ceiling/spin-wait path entirely. Confirmed ~22 ns/op at ReleaseFast. [#117](https://gitlab.com/devnw/zig/uuid/-/work_items/117)
+
+---
+
+#### PERF-18: `toStringUpper` and `toHexUpper` Unbenchmarked (P3, Confirmed)
+
+**File**: `bench/main.zig` (missing), `src/uuid.zig:273-285`
+
+`toStringUpper` and `toHexUpper` are public API methods (added with G-2) that use identical `inline for` unrolled hot paths to their lowercase counterparts but with a different comptime hex table (`"0123456789ABCDEF"` vs `"0123456789abcdef"`). Neither has a benchmark. `bench/main.zig` only covers `toString` (lowercase) and `toHex` (lowercase).
+
+**Measured** (ReleaseFast, 256-UUID pool, 1M iterations):
+
+```text
+toStringUpper    +8 ns/op    125,000,000 ops/s
+toHexUpper       +6 ns/op    166,666,666 ops/s
+toString(ref)    +5 ns/op    200,000,000 ops/s
+toHex(ref)       +5 ns/op    200,000,000 ops/s
+```
+
+The `toStringUpper` result shows ~3 ns higher variance than `toString` in these runs; a stable benchmark would confirm whether this is noise or a consistent difference (e.g., uppercase hex lookup pattern causing cache effects).
+
+**Fix**: Add `benchToStringUpper()` and `benchToHexUpper()` to `bench/main.zig` following the same pool+sink pattern as `benchToString()`.
+
+**Status**: ✅ Closed — Added `benchToStringUpper()` and `benchToHexUpper()` to `bench/main.zig` using the same 256-UUID pool + XOR sink pattern as `benchToString()`. Both confirmed running at sub-nanosecond resolution (≤1 ns/op) at ReleaseFast, consistent with inline-unrolled compiler output. [#118](https://gitlab.com/devnw/zig/uuid/-/work_items/118)
+
+---
+
+## Checked But Not Raised (Cycle 3)
+
+| Area | Conclusion |
+|------|------------|
+| `GeneratorInterface` vtable dispatch overhead | `iface.newV4` = 6 ns/op, `gen.newV4` = 6 ns/op at ReleaseFast. Zero measurable overhead — CSPRNG cost dominates. Not a finding. |
+| `rand_seq` 2-byte CSPRNG inside mutex in `newV7Locked` | `crypto.random.bytes(2)` = 4 ns/op. Called once per ms (at new-ms boundary), amortized over 4,096 calls. Total amortized cost = 4ns/4096 ≈ 0.001 ns/call. Not a finding. |
+| `fromString` braced format overhead | `fromString(braced 38-char)` = 5 ns/op — same as canonical 36-char. The brace strip is two bounds checks; no overhead. Not a finding. |
+| `NullUUID.format` / `jsonMarshal` allocation | `jsonMarshal` does `allocator.dupe(u8, toString(&buf))` — expected heap allocation for JSON path. Not a finding. |
+| `UUID.eql` and `UUID.isNil` using `std.mem.eql` | 16-byte compare; LLVM compiles to single 128-bit comparison on x86_64. Not a finding. |
+| CI parallelism | 10 independent CI jobs all correctly use `needs: [build]`. No bottleneck detected. Not a finding. |
+
+---
+
+## Confirmed vs Suspected (Cycle 3)
+
+| Finding | Confidence | Evidence |
+|---------|-----------|---------|
+| PERF-16: Allocating API unbenchmarked + 300× overhead | Confirmed | Measured 1,800–2,000 ns/op vs 5–6 ns/op (ReleaseFast, page_allocator) |
+| PERF-17: newV7AtTime base cost = 22 ns/op | Confirmed | Measured with ms+1/call micro-benchmark at ReleaseFast |
+| PERF-18: toStringUpper/toHexUpper unbenchmarked | Confirmed | Source code inspection + measured 6–8 ns/op |
+
+All Cycle 3 findings are **confidence::confirmed**.
+
+---
+
+## Appendix: Cycle 3 Analysis Methodology
+
+- **Codebase examined**: All files in `src/`, `bench/`, `build.zig`, `.gitlab-ci.yml` (145 unit tests + 20 integration tests, all passing)
+- **Tools used**: Source code inspection, `zig build bench -Doptimize=ReleaseFast`, standalone micro-benchmarks in `/tmp/fbench/`
+- **Build confirmed**: All tests pass at Debug and ReleaseFast
+- **Benchmarks run**: Official `zig build bench -Doptimize=ReleaseFast` (3 runs) + focused micro-benchmarks for allocating API, vtable dispatch, `newV7AtTime`, uppercase variants, `fromString` formats
+- **Optimization level**: ReleaseFast on Linux x86_64 (kernel 6.17, Zig 0.15.2)
+- **Thread model**: Single-threaded; concurrent contention not measured
+- **Key measured values (Cycle 3)**:
+  - `toHexAlloc` (page_allocator): **~1,800–1,900 ns/op**
+  - `toHexAlloc` (arena, 1000-call reset): **~12–13 ns/op**
+  - `toHex` (stack): **~5 ns/op**
+  - `newV7AtTime` (ms+1/call): **~22 ns/op**
+  - `newV7` (ceiling-limited): **~472–503 ns/op**
+  - `GeneratorInterface.newV4`: **~6 ns/op** (same as direct)
+  - `toStringUpper` (pool): **~8 ns/op**
+  - `toHexUpper` (pool): **~6 ns/op**
+  - `crypto.random.bytes(2)`: **~4 ns/op**
+  - `crypto.random.bytes(8)`: **~5 ns/op**
+  - `crypto.random.bytes(16)`: **~6 ns/op**

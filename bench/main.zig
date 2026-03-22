@@ -23,8 +23,17 @@ pub fn main() !void {
     try benchV7();
     try benchV1();
     try benchV6();
+    try benchV3();
+    try benchV5();
     try benchToString();
+    try benchToStringUpper();
+    try benchToStringAlloc();
+    try benchToHexUpper();
+    try benchToHexAlloc();
+    try benchV7AtTime();
     try benchFromString();
+    try benchFromStringHex();
+    try benchFromStringURN();
 }
 
 fn benchV4() !void {
@@ -67,6 +76,45 @@ fn benchV6() !void {
     report("newV6", start);
 }
 
+fn benchV3() !void {
+    // QC-34: MD5 name-based UUID throughput.
+    // Pre-compute a varied name pool so the compiler cannot hoist the hash call.
+    var gen = uuid.Generator.init();
+    const pool_size = 256;
+    var names: [pool_size][8]u8 = undefined;
+    for (&names, 0..) |*n, i| {
+        std.mem.writeInt(u64, n, @as(u64, i), .little);
+    }
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const u = gen.newV3(uuid.namespace_dns, &names[i % pool_size]);
+        sink ^= u.bytes[0];
+    }
+    report("newV3", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchV5() !void {
+    // QC-34: SHA-1 name-based UUID throughput.
+    var gen = uuid.Generator.init();
+    const pool_size = 256;
+    var names: [pool_size][8]u8 = undefined;
+    for (&names, 0..) |*n, i| {
+        std.mem.writeInt(u64, n, @as(u64, i), .little);
+    }
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const u = gen.newV5(uuid.namespace_dns, &names[i % pool_size]);
+        sink ^= u.bytes[0];
+    }
+    report("newV5", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
 fn benchToString() !void {
     // PERF-11: Pre-build a pool of distinct UUIDs so the compiler cannot
     // hoist or constant-fold the toString call.  XOR one result byte into
@@ -89,6 +137,101 @@ fn benchToString() !void {
     if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
+fn benchToStringUpper() !void {
+    // PERF-18: Uppercase string variant benchmark.
+    var gen = uuid.Generator.init();
+    const pool_size = 256;
+    var pool: [pool_size]uuid.UUID = undefined;
+    for (&pool) |*u| u.* = try gen.newV4();
+
+    var buf: [36]u8 = undefined;
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const s = pool[i % pool_size].toStringUpper(&buf);
+        sink ^= s[0];
+    }
+    report("toStringUpper", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchToStringAlloc() !void {
+    // PERF-16: Allocating string variant benchmark (page_allocator).
+    // Expected ~1800 ns/op — ~300× slower than the stack variant.
+    const alloc = std.heap.page_allocator;
+    var gen = uuid.Generator.init();
+    const pool_size = 256;
+    var pool: [pool_size]uuid.UUID = undefined;
+    for (&pool) |*u| u.* = try gen.newV4();
+
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const s = try pool[i % pool_size].toStringAlloc(alloc);
+        defer alloc.free(s);
+        sink ^= s[0];
+    }
+    report("toStringAlloc", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchToHexUpper() !void {
+    // PERF-18: Uppercase hex variant benchmark.
+    var gen = uuid.Generator.init();
+    const pool_size = 256;
+    var pool: [pool_size]uuid.UUID = undefined;
+    for (&pool) |*u| u.* = try gen.newV4();
+
+    var buf: [32]u8 = undefined;
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const s = pool[i % pool_size].toHexUpper(&buf);
+        sink ^= s[0];
+    }
+    report("toHexUpper", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchToHexAlloc() !void {
+    // PERF-16: Allocating hex variant benchmark (page_allocator).
+    // Expected ~1800 ns/op — ~300× slower than the stack variant.
+    const alloc = std.heap.page_allocator;
+    var gen = uuid.Generator.init();
+    const pool_size = 256;
+    var pool: [pool_size]uuid.UUID = undefined;
+    for (&pool) |*u| u.* = try gen.newV4();
+
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const s = try pool[i % pool_size].toHexAlloc(alloc);
+        defer alloc.free(s);
+        sink ^= s[0];
+    }
+    report("toHexAlloc", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchV7AtTime() !void {
+    // PERF-17: V7 base generation cost without ceiling/spin-wait.
+    // Increments ms by 1 per call to bypass the mono_seq overflow path.
+    // Expected ~20-25 ns/op (true V7 encoding cost).
+    var gen = uuid.Generator.init();
+    var ms: i64 = 1_700_000_000_000;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        _ = try gen.newV7AtTime(ms);
+        ms += 1;
+    }
+    report("newV7AtTime", start);
+}
+
 fn benchFromString() !void {
     // PERF-11: Derive the input string at runtime from a freshly-generated
     // UUID so the parser cannot be constant-folded away.  XOR a result byte
@@ -106,6 +249,42 @@ fn benchFromString() !void {
         sink ^= parsed.bytes[0];
     }
     report("fromString", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchFromStringHex() !void {
+    // QC-45: benchmark fromString with 32-char hex (no-dashes) input.
+    var gen = uuid.Generator.init();
+    const u = try gen.newV4();
+    var hex_buf: [32]u8 = undefined;
+    const s = u.toHex(&hex_buf);
+
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const parsed = try uuid.UUID.fromString(s);
+        sink ^= parsed.bytes[0];
+    }
+    report("fromStr/hex", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchFromStringURN() !void {
+    // QC-45: benchmark fromString with urn:uuid: prefixed canonical input.
+    var gen = uuid.Generator.init();
+    const u = try gen.newV4();
+    var urn_buf: [45]u8 = undefined;
+    const s = u.toURN(&urn_buf);
+
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const parsed = try uuid.UUID.fromString(s);
+        sink ^= parsed.bytes[0];
+    }
+    report("fromStr/urn", start);
     if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
