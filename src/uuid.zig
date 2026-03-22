@@ -142,8 +142,37 @@ pub const UUID = struct {
     /// UUID comparison is byte-by-byte (case-insensitive string representations
     /// are not compared here).  Use `fromString` to normalise both sides first
     /// if you need to compare string-encoded UUIDs.
+    ///
+    /// **SEC-R9-01 / CWE-208 — Timing safety warning:**
+    /// This function uses `std.mem.eql`, which is a short-circuit comparison and
+    /// is **not** constant-time.  It is correct and efficient for the typical use
+    /// case of UUID identity checks (UUIDs are public identifiers).
+    ///
+    /// However, if a UUID is used as a secret capability — for example as a V4
+    /// session token, invite token, or bearer credential — comparing it with
+    /// `eql` leaks timing information that an attacker can use to recover the
+    /// secret byte-by-byte via a remote timing oracle.
+    ///
+    /// Use `timingSafeEql` instead whenever the UUID being compared is secret.
     pub fn eql(self: UUID, other: UUID) bool {
         return std.mem.eql(u8, &self.bytes, &other.bytes);
+    }
+
+    /// Constant-time equality check for UUIDs used as secrets.
+    ///
+    /// Equivalent to `eql` in semantics but uses `std.crypto.timing_safe.eql`
+    /// to ensure the comparison takes the same amount of time regardless of
+    /// where the first differing byte occurs.
+    ///
+    /// **Use this function** when the UUID represents a secret capability (e.g.
+    /// a V4 session token, invite token, or bearer credential) and the result
+    /// is used in an authentication or authorisation decision.  Using `eql` in
+    /// that context leaks timing information (CWE-208).
+    ///
+    /// For ordinary UUID identity checks where the UUID is a public identifier,
+    /// `eql` is preferred — it is faster and constant-time safety is unnecessary.
+    pub fn timingSafeEql(self: UUID, other: UUID) bool {
+        return std.crypto.timing_safe.eql([16]u8, self.bytes, other.bytes);
     }
 
     /// Lexicographic ordering of UUID bytes (big-endian byte comparison).

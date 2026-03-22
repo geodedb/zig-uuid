@@ -97,6 +97,68 @@ test "UUID eql and order" {
     try std.testing.expectEqual(std.math.Order.lt, a.order(b));
 }
 
+// --- SEC-R9-01: timingSafeEql ---
+
+test "UUID.timingSafeEql: equal UUIDs return true (SEC-R9-01)" {
+    // Identical value — must return true.
+    try std.testing.expect(UUID.nil.timingSafeEql(UUID.nil));
+    try std.testing.expect(UUID.max.timingSafeEql(UUID.max));
+
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expect(u.timingSafeEql(u));
+}
+
+test "UUID.timingSafeEql: unequal UUIDs return false (SEC-R9-01)" {
+    // nil vs max differ in all 16 bytes.
+    try std.testing.expect(!UUID.nil.timingSafeEql(UUID.max));
+
+    // Differ only in the last byte.
+    var a = UUID.nil;
+    var b = UUID.nil;
+    b.bytes[15] = 0x01;
+    try std.testing.expect(!a.timingSafeEql(b));
+
+    // Differ only in the first byte.
+    a = UUID.nil;
+    b = UUID.nil;
+    b.bytes[0] = 0xFF;
+    try std.testing.expect(!a.timingSafeEql(b));
+}
+
+test "UUID.timingSafeEql: agrees with eql on equal inputs (SEC-R9-01)" {
+    // timingSafeEql and eql must produce the same boolean for all equal pairs.
+    const cases = [_]UUID{ UUID.nil, UUID.max };
+    for (cases) |u| {
+        try std.testing.expect(u.eql(u) == u.timingSafeEql(u));
+    }
+    const u = try UUID.fromString("018fca1a-b503-7b7a-b9c0-c5c8fdb4e0e8");
+    try std.testing.expect(u.eql(u) == u.timingSafeEql(u));
+}
+
+test "UUID.timingSafeEql: agrees with eql on unequal inputs (SEC-R9-01)" {
+    // timingSafeEql and eql must produce the same boolean for all unequal pairs.
+    const a = UUID.nil;
+    const b = UUID.max;
+    try std.testing.expect(a.eql(b) == a.timingSafeEql(b));
+
+    // Single-byte difference at every position.
+    inline for (0..16) |i| {
+        var x = UUID.nil;
+        var y = UUID.nil;
+        y.bytes[i] = 0x42;
+        try std.testing.expect(x.eql(y) == x.timingSafeEql(y));
+        try std.testing.expect(!x.timingSafeEql(y));
+    }
+}
+
+test "UUID.timingSafeEql: symmetric (SEC-R9-01)" {
+    const a = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const b = try UUID.fromString("018fca1a-b503-7b7a-b9c0-c5c8fdb4e0e8");
+    // a.timingSafeEql(b) == b.timingSafeEql(a)
+    try std.testing.expect(a.timingSafeEql(b) == b.timingSafeEql(a));
+    try std.testing.expect(a.timingSafeEql(a) == a.timingSafeEql(a));
+}
+
 test "UUID HashContext" {
     const ctx = UUID.HashContext{};
     const h1 = ctx.hash(UUID.nil);

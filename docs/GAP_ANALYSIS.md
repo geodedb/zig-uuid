@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 9: 1 new finding (SEC-R9-01 Low); SEC-R9-02 closed as Won't Do (CI hash TOFU — handled by pipeline governance, same as SEC-R2-01). SEC-R7-01 partially reclassified (Python injection is false positive; shell variable injection is real but low). All Cycles 1–8 findings remain closed.
+> Last updated: 2026-03-22 — Security Review Cycle 9 fully closed: SEC-R9-01 fixed (`UUID.timingSafeEql()` + CWE-208 doc warning); SEC-R9-02 Won't Do (CI hash TOFU — pipeline governance). SEC-R7-01 reclassified (Python injection false positive). All 33 findings across Cycles 1–9 closed.
 
 ---
 
@@ -2400,17 +2400,18 @@ closed. All Cycles 1–8 findings remain closed. 161 unit tests, 30 integration 
 | -------- | ----- |
 | High     | 0     |
 | Medium   | 0     |
-| Low      | 1     |
+| Low      | 1 (✅ Closed) |
 | Won't Do | 1     |
 | Info     | 0     |
 | **Total**| **2** |
 
 All Cycles 1–8 security findings were confirmed implemented and closed. One new low-severity
-finding was identified: a non-constant-time UUID comparison that could be a timing
-side-channel when UUIDs are misused as secret tokens (SEC-R9-01, Open). A second finding
-(SEC-R9-02 — CI hash TOFU) was identified but immediately closed as Won't Do: it falls
-under the same pipeline governance policy as SEC-R2-01, which covers CI toolchain download
-and verification controls handled outside this library.
+finding was identified and closed: a non-constant-time UUID comparison that creates a timing
+oracle when UUIDs are misused as secret tokens (SEC-R9-01 — fixed with `timingSafeEql` +
+CWE-208 doc warning on `eql`). A second finding (SEC-R9-02 — CI hash TOFU) was identified
+but immediately closed as Won't Do: it falls under the same pipeline governance policy as
+SEC-R2-01, which covers CI toolchain download and verification controls handled outside
+this library.
 
 Additionally, SEC-R7-01 was partially reclassified: the Python code injection vector
 (CWE-94) was confirmed to be a **false positive** (ZIG_VERSION is passed as an env var,
@@ -2423,6 +2424,8 @@ real but low-risk concern. A correction note was added to
 #### SEC-R9-01: UUID.eql() Non-Constant-Time Comparison (CWE-208)
 
 **Severity:** Low | **Risk Score:** 24 (Impact 3 × Likelihood 2 × 4) | **Confidence:** confirmed
+
+**Status: ✅ Closed — Implemented**
 
 `UUID.eql()` delegates to `std.mem.eql(u8, &self.bytes, &other.bytes)`, which is a
 short-circuit byte comparison — not constant-time. This is semantically correct for
@@ -2437,9 +2440,24 @@ warning exists in `UUID.eql()` doc comment, README, or SECURITY.md.
 **Attack scenario:** Caller uses `stored.eql(provided)` as an auth check; attacker
 measures response latency for repeated guesses, recovering the token byte-by-byte.
 
-**Fix:** Add a doc warning to `UUID.eql()` that it is not constant-time; recommend
-`std.crypto.utils.timingSafeEql([16]u8, a.bytes, b.bytes)` for secret-comparison use
-cases. Optionally add `UUID.timingSafeEql()` convenience wrapper.
+**Fix applied:**
+
+- `UUID.eql()` doc comment updated with a prominent `SEC-R9-01 / CWE-208` timing-safety
+  warning directing callers to use `timingSafeEql` for secret comparisons.
+- `UUID.timingSafeEql(other: UUID) bool` added: wraps
+  `std.crypto.timing_safe.eql([16]u8, self.bytes, other.bytes)` — the Zig stdlib's
+  constant-time array comparison. Documented with when/why/how guidance.
+- `eql` is **not changed** — it remains fast and correct for public-identifier comparisons.
+
+**Files:** `src/uuid.zig`
+
+**Tests added** (`src/uuid_test.zig`):
+
+- `UUID.timingSafeEql: equal UUIDs return true (SEC-R9-01)`
+- `UUID.timingSafeEql: unequal UUIDs return false (SEC-R9-01)` — differs at first byte, last byte, and all bytes
+- `UUID.timingSafeEql: agrees with eql on equal inputs (SEC-R9-01)` — regression: same boolean as eql for equal pairs
+- `UUID.timingSafeEql: agrees with eql on unequal inputs (SEC-R9-01)` — regression across all 16 single-byte-diff positions
+- `UUID.timingSafeEql: symmetric (SEC-R9-01)` — a.timingSafeEql(b) == b.timingSafeEql(a)
 
 **GitLab:** [#141](https://gitlab.com/devnw/zig/uuid/-/work_items/141)
 
@@ -2480,7 +2498,7 @@ pipeline governance policy has changed.
 
 | Rank | Sev | Risk | Finding | Component | CWE | Evidence (file:line) | Issue URL | Fix | Owner | Due | Status |
 | ---- | --- | ---- | ------- | --------- | --- | -------------------- | --------- | --- | ----- | --- | ------ |
-| 1 | Low | 24 | `UUID.eql()` is non-constant-time — timing oracle if used for secret token comparison | `src/uuid.zig` | CWE-208 | `uuid.zig:145-147` | [#141](https://gitlab.com/devnw/zig/uuid/-/work_items/141) | Add doc warning; optionally add `timingSafeEql()` wrapper | Library author | Next release | Open |
+| 1 | Low | 24 | `UUID.eql()` is non-constant-time — timing oracle if used for secret token comparison | `src/uuid.zig` | CWE-208 | `uuid.zig:145-147` | [#141](https://gitlab.com/devnw/zig/uuid/-/work_items/141) | CWE-208 warning added to `eql` doc; `timingSafeEql()` wrapper added + 5 tests | Library author | ✅ Done | ✅ Closed |
 | 2 | Low | 12 | CI hash fetched from same server as binary — TOFU; no protection against `ziglang.org` compromise | `.gitlab-ci.yml` | CWE-494 | `.gitlab-ci.yml:55-67` | [#142](https://gitlab.com/devnw/zig/uuid/-/work_items/142) | Pipeline governance (same policy as SEC-R2-01) | CI/CD team | — | 🚫 Won't Do |
 
 ### False Positives Noted (Cycle 9)
@@ -2530,9 +2548,6 @@ pipeline governance policy has changed.
 
 ---
 
-_Last updated: 2026-03-22 — Cycle 9 complete. 1 new open finding (SEC-R9-01 Low). SEC-R9-02
-closed as Won't Do (CI hash TOFU — pipeline governance, same policy as SEC-R2-01).
-SEC-R7-01 Python injection reclassified as false positive. 33 total findings across all cycles;
-32 closed (including 1 Won't Do), 1 open (SEC-R9-01)._
+_Last updated: 2026-03-22 — Cycle 9 complete. SEC-R9-01 closed: `UUID.timingSafeEql()` added with CWE-208 timing warning in `eql` doc. SEC-R9-02 closed as Won't Do (CI hash TOFU — pipeline governance). SEC-R7-01 Python injection reclassified as false positive. 33 total findings across all cycles; 33 closed (32 implemented + 1 Won't Do), 0 open._
 
 ---
