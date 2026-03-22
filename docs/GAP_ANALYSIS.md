@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 12: 2 new Info findings (SEC-R12-01 node_cache data race — Won't Do; SEC-R12-02 fromUnixNano secondary overflow — Open, fix identified). 40 total findings; 36 closed, 2 Won't Do, 1 false positive, 1 open.
+> Last updated: 2026-03-22 — Security Review Cycle 13: 6 new findings (SEC-R13-01 V7 double clock() — Medium/Open; SEC-R13-03 fuzz corpus gap — Low/Open; SEC-R13-04 undefined buffer in loadState — Medium/Open; SEC-R13-06 dead SIOCGIFCONF truncation block — Low/Open; SEC-R13-07 SECURITY.md gaps — Info/Open; SEC-R13-08 clock() under mutex — Low/Open). 46 total findings; 36 closed, 2 Won't Do, 1 false positive, 7 open.
 
 ---
 
@@ -3099,5 +3099,168 @@ All previously closed Won't Do items were re-reviewed and remain correctly class
 ---
 
 _Last updated: 2026-03-22 — Cycle 12 complete. SEC-R12-01 Won't Do (node\_cache optimistic read is intentional PERF-05 design); SEC-R12-02 Open (`fromUnixNano` secondary addition overflow — fix identified, awaiting implementation). 40 total findings across all cycles; 36 closed, 2 Won't Do, 1 false positive, 1 open._
+
+---
+
+## Security Review Cycle 13
+
+**Date:** 2026-03-22
+**Reviewer:** Phase 3 automated + manual review
+**Scope:** Full re-read of `src/generator.zig`, `src/fuzz.zig`, `src/hwaddr/linux.zig`, `src/timestamp.zig`, `SECURITY.md`, and supporting build/CI files.
+
+### Methodology (Cycle 13)
+
+- Static pattern analysis of all `self.clock()` call sites in `src/generator.zig` for TOCTOU and mutex-under-blocking-call patterns.
+- Buffer initialization audit across all state I/O paths.
+- Fuzz corpus coverage gap analysis against known overflow boundaries from SEC-R12-02.
+- Linux hwaddr ioctl result handling review for silent-truncation patterns.
+- `SECURITY.md` audit against coordinated disclosure best practices (PGP, CVSS, version policy).
+- Deduplication pass: SEC-R13-02 identified as duplicate of SEC-R12-02 (#154) — not tracked. SEC-R13-05 retracted — `renameAbsolute` uses `rename(2)` which does not follow destination symlinks.
+
+### Findings (Cycle 13)
+
+#### SEC-R13-01 — V7 spin-wait double `self.clock()` invocation causes timestamp divergence (CWE-362, Medium)
+
+**Severity:** Medium | **Risk Score:** 16 (Impact 2 × Likelihood 2 × 4) | **Confidence:** Confirmed
+
+**Status: 🔓 Open**
+
+Two independent `self.clock()` invocations within a single V7 spin-wait loop iteration allow the sleep-duration computation (line 226) and the ms-advance check (line 236) to observe different clock values. With a non-monotonic or injected clock, these can diverge — causing overshoot (wasted CPU / latency spike) or undershoot (duplicate ms timestamps, breaking V7 RFC 9562 §6.2 monotonicity).
+
+**Fix:** Cache `const ns_now = self.clock()` once at spin iteration start; use for both computations.
+
+**Files:** `src/generator.zig:226, 236`
+
+**CWE:** CWE-362 | **OWASP:** A04:2021 (Insecure Design) | **Exploit surface:** Internal / custom ClockFn
+
+**GitLab:** [#156](https://gitlab.com/devnw/zig/uuid/-/work_items/156) | **SLA:** 90 days (due: 2026-06-20)
+
+---
+
+#### SEC-R13-03 — Fuzz corpus missing SEC-R12-02 overflow boundary for `fromUnixNano` (CWE-754, Low)
+
+**Severity:** Low | **Risk Score:** 16 | **Confidence:** Confirmed
+
+**Status: 🔓 Open**
+
+The `nano_corpus` in `src/fuzz.zig:184–197` jumps from near `maxInt(u64)*100-100` directly to `maxInt(i128)`, skipping the dangerous overflow boundary at `ns = (maxInt(u64) - gregorian_offset) * 100 + 100` (year ~60,037 AD) identified in SEC-R12-02. Without a seed at this boundary, the fuzzer is unlikely to reach the overflow path organically, leaving the SEC-R12-02 fix without regression coverage.
+
+**Fix:** Add corpus entry at `ns = (maxInt(u64) - gregorian_offset) * 100 + 100` (≈ 1.832455e21).
+
+**Files:** `src/fuzz.zig:184–197`
+
+**CWE:** CWE-754 | **OWASP:** A05:2021 (Security Misconfiguration) | **Exploit surface:** Test/fuzz infrastructure only
+
+**GitLab:** [#158](https://gitlab.com/devnw/zig/uuid/-/work_items/158) | **SLA:** 180 days (due: 2026-09-18)
+
+---
+
+#### SEC-R13-04 — `loadState` undefined buffer leaves bytes 22–31 uninitialized for v1 state files (CWE-908, Medium)
+
+**Severity:** Medium | **Risk Score:** 24 | **Confidence:** Confirmed
+
+**Status: 🔓 Open**
+
+`loadState` declares `var buf: [state_size]u8 = undefined` (32 bytes). For v1 state files (22 bytes), bytes 22–31 are never written by `file.readAll`. The current version-2 guard at line 679 prevents consumption of those bytes, but this is a latent CWE-908: if the guard is weakened or removed in a future refactor, uninitialized stack memory will be read as generator state (weak randomness / information leak in ReleaseFast; panic in Debug/ReleaseSafe).
+
+**Fix:** `var buf: [state_size]u8 = std.mem.zeroes([state_size]u8)` — one-word change, zero performance cost.
+
+**Files:** `src/generator.zig:644`
+
+**CWE:** CWE-908 | **OWASP:** A05:2021 (Security Misconfiguration) | **Exploit surface:** Internal / state file supply
+
+**GitLab:** [#159](https://gitlab.com/devnw/zig/uuid/-/work_items/159) | **SLA:** 90 days (due: 2026-06-20)
+
+---
+
+#### SEC-R13-06 — Linux SIOCGIFCONF truncation detection is a dead empty block (CWE-390, Low)
+
+**Severity:** Low | **Risk Score:** 8 | **Confidence:** Confirmed
+
+**Status: 🔓 Open**
+
+The truncation detection block at `src/hwaddr/linux.zig:57–61` (triggered when `ifc_len == initial_len`, indicating >128 interfaces) is an empty dead block. On hosts with large interface counts (container orchestration environments, heavy VLAN deployments), the MAC address enumeration silently returns a truncated interface list with no log, metric, or error signal. The node ID may be selected from an incomplete set without any operator awareness.
+
+**Fix:** Remove the dead block entirely, or replace it with a `std.log.warn` call noting the truncation.
+
+**Files:** `src/hwaddr/linux.zig:57–61`
+
+**CWE:** CWE-390 | **OWASP:** A09:2021 (Security Logging and Monitoring Failures) | **Exploit surface:** Internal / large-interface-count hosts
+
+**GitLab:** [#161](https://gitlab.com/devnw/zig/uuid/-/work_items/161) | **SLA:** 180 days (due: 2026-09-18)
+
+---
+
+#### SEC-R13-07 — SECURITY.md missing PGP channel, CVSS criteria, and version EOL policy (Info)
+
+**Severity:** Info | **Risk Score:** 4 | **Confidence:** Confirmed
+
+**Status: 🔓 Open**
+
+`SECURITY.md` exists but lacks: (1) a PGP key or encrypted reporting channel note, (2) a CVSS/scoring criteria table so reporters understand severity determination, and (3) a version support / end-of-life policy. These gaps can delay or complicate handling of future vulnerability reports.
+
+**Fix:** Add three sections to `SECURITY.md`: encrypted reporting channel, CVSS criteria table (v3.1), and version support matrix.
+
+**Files:** `SECURITY.md`
+
+**OWASP:** A05:2021 (Security Misconfiguration — process) | **Exploit surface:** Process/documentation gap
+
+**GitLab:** [#164](https://gitlab.com/devnw/zig/uuid/-/work_items/164) | **SLA:** Backlog
+
+---
+
+#### SEC-R13-08 — `loadState` may call `self.clock()` under mutex, stalling all UUID generation if ClockFn blocks (CWE-833, Low)
+
+**Severity:** Low | **Risk Score:** 8 | **Confidence:** Suspected
+
+**Status: 🔓 Open**
+
+`loadState` (`src/generator.zig:628–701`) acquires `self.mutex` and may invoke `self.clock()` within the critical section. If `ClockFn` blocks (network-backed NTP, slow hardware clock, test double with artificial delay), all concurrent UUID generation calls that contend on `self.mutex` stall for the duration. Under the default `std.time.nanoTimestamp` this is benign, but custom ClockFns elevate the risk to a denial-of-service scenario.
+
+**How to confirm:** Trace the control flow from `self.mutex.lock()` to `self.mutex.unlock()` in `loadState` and verify whether any `self.clock()` call falls within that window.
+
+**Fix:** Cache clock reading before `self.mutex.lock()` in `loadState`; use the cached value inside the critical section.
+
+**Files:** `src/generator.zig:628–701`
+
+**CWE:** CWE-833 | **OWASP:** A06:2021 (Vulnerable and Outdated Components — availability) | **Exploit surface:** Internal / custom ClockFn
+
+**GitLab:** [#167](https://gitlab.com/devnw/zig/uuid/-/work_items/167) | **SLA:** 180 days (due: 2026-09-18)
+
+---
+
+### Retracted / Deduplicated Findings (Cycle 13)
+
+| ID | Disposition | Reason |
+|----|-------------|--------|
+| SEC-R13-02 | Duplicate of SEC-R12-02 (#154) | Same `fromUnixNano` secondary u64 overflow — already tracked. |
+| SEC-R13-05 | Retracted — False Positive | `renameAbsolute` uses `rename(2)` which does not follow destination symlinks; no TOCTOU via symlink. |
+
+---
+
+### Summary Table (Cycle 13)
+
+| Severity | New Findings | Status |
+|----------|-------------|--------|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 2 | 🔓 Open (SEC-R13-01, SEC-R13-04) |
+| Low | 3 | 🔓 Open (SEC-R13-03, SEC-R13-06, SEC-R13-08) |
+| Info | 1 | 🔓 Open (SEC-R13-07) |
+| **Total** | **6** | **6 Open** |
+
+**Running totals across all cycles:**
+
+| Metric | Count |
+|--------|-------|
+| Total findings (Cycles 1–13) | 46 |
+| Closed / implemented | 36 |
+| Won't Do | 2 (SEC-R9-02, SEC-R12-01) |
+| False Positive | 1 (SEC-R11-02) |
+| Open | 7 (SEC-R12-02, SEC-R13-01, SEC-R13-03, SEC-R13-04, SEC-R13-06, SEC-R13-07, SEC-R13-08) |
+
+---
+
+_Last updated: 2026-03-22 — Cycle 13 complete. 6 new findings: 2 Medium (SEC-R13-01 V7 double clock() TOCTOU; SEC-R13-04 undefined buffer in loadState), 3 Low (SEC-R13-03 fuzz corpus gap; SEC-R13-06 dead SIOCGIFCONF truncation block; SEC-R13-08 clock() under mutex), 1 Info (SEC-R13-07 SECURITY.md gaps). SEC-R13-02 deduplicated to SEC-R12-02; SEC-R13-05 retracted (false positive). 46 total findings across all cycles; 36 closed, 2 Won't Do, 1 false positive, 7 open._
 
 ---
