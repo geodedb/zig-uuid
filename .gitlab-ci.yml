@@ -53,12 +53,13 @@ stages:
       TARBALL="${ARCHIVE_NAME}.tar.xz"
       INDEX_FILE=$(mktemp)
       curl -fsSL "https://ziglang.org/download/index.json" -o "${INDEX_FILE}"
-      EXPECTED_HASH=$(python3 -c "
-    import json, sys
-    idx = json.load(open('${INDEX_FILE}'))
-    pkg = idx.get('${ZIG_VERSION}', {}).get('${ZIG_ARCH}-linux', {})
+      EXPECTED_HASH=$(ZIG_VER="${ZIG_VERSION}" ZIG_ARCH_KEY="${ZIG_ARCH}-linux" ZIG_IDX="${INDEX_FILE}" \
+        python3 -c "
+    import json, os, sys
+    idx = json.load(open(os.environ['ZIG_IDX']))
+    pkg = idx.get(os.environ['ZIG_VER'], {}).get(os.environ['ZIG_ARCH_KEY'], {})
     h = pkg.get('shasum', '')
-    if not h: sys.exit('SHA-256 not found for ${ZIG_VERSION}/${ZIG_ARCH}-linux')
+    if not h: sys.exit('SHA-256 not found for ' + os.environ['ZIG_VER'] + '/' + os.environ['ZIG_ARCH_KEY'])
     print(h)
     ")
       rm -f "${INDEX_FILE}"
@@ -144,6 +145,18 @@ test-integration-release-fast:
     - *install-zig
   script:
     - zig build test-integration -Doptimize=ReleaseFast --summary all
+  needs:
+    - build
+
+# ReleaseSmall tests — verifies correctness under size-optimized builds and
+# catches issues that Debug safety checks obscure (QC-68).
+test-release-small:
+  stage: test
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+  script:
+    - zig build test -Doptimize=ReleaseSmall --summary all
   needs:
     - build
 

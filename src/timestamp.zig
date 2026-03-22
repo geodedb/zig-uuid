@@ -64,13 +64,25 @@ pub const Timestamp = struct {
     }
 
     /// Create from Unix nanoseconds.
+    ///
+    /// **SEC-R8-01:** Upper-bound guard prevents @intCast panic for values
+    /// that would produce more than maxInt(u64) 100-ns intervals. Any ns
+    /// value above maxInt(u64) * 100 (~1.84e21 ns ≈ year 5861) is rejected
+    /// as Error.InvalidTimestamp before the @intCast.
     pub fn fromUnixNano(ns: i128) Error!Timestamp {
         if (ns < 0) return Error.InvalidTimestamp;
-        const intervals_since_unix: u64 = @intCast(@divTrunc(ns, 100));
-        return .{ .value = @truncate(intervals_since_unix + gregorian_offset) };
+        const intervals_since_unix = @divTrunc(ns, 100);
+        // Guard: intervals_since_unix must fit in u64 before @intCast.
+        if (intervals_since_unix > std.math.maxInt(u64)) return Error.InvalidTimestamp;
+        const intervals_u64: u64 = @intCast(intervals_since_unix);
+        return .{ .value = @truncate(intervals_u64 + gregorian_offset) };
     }
 
     /// Create from Unix milliseconds (G-4 helper for timestampFromV7).
+    ///
+    /// **SEC-R8-01:** Delegates to fromUnixNano which guards against overflow.
+    /// maxInt(i64) ms × 1_000_000 ≈ 9.22e24 ns, which exceeds the u64
+    /// interval range (~1.84e21 ns), so fromUnixNano returns Error.InvalidTimestamp.
     pub fn fromUnixMs(ms: i64) Error!Timestamp {
         if (ms < 0) return Error.InvalidTimestamp;
         const ns: i128 = @as(i128, ms) * 1_000_000;
@@ -232,6 +244,17 @@ test "timestampFromV7: error on wrong version (QC-37)" {
     var u = UUID{ .bytes = [_]u8{0} ** 16 };
     u.setVersion(.v4);
     try std.testing.expectError(Error.InvalidVersion, timestampFromV7(u));
+}
+
+test "Timestamp.fromUnixNano: rejects values above u64 interval range (SEC-R8-01)" {
+    // ns value that would produce > maxInt(u64) intervals (each interval = 100 ns)
+    const too_large: i128 = @as(i128, std.math.maxInt(u64)) * 100 + 100;
+    try std.testing.expectError(Error.InvalidTimestamp, Timestamp.fromUnixNano(too_large));
+}
+
+test "Timestamp.fromUnixMs: rejects maxInt(i64) ms (SEC-R8-01)" {
+    // maxInt(i64) ms → ~9.22e24 ns → far exceeds u64 interval range
+    try std.testing.expectError(Error.InvalidTimestamp, Timestamp.fromUnixMs(std.math.maxInt(i64)));
 }
 
 test "Timestamp.toUnixMs: i64 cast is safe at extreme u60 values (SEC-R2-15/#48)" {

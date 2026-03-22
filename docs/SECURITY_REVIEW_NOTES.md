@@ -254,3 +254,105 @@ One new finding identified:
   and safe. Not a vulnerability.
 - **`loadState` mutex early returns:** All `return Error.InvalidFormat` at lines 635-644
   execute before the mutex is acquired at line 646. No deadlock risk.
+
+---
+
+## Adversarial Review Cycle 8 — 2026-03-22
+
+### Tool Versions (Cycle 8)
+
+| Tool | Version | Status |
+| ---- | ------- | ------ |
+| gitleaks | 8.30.0 | Available |
+| trufflehog | 3.92.5 | Available |
+| osv-scanner | 2.3.2 | Available |
+| trivy | 0.69.0 | Available |
+| syft | 1.41.1 | Available |
+| grype | 0.107.0 | Available |
+| semgrep | (latest) | Available (no Zig rules; auto config requires metrics) |
+| shellcheck | (latest) | Available |
+| checkov | 3.2.499 | Available |
+| bandit | 1.9.3 | Available |
+| hadolint | 2.14.0 | Available (no Dockerfiles) |
+
+### Automated Scan Results (Cycle 8)
+
+| Tool | Exit | Findings |
+| ---- | ---- | -------- |
+| gitleaks | 0 (clean) | 0 secrets (47 commits, 706 KB scanned) |
+| trufflehog | N/A | 1 line output (no findings — self-update noise) |
+| syft | 0 | SBOM generated at /tmp/sbom-r8.cdx.json |
+| grype | 0 | 0 CVE matches |
+| osv-scanner | 128 | No Zig package sources found (expected) |
+| trivy | 0 | 0 vulns, 0 secrets, 0 misconfigurations |
+| semgrep | 0 | 0 results (no Zig rules; security-audit config used) |
+| shellcheck | 0 | No tracked .sh files |
+| checkov (gitlab_ci) | 0 | 12 passed, 0 failed |
+
+### New Findings (Cycle 8)
+
+Three new findings identified not covered by Cycles 1–7:
+
+1. **SEC-R8-01** (Medium, CWE-190): `Timestamp.fromUnixNano` and `Timestamp.fromUnixMs` lack
+   upper-bound guards. Passing a value above the u64 threshold causes `@intCast` to panic in
+   Debug/ReleaseSafe or produce undefined behavior in ReleaseFast. `fromUnixMs(maxInt(i64))`
+   always panics.
+   GitLab: [#129](https://gitlab.com/devnw/zig/uuid/-/work_items/129)
+
+2. **SEC-R8-02** (Info, CWE-1265): No fuzz targets exist for `Timestamp.fromUnixMs`,
+   `Timestamp.fromUnixNano`, or `Generator.loadState`. The timestamp overflow in SEC-R8-01
+   would have been caught automatically by a fuzz target.
+   GitLab: [#130](https://gitlab.com/devnw/zig/uuid/-/work_items/130)
+
+3. **SEC-R8-03** (Info, CWE-20): `fromString` uses case-sensitive URN prefix comparison.
+   RFC 2141 §5 requires case-insensitive treatment of `"urn:"`. Inputs with uppercase
+   `"URN:UUID:"` prefix return `error.InvalidLength` instead of `error.InvalidURNPrefix`.
+   GitLab: [#131](https://gitlab.com/devnw/zig/uuid/-/work_items/131)
+
+### Confirmed Clean Areas (Cycle 8)
+
+- **SEC-R7-01 still open:** Issue #128 verified as still unfixed. ZIG_VERSION interpolated
+  into `python3 -c "..."` at `.gitlab-ci.yml:59,61`. No fix committed.
+- **build.zig:** No `@embedFile`, `@cImport`, or `addSystemLibrary` calls. No external resources
+  in bench/check targets. Supply chain is clean.
+- **build.zig.zon:** JSON dependency uses both a pinned git commit hash AND a Zig content
+  hash (`json-0.1.0-tOue4fSoCwDuFpNLxdd4yUQyL3g9o3su9jiX5W08e3x5`). Supply chain verified.
+- **fromString braced format:** Closing `}` is checked at `uuid.zig:250`. Correct.
+- **fromString URN prefix:** Case-sensitive (see SEC-R8-03). `toURN` correctly produces
+  lowercase `urn:uuid:` prefix. `toURNAlloc` correctly delegates to `toURN`.
+- **hexVal non-ASCII:** The `else => Error.InvalidFormat` branch at `uuid.zig:418` safely
+  rejects all bytes > 127 (they fall in the `else` arm). No UB on non-ASCII input.
+- **V8 `newV8` validation:** `newV8` takes raw `[6]u8/[2]u8/[8]u8` fields and always
+  calls `setVersion(.v8)` and `setVariant(.rfc9562)`. Caller-supplied zeros/ones are safe.
+- **hwaddr/linux.zig:** Uses `SIOCGIFCONF` (128-slot buffer, SEC-R2-13) + `SIOCGIFHWADDR`.
+  No procfs or symlink-followable paths used. Path: `socket(AF_INET,SOCK_DGRAM)` + ioctl.
+- **hwaddr/macos.zig:** Uses `getifaddrs`. Kernel-allocated memory; sdl_len bounds guard present.
+  Broadcast MAC filtered (SEC-R6-03). Clean.
+- **hwaddr/windows.zig:** Uses `GetAdaptersAddresses`. Stack-first with heap fallback.
+  Broadcast MAC filtered. `PhysicalAddressLength != 6` skipped. Clean.
+- **timestampFromV7 cast safety:** `@intCast((hi << 16) | lo)` at `timestamp.zig:115` is safe;
+  combined value is at most 48-bit (u32 << 16 = 48 bits | u16 = 48 bits), well within i64 max.
+- **`allow_failure: true` in fuzz job:** The job-level `allow_failure: true` is intentional —
+  fuzz runs only on scheduled/manual pipelines and should not block MR pipelines. The SEC-R5-02
+  fix ensures the job _fails_ on crash (enabling artifact upload), while `allow_failure` keeps
+  the pipeline from being blocked. This is the intended behavior. NOT a new finding.
+- **V1/V6 MAC disclosure:** Default node ID is random+multicast (private). Opt-in MAC exposure
+  is documented in `Generator` doc comment. Not a new finding.
+- **Timing side-channels in fromString:** `hexVal` uses switch with character range matching.
+  LLVM typically lowers this to branchless code. Even if branchy, UUID parsing is not a
+  timing-sensitive operation. Not a finding.
+- **fuzz CI `zig build test --fuzz`:** Correct command — it runs all fuzz targets registered in
+  the unit test step (via `root.zig` importing `fuzz.zig`). Not a finding.
+
+### False Positive Notes (Cycle 8)
+
+- **`@intCast` in `timestampFromV7`:** Safe (48-bit value, confirmed by arithmetic analysis).
+- **`allow_failure: true` in fuzz job:** Intentional design; SEC-R5-02 already addressed the
+  meaningful issue (crash detection vs job pass/fail).
+- **path traversal in `saveState`/`loadState`:** These functions accept caller-controlled
+  absolute paths. The caller is responsible for path validation, as documented. Standard
+  library pattern; `std.fs.*Absolute` rejects relative paths. Not a new finding.
+- **ZIG_ARCH injection:** Derived from `uname -m` (system-controlled). Not attacker-controllable
+  in the same way as `ZIG_VERSION`. The SEC-R7-01 root cause covers both anyway.
+- **hashContext seed=0 (HashDoS):** Documented in SEC-6 / CWE-330 warning in `uuid.zig:130-143`.
+  `SecureHashContext` provides the hardened alternative. Already tracked and documented.

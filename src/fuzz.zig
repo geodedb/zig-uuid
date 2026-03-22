@@ -10,14 +10,19 @@
 //! undefined behaviour.
 //!
 //! Fuzz targets:
-//!   - UUID.fromString   — string parser (all 6 input formats)
-//!   - UUID.fromBytes    — 16-byte slice constructor
-//!   - NullUUID.jsonUnmarshal — JSON string deserializer
+//!   - UUID.fromString          — string parser (all 6 input formats)
+//!   - UUID.fromBytes           — 16-byte slice constructor
+//!   - NullUUID.jsonUnmarshal   — JSON string deserializer
+//!   - Timestamp.fromUnixMs     — i64 timestamp construction (SEC-R8-02)
+//!   - Timestamp.fromUnixNano   — i128 timestamp construction (SEC-R8-02)
+//!   - Generator.loadState      — state-file deserialization (SEC-R8-02)
 
 const std = @import("std");
 const UUID = @import("uuid.zig").UUID;
 const NullUUID = @import("null_uuid.zig").NullUUID;
 const json = @import("json");
+const Timestamp = @import("timestamp.zig").Timestamp;
+const Generator = @import("generator.zig").Generator;
 
 // Known-tricky inputs that parsers often mishandle.
 const corpus: []const []const u8 = &.{
@@ -132,4 +137,123 @@ test "fuzz: NullUUID.jsonUnmarshal does not panic on arbitrary string input (QC-
         try fuzzNullUUIDJsonUnmarshal({}, input);
     }
     try std.testing.fuzz({}, fuzzNullUUIDJsonUnmarshal, .{ .corpus = corpus });
+}
+
+// =============================================================================
+// SEC-R8-02: Fuzz targets for Timestamp and Generator.loadState
+// =============================================================================
+
+/// Fuzz target: Timestamp.fromUnixMs must not panic on any i64 value (SEC-R8-02).
+///
+/// Interprets the first 8 bytes of input as a little-endian i64 millisecond
+/// timestamp.  Any error return (negative, overflow, etc.) is acceptable;
+/// only panics and undefined behaviour are disallowed.
+fn fuzzTimestampFromUnixMs(_: void, input: []const u8) anyerror!void {
+    if (input.len < 8) return; // insufficient bytes to form an i64
+    const ms = std.mem.readInt(i64, input[0..8], .little);
+    _ = Timestamp.fromUnixMs(ms) catch {};
+}
+
+// i64 corpus for fromUnixMs: covers negative, zero, small, large, and extreme values.
+const ms_corpus: []const []const u8 = &.{
+    // 0 ms
+    "\x00\x00\x00\x00\x00\x00\x00\x00",
+    // 1 ms
+    "\x01\x00\x00\x00\x00\x00\x00\x00",
+    // -1 ms (negative)
+    "\xff\xff\xff\xff\xff\xff\xff\xff",
+    // maxInt(i64): overflows the u64 interval range (SEC-R8-01)
+    "\xff\xff\xff\xff\xff\xff\xff\x7f",
+    // minInt(i64): negative
+    "\x00\x00\x00\x00\x00\x00\x00\x80",
+    // 2023-11-14 in ms
+    "\x40\x0b\xb4\x79\x8c\x01\x00\x00",
+};
+
+/// Fuzz target: Timestamp.fromUnixNano must not panic on any i128 value (SEC-R8-02).
+///
+/// Interprets the first 16 bytes of input as a little-endian i128 nanosecond
+/// timestamp.  Any error return is acceptable; only panics are disallowed.
+fn fuzzTimestampFromUnixNano(_: void, input: []const u8) anyerror!void {
+    if (input.len < 16) return; // insufficient bytes to form an i128
+    const ns = std.mem.readInt(i128, input[0..16], .little);
+    _ = Timestamp.fromUnixNano(ns) catch {};
+}
+
+// i128 corpus for fromUnixNano: covers boundary conditions (SEC-R8-01 thresholds).
+const nano_corpus: []const []const u8 = &.{
+    // 0 ns
+    "\x00" ** 16,
+    // -1 ns (negative)
+    "\xff" ** 16,
+    // maxInt(i128): far above any valid range
+    "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x7f",
+    // maxInt(u64) * 100 + 100 (just above the u64 interval upper bound)
+    "\x64\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\x00",
+    // maxInt(u64) * 100 - 100 (just below the bound — should succeed)
+    "\x9c\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xff\x00",
+    // A real-world timestamp (2023-11-14 in ns)
+    "\x00\xb0\x7a\x2c\x5c\x79\x94\x68\x01\x00\x00\x00\x00\x00\x00\x00",
+};
+
+/// Fuzz target: Generator.loadState must not panic on arbitrary file content (SEC-R8-02).
+///
+/// Writes the fuzz input bytes to a temporary file, then calls loadState.
+/// Accepts any return value (success or error) — only panics and UB are forbidden.
+fn fuzzGeneratorLoadState(_: void, input: []const u8) anyerror!void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Write the fuzz bytes as a state file.
+    const f = try tmp.dir.createFile("uuid.state", .{});
+    try f.writeAll(input);
+    f.close();
+    // Build an absolute path to the state file.
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/uuid.state", .{dir_path});
+    // Attempt loadState — any error return is acceptable, no panic allowed.
+    var gen = Generator.init();
+    _ = gen.loadState(path) catch {};
+}
+
+// Binary corpus for loadState: valid and malformed state files.
+const state_corpus: []const []const u8 = &.{
+    // Empty file
+    "",
+    // Too short (3 bytes)
+    "UUI",
+    // Wrong magic
+    "FAKE\x02\x00\x00\x00" ++ "\x00" ** 24,
+    // Valid v1 magic, wrong format version
+    "UUID\x99\x00\x00\x00" ++ "\x00" ** 14,
+    // Valid v1 state file (22 bytes, version=1, no flags)
+    "UUID\x01\x00\x00\x00" ++ "\x00" ** 16,
+    // Valid v2 state file (32 bytes, version=2, no flags)
+    "UUID\x02\x00\x00\x00" ++ "\x00" ** 24,
+    // Oversized (33 bytes)
+    "UUID\x02\x00\x00\x00" ++ "\x00" ** 25,
+    // All 0xFF
+    "\xff" ** 32,
+};
+
+test "fuzz: Timestamp.fromUnixMs does not panic on arbitrary i64 input (SEC-R8-02)" {
+    for (ms_corpus) |input| {
+        try fuzzTimestampFromUnixMs({}, input);
+    }
+    try std.testing.fuzz({}, fuzzTimestampFromUnixMs, .{ .corpus = ms_corpus });
+}
+
+test "fuzz: Timestamp.fromUnixNano does not panic on arbitrary i128 input (SEC-R8-02)" {
+    for (nano_corpus) |input| {
+        try fuzzTimestampFromUnixNano({}, input);
+    }
+    try std.testing.fuzz({}, fuzzTimestampFromUnixNano, .{ .corpus = nano_corpus });
+}
+
+test "fuzz: Generator.loadState does not panic on arbitrary file content (SEC-R8-02)" {
+    for (state_corpus) |input| {
+        try fuzzGeneratorLoadState({}, input);
+    }
+    try std.testing.fuzz({}, fuzzGeneratorLoadState, .{ .corpus = state_corpus });
 }
