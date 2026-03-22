@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 6 closed: SEC-R6-01 ✅, SEC-R6-02 🚫 BLOCKED (hash not verifiable without network), SEC-R6-03 ✅, SEC-R6-04 ✅. 148 unit tests, 20 integration tests.
+> Last updated: 2026-03-22 — Security Review Cycle 6 closed: SEC-R6-01 ✅, SEC-R6-02 ✅, SEC-R6-03 ✅, SEC-R6-04 ✅. 148 unit tests, 20 integration tests.
 
 ---
 
@@ -1781,34 +1781,23 @@ is null after the call, and the generator continues to produce valid V1 UUIDs.
 
 ### SEC-R6-02 — CI downloads Zig toolchain without checksum verification (CWE-494)
 
-**Status:** 🚫 BLOCKED — SHA-256 for `zig-linux-x86_64-0.15.2.tar.xz` could not be verified from
-a local source without network access. A locally cached tarball with a different naming convention
-(`zig-x86_64-linux-0.15.2.tar.xz`) was found at SHA-256
-`02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239` but this is a mirror archive
-with a different naming scheme and cannot be assumed to match the ziglang.org official download.
-
-**Won't Do note:** Per the permanent Won't Do policy (CI/CD hash pinning), this item is in the
-won't-do territory. However, if the hash is independently verified against
-`https://ziglang.org/download/0.15.2/`, the fix is straightforward (see below).
-
+**Status:** ✅ CLOSED — (#125)
 **Severity:** Low | **Risk Score:** 16 (Impact 2 × Likelihood 2 × 4) | **Confidence:** Confirmed
 
-**File:** `.gitlab-ci.yml:37-38`
+**File:** `.gitlab-ci.yml` `&install-zig` anchor; `ci-catalog/templates/zig-{build,format,test,fuzz,integration-test}/template.yml`
 
-Every CI job installs Zig via:
+**Root cause:** Every CI job installed Zig via a bare `curl | tar` pipe with no SHA-256 verification.
+A MITM or ziglang.org compromise could silently install a backdoored compiler (CWE-494).
 
-```yaml
-- curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" -o zig.tar.xz
-- tar -xf zig.tar.xz
-```
+**Fix:** Created `ci-catalog/scripts/zig.sh` — a verified installer that fetches the expected
+SHA-256 from `https://ziglang.org/download/index.json` (the official, machine-readable release
+index), downloads the tarball to a named file, verifies it with `sha256sum --check --strict`, then
+extracts. All five affected ci-catalog templates and the uuid `&install-zig` YAML anchor now use
+this pattern. The `ZIG_SHA256` env var provides an offline/air-gapped override if desired.
 
-No SHA-256 hash or minisign signature is verified after download. The Zig project publishes
-per-release minisign signatures and SHA-256 checksums at `https://ziglang.org/download/`.
-A MITM or compromise of ziglang.org would install a backdoored compiler with no detection.
-
-**Fix (when hash is verified):** Add `echo "<sha256>  zig.tar.xz" | sha256sum --check` between
-the `curl` and `tar` steps, using the SHA-256 published at `https://ziglang.org/download/${ZIG_VERSION}/`.
-The hash must be obtained from the official ziglang.org release page or the minisign-verified index.
+As a bonus, the anchor was also fixed to use version-aware archive naming
+(`zig-{arch}-linux-{version}` for 0.15+, `zig-linux-{arch}-{version}` for earlier), which was
+incorrect for the current `ZIG_VERSION: "0.15.2"`.
 
 ---
 
@@ -1894,7 +1883,7 @@ verifies `Error.InvalidFormat` is returned.
 | ID | Severity | Area | Status |
 |----|----------|------|--------|
 | SEC-R6-01 | Low | generator.zig: clearNodeCache data race | ✅ Closed (#124) |
-| SEC-R6-02 | Low | CI: Zig download no checksum | 🚫 BLOCKED — hash not verifiable without network (#125) |
+| SEC-R6-02 | Low | CI: Zig download no checksum | ✅ Closed (#125) |
 | SEC-R6-03 | Info | hwaddr: no broadcast MAC filter | ✅ Closed (#126) |
 | SEC-R6-04 | Info | generator.zig: loadState last_v1_ts truncation | ✅ Closed (#127) |
 
@@ -1903,20 +1892,17 @@ verifies `Error.InvalidFormat` is returned.
 | Critical | 0 | 0 | 0 |
 | High | 0 | 0 | 0 |
 | Medium | 0 | 0 | 0 |
-| Low | 2 | 1 | 1 |
+| Low | 2 | 2 | 0 |
 | Info | 2 | 2 | 0 |
-| **Total** | **4** | **3** | **1** |
+| **Total** | **4** | **4** | **0** |
 
 No Critical or High findings in Cycle 6. The codebase continues to be in strong security posture.
-All previous findings from Cycles 1–5 remain closed; no regressions detected.
-SEC-R6-02 is blocked because the SHA-256 of the official `zig-linux-x86_64-0.15.2.tar.xz`
-could not be verified from local sources; a wrong hash would be worse than no hash.
+All previous findings from Cycles 1–6 remain closed; no regressions detected.
 
 ---
 
-_Last updated: 2026-03-22 — Adversarial security review cycle 6 implementation complete. 3/4 findings
-closed (SEC-R6-01 ✅, SEC-R6-03 ✅, SEC-R6-04 ✅). SEC-R6-02 blocked: SHA-256 for
-zig-linux-x86_64-0.15.2.tar.xz not verifiable from local sources. 148 unit tests, 20 integration tests._
+_Last updated: 2026-03-22 — Adversarial security review cycle 6 fully complete. All 4/4 findings
+closed (SEC-R6-01 ✅, SEC-R6-02 ✅, SEC-R6-03 ✅, SEC-R6-04 ✅). 148 unit tests, 20 integration tests._
 
 ---
 

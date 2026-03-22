@@ -31,12 +31,44 @@ stages:
   - sbom
   - release
 
-# Zig installation template
+# Zig installation template (SEC-R6-02: SHA-256 verified via ziglang.org index)
 .install-zig: &install-zig
-  - apt-get update && apt-get install -y curl xz-utils
-  - curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" -o zig.tar.xz
-  - tar -xf zig.tar.xz
-  - export PATH="$PWD/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
+  - apt-get update && apt-get install -y curl xz-utils python3
+  - |
+    if [ ! -f "zig-${ZIG_VERSION}/zig" ]; then
+      ARCH=$(uname -m)
+      case "$ARCH" in
+        x86_64)  ZIG_ARCH="x86_64" ;;
+        aarch64) ZIG_ARCH="aarch64" ;;
+        arm64)   ZIG_ARCH="aarch64" ;;
+        *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
+      esac
+      MAJOR=$(echo "$ZIG_VERSION" | cut -d. -f1)
+      MINOR=$(echo "$ZIG_VERSION" | cut -d. -f2)
+      if [ "$MAJOR" -eq 0 ] && [ "$MINOR" -lt 15 ]; then
+        ARCHIVE_NAME="zig-linux-${ZIG_ARCH}-${ZIG_VERSION}"
+      else
+        ARCHIVE_NAME="zig-${ZIG_ARCH}-linux-${ZIG_VERSION}"
+      fi
+      TARBALL="${ARCHIVE_NAME}.tar.xz"
+      INDEX_FILE=$(mktemp)
+      curl -fsSL "https://ziglang.org/download/index.json" -o "${INDEX_FILE}"
+      EXPECTED_HASH=$(python3 -c "
+    import json, sys
+    idx = json.load(open('${INDEX_FILE}'))
+    pkg = idx.get('${ZIG_VERSION}', {}).get('${ZIG_ARCH}-linux', {})
+    h = pkg.get('shasum', '')
+    if not h: sys.exit('SHA-256 not found for ${ZIG_VERSION}/${ZIG_ARCH}-linux')
+    print(h)
+    ")
+      rm -f "${INDEX_FILE}"
+      curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${TARBALL}" -o "${TARBALL}"
+      echo "${EXPECTED_HASH}  ${TARBALL}" | sha256sum --check --strict
+      tar -xJf "${TARBALL}"
+      mv "${ARCHIVE_NAME}" "zig-${ZIG_VERSION}"
+      rm -f "${TARBALL}"
+    fi
+  - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
   - zig version
 
 # Build job (QC-18: use `zig build check` so all source files are actually
