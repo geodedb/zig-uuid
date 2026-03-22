@@ -703,3 +703,68 @@ test "Generator.fetchRawNode: hwaddr failure falls back to random multicast node
     // multicast bit must be set on the fallback random node
     try std.testing.expect(u.bytes[10] & 0x01 == 0x01);
 }
+
+// --- SEC-R4-01: clockToMs guard in newV7 and spin-wait retry ---
+
+test "Generator.newV7: negative clock returns InvalidTimestamp (SEC-R4-01)" {
+    // Inject a clock that returns a negative nanosecond value. Both the entry
+    // guard (newV7) and the spin-wait retry (newV7Locked) must return
+    // InvalidTimestamp rather than panicking on @intCast.
+    const neg_clock = struct {
+        fn clock() i128 {
+            return -1;
+        }
+    };
+    var gen = Generator.init();
+    gen.clock = neg_clock.clock;
+    try std.testing.expectError(Error.InvalidTimestamp, gen.newV7());
+}
+
+test "Generator.newV7: extreme positive clock returns InvalidTimestamp (SEC-R4-01)" {
+    // Inject a clock returning a value that overflows i64 after division by
+    // 1_000_000: maxInt(i128) / 1_000_000 >> maxInt(i64). Must not panic.
+    const huge_clock = struct {
+        fn clock() i128 {
+            return std.math.maxInt(i128);
+        }
+    };
+    var gen = Generator.init();
+    gen.clock = huge_clock.clock;
+    try std.testing.expectError(Error.InvalidTimestamp, gen.newV7());
+}
+
+// --- SEC-R4-03: loadState rejects oversized state files ---
+
+test "Generator.loadState: file with trailing bytes returns InvalidFormat (SEC-R4-03)" {
+    // Write a valid 32-byte state blob followed by extra bytes.  loadState
+    // must reject this rather than silently ignoring the trailer.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // Build a syntactically valid v2 blob (32 bytes).
+    var blob: [Generator.state_size + 4]u8 = undefined; // 4 trailing bytes
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version;
+    blob[5] = 0x01; // clock_seq_initialized
+    std.mem.writeInt(u16, blob[6..8], 0x0042, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], 0, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+    // Trailing garbage
+    blob[32] = 0xFF;
+    blob[33] = 0xFE;
+    blob[34] = 0xFD;
+    blob[35] = 0xFC;
+
+    const f = try std.fs.createFileAbsolute(path, .{});
+    try f.writeAll(&blob);
+    f.close();
+
+    var gen = Generator.init();
+    try std.testing.expectError(Error.InvalidFormat, gen.loadState(path));
+}

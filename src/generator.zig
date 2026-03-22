@@ -21,6 +21,22 @@ fn defaultRand(buf: []u8) anyerror!void {
     std.crypto.random.bytes(buf);
 }
 
+/// Convert a raw nanosecond timestamp (i128) to a Unix millisecond value
+/// (i64), returning error.InvalidTimestamp for values that are negative or
+/// exceed the i64 range.
+///
+/// SEC-R4-01: This helper is used by newV7 *and* the spin-wait retry inside
+/// newV7Locked so that both sites share the same guard logic.  Without this
+/// helper, an injected clock function that returns an extreme i128 value
+/// (negative or > maxInt(i64) * 1_000_000) causes @intCast to panic in Safe
+/// builds or silently wrap in ReleaseFast.
+fn clockToMs(ns: i128) Error!i64 {
+    if (ns < 0) return Error.InvalidTimestamp;
+    const ms_i128 = @divTrunc(ns, 1_000_000);
+    if (ms_i128 > std.math.maxInt(i64)) return Error.InvalidTimestamp;
+    return @intCast(ms_i128);
+}
+
 /// UUID generator with injectable clock, random, and hardware-address functions.
 ///
 /// ## Shared V1/V6 clock domain
@@ -111,12 +127,10 @@ pub const Generator = struct {
         // PERF-07: Read clock inside the mutex to use the freshest possible
         // timestamp and avoid stale-timestamp collisions under high contention.
         self.mutex.lock();
-        const ns = self.clock();
-        if (ns < 0) {
+        const ms = clockToMs(self.clock()) catch |err| {
             self.mutex.unlock();
-            return Error.InvalidTimestamp;
-        }
-        const ms: i64 = @intCast(@divTrunc(ns, 1_000_000));
+            return err;
+        };
         return self.newV7Locked(ms);
     }
 
@@ -154,7 +168,12 @@ pub const Generator = struct {
             self.mutex.unlock();
             std.Thread.yield() catch {}; // yield; ignore spurious errors
             self.mutex.lock();
-            ms = @intCast(@divTrunc(self.clock(), 1_000_000));
+            // SEC-R4-01: use clockToMs() to guard against extreme clock
+            // values; propagate InvalidTimestamp if the clock misbehaves.
+            ms = clockToMs(self.clock()) catch |err| {
+                self.mutex.unlock();
+                return err;
+            };
         }
 
         // Single branch: same-ms increment OR new-ms reset. seq is always assigned.
@@ -547,6 +566,13 @@ pub const Generator = struct {
 
         // Accept both v1 (22 bytes) and v2 (32 bytes).
         if (n != state_size_v1 and n != state_size) return Error.InvalidFormat;
+
+        // SEC-R4-03: reject files with trailing bytes.  readAll fills buf up
+        // to buf.len even when the file is larger, so n alone cannot detect
+        // oversized files.  A one-byte probe read must return 0 (EOF).
+        var probe: [1]u8 = undefined;
+        const extra = try f.read(&probe);
+        if (extra != 0) return Error.InvalidFormat;
         if (!std.mem.eql(u8, buf[0..4], &state_magic)) return Error.InvalidFormat;
         if (buf[4] != state_format_version_v1 and buf[4] != state_format_version) return Error.InvalidFormat;
 

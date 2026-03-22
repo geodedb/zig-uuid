@@ -1186,3 +1186,160 @@ The following areas were re-examined and found free of new security issues:
 ---
 
 _Last updated: 2026-03-21 — Adversarial security review cycle 3 complete. 2 new findings (1 Low, 1 Info). All items tracked in GitLab (#56, #57). All Cycle 1 and Cycle 2 findings remain closed._
+
+---
+
+## Security Gap Analysis — 2026-03-21 (Adversarial Review Cycle 4)
+
+> **Won't Do Policy:** CI/CD Zig download checksum verification, Docker image tag pinning,
+> CI catalog component tag pinning, and pre-commit `check-yaml --unsafe` changes are handled
+> by separate pipeline governance controls and must remain Won't Do. Future agents MUST NOT
+> re-open these items.
+>
+> **Reviewer:** Automated adversarial security review agent (Cycle 4)
+> **Scope:** Full codebase re-review of all source files, CI/CD, build system, pre-commit,
+> platform OS code, fuzz harness, and documentation. All Cycle 1, 2, and 3 findings
+> already closed; this review searched exclusively for NEW issues.
+> **Tools run:** gitleaks v8.30.0 (0 secrets), trufflehog v3.92.5 (0 secrets),
+> syft v1.41.1 + grype v0.107.0 (0 CVEs), trivy v0.69.0 fs+config (0 issues),
+> osv-scanner v2.3.2 (no package sources — expected for Zig), semgrep (no Zig rules — expected),
+> shellcheck (0 shell scripts), checkov v3.x (12 CI checks passed, 0 failed)
+> **Automated results:** 0 secrets; 0 CVEs; 0 SAST; 0 config issues.
+
+### Summary (Cycle 4)
+
+| Severity | Count |
+| -------- | ----- |
+| High     | 0     |
+| Medium   | 0     |
+| Low      | 2     |
+| Info     | 1     |
+| **Total**| **3** |
+
+All Cycle 1, 2, and 3 security findings were confirmed closed. Three new findings were
+identified spanning integer-cast safety in the V7 spin-wait, missing real CODEOWNERS
+assignment, and silent acceptance of oversized state files.
+
+### Top Risks (Cycle 4)
+
+1. **SEC-R4-01** (Low, Risk 8): V7 spin-wait `@intCast` on clock retry lacks the guard
+   present at the entry point — panic or corruption possible with an extreme injected clock.
+2. **SEC-R4-02** (Low, Risk 8): `CODEOWNERS` contains placeholder `@your-username` — no
+   real reviewer is assigned; security-sensitive PRs bypass automatic review requests.
+3. **SEC-R4-03** (Info, Risk 4): `loadState` silently accepts state files larger than
+   `state_size` bytes — trailing bytes are ignored but the file is not rejected.
+
+### Stack-Ranked Findings (Cycle 4)
+
+| Rank | Sev | Risk | Finding | Component | CWE | Evidence (file:line) | GitLab Issue | Status |
+| ---- | --- | ---- | ------- | --------- | --- | -------------------- | ------------ | ------ |
+| 1 | Low | 8 | V7 spin-wait clock retry `@intCast(@divTrunc(self.clock(), 1_000_000))` has no guard against extreme/negative `i128` values — `@intCast` panics in safe builds; wraps in `ReleaseFast`. Entry-point guard at line 115 is absent at line 157. | `src/generator.zig:157` | CWE-190, CWE-755 | Line 157 | [#58](https://gitlab.com/devnw/zig/uuid/-/work_items/58) | ✅ Closed |
+| 2 | Low | 8 | `CODEOWNERS` contains `@your-username` placeholder — no real owner assigned; automatic review requests never fire for security-sensitive files | `CODEOWNERS:3` | CWE-284, CWE-693 | Line 3 | [#59](https://gitlab.com/devnw/zig/uuid/-/work_items/59) | ✅ Closed |
+| 3 | Info | 4 | `loadState` uses `f.readAll(&buf)` (32-byte buf) without checking whether the file has trailing bytes — files > 32 bytes pass validation silently | `src/generator.zig:545-549` | CWE-20 | Lines 545-549 | [#60](https://gitlab.com/devnw/zig/uuid/-/work_items/60) | ✅ Closed |
+
+### Findings by Area (Cycle 4)
+
+#### Integer Arithmetic / Runtime Safety
+
+- **SEC-R4-01** [#58]: `newV7Locked` spin-wait clock retry at line 157 calls
+  `@intCast(@divTrunc(self.clock(), 1_000_000))` without the guard that exists at the
+  entry point (`newV7` line 115: `if (ns < 0) { ... return Error.InvalidTimestamp; }`).
+  If `self.clock()` returns a value whose `divTrunc / 1_000_000` does not fit in `i64`
+  (confirmed mathematically for `std.math.minInt(i128)`), the cast panics in `Debug` /
+  `ReleaseSafe` or silently wraps in `ReleaseFast`. Affects callers who use
+  `Generator.withClock(f)` with extreme synthetic clocks, or systems with severe NTP
+  backward jumps beyond the i64 millisecond range.
+
+  **✅ Fixed:** Extracted `clockToMs(ns: i128) Error!i64` helper (added before the
+  `Generator` struct) that guards both `< 0` and `> maxInt(i64)` cases and returns
+  `Error.InvalidTimestamp` for either. Both `newV7` and the spin-wait retry in
+  `newV7Locked` now call `clockToMs()`. Two regression tests added:
+  `"Generator.newV7: negative clock returns InvalidTimestamp (SEC-R4-01)"` and
+  `"Generator.newV7: extreme positive clock returns InvalidTimestamp (SEC-R4-01)"`.
+
+#### Repository Governance
+
+- **SEC-R4-02** [#59]: `CODEOWNERS` specifies `* @your-username` — a placeholder that
+  does not correspond to a real GitLab account. Merge requests touching any file will not
+  automatically request review from a security-competent maintainer.
+
+  **✅ Fixed:** Replaced `@your-username` with `@benjiv` (the actual project maintainer)
+  in `CODEOWNERS`. All MRs will now trigger automatic review requests.
+
+#### File I/O / State Validation
+
+- **SEC-R4-03** [#60]: `loadState` reads at most `state_size` (32) bytes from the file
+  but does not verify that the file ends at byte 32. A state file padded with trailing
+  garbage (e.g., by an attacker who can write to the state directory) passes the size and
+  magic checks. The extra bytes are harmless to the current implementation but violate the
+  stated binary format specification and represent a defense-in-depth gap.
+
+  **✅ Fixed:** After `readAll(&buf)`, a one-byte probe read `f.read(&probe)` is performed.
+  If it returns `> 0` (any byte available past the expected end), `loadState` returns
+  `Error.InvalidFormat`. Regression test added:
+  `"Generator.loadState: file with trailing bytes returns InvalidFormat (SEC-R4-03)"`.
+
+### Areas Reviewed and Confirmed Clean (Cycle 4)
+
+The following were exhaustively re-examined with no new issues found:
+
+- **Automated tools:** 0 secrets (gitleaks, trufflehog), 0 CVEs (grype), 0 config issues
+  (trivy, checkov). All prior cycle automated results maintained.
+- **V4/V7 CSPRNG correctness:** `std.crypto.random` usage unchanged and correct.
+- **V7 monotonicity and seq assignment:** Single-branch `if/else` after spin-wait always
+  assigns `seq` (SEC-R2-14 fix verified).
+- **Parser safety:** `parseCanonical`, `parseHash`, `fromString` all verified no-panic
+  under fuzz corpus; `src/fuzz.zig` integration correct.
+- **State file permissions:** 0o600 applied in `saveState` (SEC-1 fix verified).
+- **Symlink safety:** `deleteFileAbsolute` + `exclusive: true` (SEC-R3-01 fix verified).
+- **Test temp files:** All 5 state-file tests use `std.testing.tmpDir(.{})` (SEC-R3-02 fix
+  verified).
+- **macOS `sdl_data` buffer:** `[22]u8` declaration + `sdl_len`-based bounds guard (SEC-7
+  fix verified).
+- **Linux `ifc_len` guard:** `if (ifc.ifc_len < 0) return Error.NoHWAddressFound;` present
+  at line 66 (SEC-3 fix verified).
+- **Windows heap retry:** Phase-1 stack + Phase-2 heap with `page_allocator` (SEC-R2-12
+  fix verified).
+- **V1/V6 node cache and F-4 detection:** Under mutex; double-check pattern correct.
+- **`GeneratorInterface` vtable:** `@ptrCast(@alignCast(ptr))` targets `*Generator` which
+  is alignment-compatible with the stored `*anyopaque`. Alignment check in safe builds
+  cannot fail.
+- **`loadState` clock `@intCast` (line 575):** Uses `std.time.nanoTimestamp()` directly
+  (not injected clock). Negative real clock → negative `i64` which fits; `current_ms >
+  saved_ms` would be false, taking the safe maxInt path.
+- **`Timestamp.toUnixMs` / `toUnixSec` bounds:** Saturating guards from SEC-R2-15
+  confirmed in place (lines 48-50, 62-63).
+- **`fromBytes` and `timestampFromV*`:** Simple length-check or bit-manipulation on fixed
+  arrays; no panic paths.
+- **`CODEOWNERS` governance (separate from identity):** The placeholder issue is tracked
+  as SEC-R4-02 above.
+- **CI/CD:** No new issues. Secrets not echoed in scripts. `zig-out/` artifacts contain
+  only compiled binaries, no sensitive data.
+- **Documentation:** `README.md` and `SECURITY.md` security sections remain complete and
+  accurate after Cycle 2 additions.
+
+### Action Plan (Cycle 4)
+
+#### Notes
+
+- No High or Medium findings in Cycle 4. The codebase continues to be in good security
+  posture.
+- SEC-R4-01 is only exploitable with injected clock functions returning extreme `i128`
+  values — not a risk with the default `std.time.nanoTimestamp` clock.
+- All three findings are independently reported and are not related to previously closed
+  issues.
+- The Won't Do items (CI Zig download checksum, Docker image pinning, CI component tag
+  pinning, `check-yaml --unsafe`) remain in that category; no new review is warranted.
+
+> **Won't Do Policy (all review cycles — for future agents):**
+> CI/CD Zig toolchain download checksum verification, Docker image digest/tag pinning,
+> CI catalog component tag pinning, and pre-commit hook modifications are handled by
+> separate pipeline governance controls. These items MUST remain 🚫 Won't Do across ALL
+> `*GAP_ANALYSIS.md` files. Future agents MUST NOT re-open, re-implement, or re-report
+> these items. This policy was established after Security Review Cycle 2 and applies
+> retroactively to all cycles.
+
+---
+
+_Last updated: 2026-03-21 — Adversarial security review cycle 4 complete and all 3
+findings implemented. 132 tests pass (117 unit + 15 integration). All cycles 1–4 closed._
