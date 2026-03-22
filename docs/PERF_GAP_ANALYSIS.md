@@ -722,7 +722,7 @@ All Cycle 3 findings are **confidence::confirmed**.
 
 | Severity | Count | Description | Status |
 |----------|-------|-------------|--------|
-| P2/P3 | 1 | Single mutex serializes independent V7 and V1/V6 clock domains — concurrent mixed-version throughput penalty | 🔓 Open |
+| P2/P3 | 1 | Single mutex serializes independent V7 and V1/V6 clock domains — concurrent mixed-version throughput penalty | ✅ Closed |
 | P3 | 1 | toHex (lowercase no-alloc) missing from benchmark suite — regression in lowercase hex path undetectable | ✅ Closed |
 
 **Running totals across all cycles:**
@@ -741,7 +741,7 @@ All Cycle 3 findings are **confidence::confirmed**.
 
 | Rank | Severity | PerfScore | Finding | Component | Evidence | Measurement | GitLab Issue | Fix Summary | Status |
 |------|----------|-----------|---------|-----------|----------|-------------|--------------|-------------|--------|
-| 1 | P2/P3 | 24 | Single mutex serializes independent V7 and V1/V6 clock domains | `generator.zig:89` | Suspected | resolveV1V6State holds mutex ~25–35 ns; concurrent newV7 callers block for this duration | [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) | Split into v7_mutex and v1v6_mutex; acquire in fixed order in saveState/loadState | 🔓 Open |
+| 1 | P2/P3 | 24 | Single mutex serializes independent V7 and V1/V6 clock domains | `generator.zig:89` | Suspected | resolveV1V6State holds mutex ~25–35 ns; concurrent newV7 callers block for this duration | [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) | Split into v7_mutex and v1v6_mutex; acquire in fixed order in saveState/loadState | ✅ Closed |
 | 2 | P3 | 8 | toHex (lowercase no-alloc) missing from benchmark suite | `bench/main.zig` (missing); `uuid.zig:351` | Confirmed | benchToHexUpper exists; benchToHex absent; regression in lowercase path would be invisible | [#157](https://gitlab.com/devnw/zig/uuid/-/work_items/157) | Add benchToHex() adjacent to benchToHexUpper using 256-UUID pool + XOR sink pattern | ✅ Closed |
 
 **PerfScore formula**: Impact (1–5) × Likelihood (1–5) × 4
@@ -775,7 +775,7 @@ zig build bench -Doptimize=ReleaseFast
 # zig build test -Doptimize=Debug -fsanitize=thread
 ```
 
-**Status**: 🔓 Open — [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) — Suspected finding; requires concurrent benchmark to validate. Mutex split is a significant structural change with regression risk. Left open for future validation.
+**Status**: ✅ Closed — [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) — Split `Generator.mutex` into `v7_mutex` + `v1v6_mutex`. `saveState`/`loadState` acquire in fixed order (v7 first). All tests pass; no benchmark regressions.
 
 ---
 

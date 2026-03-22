@@ -3648,10 +3648,10 @@ The vtable declares `newV8` returning `Error!UUID` (line 803) but `Generator.new
 |----------|-------------|--------|
 | Critical | 0 | — |
 | High | 0 | — |
-| Medium | 1 | 🔓 Open (SEC-R14-01) |
-| Low | 1 | 🔓 Open (SEC-R14-02) |
-| Info | 2 | 🔓 Open (SEC-R14-03, SEC-R14-04) |
-| **Total** | **4** | **4 Open** |
+| Medium | 1 | ✅ Closed (SEC-R14-01) |
+| Low | 1 | ✅ Closed (SEC-R14-02) |
+| Info | 2 | 🔓 Open (SEC-R14-03); ✅ Closed (SEC-R14-04) |
+| **Total** | **4** | **3 Closed, 1 Open** |
 
 **Running totals across all security cycles:**
 
@@ -3661,7 +3661,7 @@ The vtable declares `newV8` returning `Error!UUID` (line 803) but `Generator.new
 | Closed / implemented | 43 |
 | Won't Do | 2 (SEC-R9-02, SEC-R12-01) |
 | False Positive | 1 (SEC-R11-02) |
-| Open | 4 (SEC-R14-01–04) |
+| Open | 1 (SEC-R14-03 Info) |
 
 ---
 
@@ -3752,9 +3752,9 @@ Doc comment at line 36 says "Matches the guard in `fromUnixNano()`" — inaccura
 
 | Severity | New Findings | Status |
 |----------|-------------|--------|
-| Medium | 2 | 🔓 Open (QC-95, QC-96) |
-| Low | 5 | 🔓 Open (QC-93, QC-94, QC-97, QC-98, QC-99) |
-| **Total** | **7** | **7 Open** |
+| Medium | 2 | ✅ Closed (QC-95, QC-96) |
+| Low | 5 | ✅ Closed (QC-93, QC-94, QC-97, QC-98, QC-99) |
+| **Total** | **7** | **7 Closed** |
 
 **Running totals (all quality cycles):**
 
@@ -3763,7 +3763,7 @@ Doc comment at line 36 says "Matches the guard in `fromUnixNano()`" — inaccura
 | Total findings (Cycles 1–13) | 99 |
 | Closed / implemented | 89 |
 | Won't Do | 2 (QC-16, QC-64) |
-| Open | 7 (QC-93–99) |
+| Open | 0 |
 
 ---
 
@@ -3847,9 +3847,9 @@ All three `fromString` benchmarks parse the same fixed string every iteration. C
 
 | Severity | New Findings | Status |
 |----------|-------------|--------|
-| P2 | 3 | 🔓 Open (PERF-21, PERF-22, PERF-23) |
-| P3 | 3 | 🔓 Open (PERF-24, PERF-25, PERF-26) |
-| **Total** | **6** | **6 Open** |
+| P2 | 3 | ✅ Closed (PERF-21, PERF-22, PERF-23) |
+| P3 | 3 | ✅ 2 Closed (PERF-24, PERF-25); 🚫 Won't Do (PERF-26) |
+| **Total** | **6** | **5 Closed, 1 Won't Do** |
 
 **Running totals (all performance cycles):**
 
@@ -3858,7 +3858,7 @@ All three `fromString` benchmarks parse the same fixed string every iteration. C
 | Total findings (Cycles 1–5) | 26 |
 | Closed / implemented | 19 |
 | Won't Do | 1 (PERF-08) |
-| Open | 6 (PERF-21–26) |
+| Open | 0 |
 
 ---
 
