@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 8 closed: SEC-R7-01/R8-01/R8-02/R8-03 all implemented and closed. All Cycles 1–8 findings closed. 161 unit tests, 30 integration tests.
+> Last updated: 2026-03-22 — Security Review Cycle 9: 1 new finding (SEC-R9-01 Low); SEC-R9-02 closed as Won't Do (CI hash TOFU — handled by pipeline governance, same as SEC-R2-01). SEC-R7-01 partially reclassified (Python injection is false positive; shell variable injection is real but low). All Cycles 1–8 findings remain closed.
 
 ---
 
@@ -2372,5 +2372,167 @@ are now closed.
 
 _Last updated: 2026-03-22 — All Cycle 8 findings closed. SEC-R7-01 (CI injection) also
 closed. All Cycles 1–8 findings remain closed. 161 unit tests, 30 integration tests._
+
+---
+
+## Security Gap Analysis — 2026-03-22 (Adversarial Review Cycle 9)
+
+> **Won't Do Policy:** CI/CD Zig download checksum verification (SEC-R2-01), CI hash
+> same-origin TOFU (SEC-R9-02), Docker image tag pinning (SEC-R2-02), CI catalog component
+> tag pinning (SEC-R2-03), and pre-commit `check-yaml --unsafe` (SEC-4) are handled by
+> separate pipeline governance controls and must remain Won't Do. Future agents MUST NOT
+> re-open these items. See also: `docs/PERF_GAP_ANALYSIS.md` Won't Do note and
+> `docs/QUALITY_GAP_ANALYSIS.md` Won't Do Policy section for the same cross-cutting policy.
+>
+> **Reviewer:** Automated adversarial security review agent (Cycle 9)
+> **Scope:** Full codebase re-review of all source files, CI/CD, build system, pre-commit,
+> platform OS code, fuzz harness, documentation. All Cycles 1–8 findings confirmed closed.
+> This review searched exclusively for NEW issues not covered by prior cycles.
+> **Tools run:** gitleaks v8.30.0 (49 commits, 771 KB, 0 findings), trufflehog v3.92.5
+> (self-update error; gitleaks covers gap), syft v1.41.1 + grype v0.107.0 (0 CVEs),
+> trivy fs v0.69.0 (0 vulns, 0 secrets), semgrep p/ci v1.150.0 (0 findings),
+> shellcheck (no .sh files), checkov (12 passed, 0 failed), osv-scanner (no Zig pkg sources)
+> **Automated results:** 0 secrets, 0 CVEs, 0 SAST findings, 0 misconfigurations.
+
+### Summary (Cycle 9)
+
+| Severity | Count |
+| -------- | ----- |
+| High     | 0     |
+| Medium   | 0     |
+| Low      | 1     |
+| Won't Do | 1     |
+| Info     | 0     |
+| **Total**| **2** |
+
+All Cycles 1–8 security findings were confirmed implemented and closed. One new low-severity
+finding was identified: a non-constant-time UUID comparison that could be a timing
+side-channel when UUIDs are misused as secret tokens (SEC-R9-01, Open). A second finding
+(SEC-R9-02 — CI hash TOFU) was identified but immediately closed as Won't Do: it falls
+under the same pipeline governance policy as SEC-R2-01, which covers CI toolchain download
+and verification controls handled outside this library.
+
+Additionally, SEC-R7-01 was partially reclassified: the Python code injection vector
+(CWE-94) was confirmed to be a **false positive** (ZIG_VERSION is passed as an env var,
+not interpolated into Python source). The shell variable injection into PATH/URL remains a
+real but low-risk concern. A correction note was added to
+[#128](https://gitlab.com/devnw/zig/uuid/-/work_items/128).
+
+### New Findings (Cycle 9)
+
+#### SEC-R9-01: UUID.eql() Non-Constant-Time Comparison (CWE-208)
+
+**Severity:** Low | **Risk Score:** 24 (Impact 3 × Likelihood 2 × 4) | **Confidence:** confirmed
+
+`UUID.eql()` delegates to `std.mem.eql(u8, &self.bytes, &other.bytes)`, which is a
+short-circuit byte comparison — not constant-time. This is semantically correct for
+UUID identity checks (UUIDs are public identifiers), but creates a timing oracle if a
+caller uses `UUID.eql()` to verify a UUID acting as a secret capability or bearer token
+(e.g., V4 session ID, invite token).
+
+**Evidence:** `src/uuid.zig:145-147` (`UUID.eql`), `src/uuid.zig:178-180`
+(`HashContext.eql`), `src/uuid.zig:215-217` (`SecureHashContext.eql`). No timing-safety
+warning exists in `UUID.eql()` doc comment, README, or SECURITY.md.
+
+**Attack scenario:** Caller uses `stored.eql(provided)` as an auth check; attacker
+measures response latency for repeated guesses, recovering the token byte-by-byte.
+
+**Fix:** Add a doc warning to `UUID.eql()` that it is not constant-time; recommend
+`std.crypto.utils.timingSafeEql([16]u8, a.bytes, b.bytes)` for secret-comparison use
+cases. Optionally add `UUID.timingSafeEql()` convenience wrapper.
+
+**GitLab:** [#141](https://gitlab.com/devnw/zig/uuid/-/work_items/141)
+
+---
+
+#### SEC-R9-02: CI Hash Verification Uses Same-Origin Trust Anchor (CWE-494, TOFU)
+
+**Severity:** Low | **Risk Score:** 12 (Impact 3 × Likelihood 1 × 4) | **Confidence:** confirmed
+
+**Status: 🚫 Won't Do — Pipeline Governance (same policy as SEC-R2-01)**
+
+The CI `&install-zig` anchor fetches both the SHA-256 hash (`index.json`) and the Zig
+toolchain tarball from `ziglang.org`. This is a TOFU pattern: the SHA-256 check defends
+against network errors and CDN cache corruption, but NOT against a compromise of
+`ziglang.org` itself (or DNS/BGP hijack of that domain from CI runners). An attacker
+controlling the server can serve a matching hash+binary pair, defeating verification.
+
+**Distinct from SEC-R2-01 (Won't Do):** SEC-R2-01 was about NO hash check at all.
+SEC-R9-02 is about the hash being anchored to the same trust domain as the binary. The
+hash check is an improvement, but its security guarantee is narrower than commonly assumed.
+
+**Evidence:** `.gitlab-ci.yml:55-67` — hash source (`index.json`) and binary source are
+both `https://ziglang.org/download/...`. The `sha256sum --check` at line 67 verifies only
+that the downloaded binary matches the downloaded hash, not that either was authentic.
+
+**Won't Do rationale:** Hardcoding a per-release `ZIG_SHA256` CI variable is a CI/CD
+pipeline governance task, not a library responsibility. The same rationale applies to
+Docker image digest pinning and CI component tag pinning (all Won't Do per established
+policy). This item is governed by the same controls as SEC-R2-01. Future agents MUST NOT
+re-open this item or create new issues for CI hash TOFU without first confirming that
+pipeline governance policy has changed.
+
+**GitLab:** [#142](https://gitlab.com/devnw/zig/uuid/-/work_items/142) — closed Won't Do
+
+---
+
+### Stack-Ranked Findings (Cycle 9)
+
+| Rank | Sev | Risk | Finding | Component | CWE | Evidence (file:line) | Issue URL | Fix | Owner | Due | Status |
+| ---- | --- | ---- | ------- | --------- | --- | -------------------- | --------- | --- | ----- | --- | ------ |
+| 1 | Low | 24 | `UUID.eql()` is non-constant-time — timing oracle if used for secret token comparison | `src/uuid.zig` | CWE-208 | `uuid.zig:145-147` | [#141](https://gitlab.com/devnw/zig/uuid/-/work_items/141) | Add doc warning; optionally add `timingSafeEql()` wrapper | Library author | Next release | Open |
+| 2 | Low | 12 | CI hash fetched from same server as binary — TOFU; no protection against `ziglang.org` compromise | `.gitlab-ci.yml` | CWE-494 | `.gitlab-ci.yml:55-67` | [#142](https://gitlab.com/devnw/zig/uuid/-/work_items/142) | Pipeline governance (same policy as SEC-R2-01) | CI/CD team | — | 🚫 Won't Do |
+
+### False Positives Noted (Cycle 9)
+
+- **SEC-R7-01 Python injection (CWE-94):** ZIG_VERSION is passed as an env var to
+  python3, not interpolated into the Python source string. `os.environ['ZIG_VER']` is used
+  only as a dict lookup key. Python code injection does NOT exist. Comment added to
+  [#128](https://gitlab.com/devnw/zig/uuid/-/work_items/128). The shell PATH/URL injection
+  vector is real but low-risk (CI DoS only, not RCE).
+- **`loadState` path null-byte injection:** `std.fs.openFileAbsolute` terminates at embedded
+  null bytes, potentially opening a different file. However, this is a calling convention
+  issue (caller must validate path); the function documents that absolute paths are required.
+  Not a new finding — already noted in Cycle 8 false positives.
+- **`saveState` rename(2) symlink following:** `rename(2)` replaces the symlink itself
+  (not the target) when the destination is a symlink. The `.tmp` → final rename is atomic
+  and does not follow symlinks. Safe.
+- **`hashContext seed=0` as new finding:** Previously documented in SEC-6/CWE-330 and
+  `SecureHashContext` mitigates it. Not a new finding.
+- **SBOM content authenticity:** SBOM is generated by syft from the local source tree and
+  uploaded as an artifact. No external content is fetched for SBOM generation. Not a risk.
+
+### Won't Do Reconfirmation (Cycle 9)
+
+| Item | Reason |
+|------|--------|
+| CI/CD component semver→SHA pinning | Org Renovate/pipeline governance |
+| Docker image digest pinning | Org infrastructure controls |
+| Pre-commit `check-yaml --unsafe` | Required by CI YAML anchors; pre-commit tooling team |
+| SEC-R2-01: Unverified Zig download | Pipeline governance (SHA check now exists; TOFU noted below) |
+| **SEC-R9-02: CI hash TOFU** | **Pipeline governance — same policy as SEC-R2-01. Hash + binary from same origin is a known, accepted trade-off managed at the CI infrastructure level, not by this library. Future agents MUST NOT re-open.** |
+
+### Confirmed Clean Areas (Cycle 9)
+
+- **All source .zig files:** No new `@ptrCast`/`@intCast`/`unreachable` misuse identified.
+  All casts are guarded or provably safe by arithmetic analysis.
+- **gitleaks:** 0 secrets in 49 commits, 771 KB scanned.
+- **Fuzz coverage:** `src/fuzz.zig` covers `UUID.fromString`, `UUID.fromBytes`,
+  `NullUUID.jsonUnmarshal`, `Timestamp.fromUnixMs`, `Timestamp.fromUnixNano`, and
+  `Generator.loadState`. Coverage is complete for all externally-facing parsers.
+- **Generator mutex coverage:** All shared-state mutations are protected by the Generator
+  mutex. No new data races identified.
+- **`saveState` symlink safety (SEC-R3-01):** `deleteFileAbsolute` + `createFileAbsolute`
+  with `exclusive:true` is correct. `O_EXCL` prevents symlink following on creation.
+  `rename(2)` replaces symlinks atomically. No residual vulnerability.
+- **Platform OS code:** `hwaddr/linux.zig`, `hwaddr/macos.zig`, `hwaddr/windows.zig` all
+  confirmed clean. No new unsafe patterns identified.
+
+---
+
+_Last updated: 2026-03-22 — Cycle 9 complete. 1 new open finding (SEC-R9-01 Low). SEC-R9-02
+closed as Won't Do (CI hash TOFU — pipeline governance, same policy as SEC-R2-01).
+SEC-R7-01 Python injection reclassified as false positive. 33 total findings across all cycles;
+32 closed (including 1 Won't Do), 1 open (SEC-R9-01)._
 
 ---

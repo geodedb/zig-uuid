@@ -356,3 +356,95 @@ Three new findings identified not covered by Cycles 1–7:
   in the same way as `ZIG_VERSION`. The SEC-R7-01 root cause covers both anyway.
 - **hashContext seed=0 (HashDoS):** Documented in SEC-6 / CWE-330 warning in `uuid.zig:130-143`.
   `SecureHashContext` provides the hardened alternative. Already tracked and documented.
+
+---
+
+## Adversarial Review Cycle 9 — 2026-03-22
+
+### Tool Versions (Cycle 9)
+
+| Tool | Version | Status |
+| ---- | ------- | ------ |
+| gitleaks | 8.30.0 | Available |
+| trufflehog | 3.92.5 | Available (self-update error; gitleaks covers gap) |
+| osv-scanner | 2.3.2 | Available |
+| trivy | 0.69.0 | Available |
+| syft | 1.41.1 | Available |
+| grype | 0.107.0 | Available |
+| semgrep | 1.150.0 | Available (p/ci ruleset; no Zig-specific rules) |
+| shellcheck | 0.9.0 | Available (no tracked .sh files) |
+| hadolint | 2.14.0 | Available (no Dockerfiles) |
+| checkov | 3.2.499 | Available |
+
+### Automated Scan Results (Cycle 9)
+
+| Tool | Exit | Findings |
+| ---- | ---- | -------- |
+| gitleaks | 0 (clean) | 0 secrets (49 commits, 771 KB scanned) |
+| trufflehog | N/A | Self-update error; gitleaks covers gap |
+| syft | 0 | SBOM generated at /tmp/sbom.cdx.json |
+| grype | 0 | 0 CVE matches |
+| osv-scanner | 128 | No Zig package sources found (expected) |
+| trivy fs | 0 | 0 vulns, 0 secrets |
+| trivy config | 0 | 0 misconfigurations (0 detected config files) |
+| semgrep p/ci | 0 | 0 findings (9 rules, 46 files, 0 findings) |
+| shellcheck | 0 | No tracked .sh files |
+| checkov | 0 | 12 passed, 0 failed |
+
+### New Files Reviewed (Cycle 9)
+
+No new source files added since Cycle 8. All files reviewed for delta from Cycle 8:
+
+- `src/uuid.zig` — eql() timing analysis (new finding SEC-R9-01)
+- `.gitlab-ci.yml` — Python injection re-analysis + TOFU hash origin (new finding SEC-R9-02)
+- `src/fuzz.zig` — confirmed complete fuzz coverage
+- `src/generator.zig` — confirmed all R5/R6/R7/R8 fixes present
+- `src/timestamp.zig` — confirmed SEC-R8-01 bounds guards present
+- `src/hwaddr/*.zig` — confirmed SEC-R6-03 broadcast MAC filters present
+- `docs/SECURITY_REVIEW_NOTES.md`, `docs/GAP_ANALYSIS.md` — confirmed current state
+
+### New Findings (Cycle 9)
+
+1. **SEC-R9-01** (Low, CWE-208, Risk 24): `UUID.eql()` uses non-constant-time comparison
+   (`std.mem.eql`). If a caller uses `UUID.eql()` to verify a UUID acting as a secret
+   bearer token (session ID, capability), a remote timing oracle exists.
+   Fix: Add doc warning; optionally add `UUID.timingSafeEql()` wrapper using
+   `std.crypto.utils.timingSafeEql`.
+   GitLab: [#141](https://gitlab.com/devnw/zig/uuid/-/work_items/141)
+
+2. **SEC-R9-02** (Low, CWE-494, Risk 12): CI hash verification is TOFU — the SHA-256
+   hash is fetched from `ziglang.org` (same server as the binary). An attacker controlling
+   `ziglang.org` or its DNS/CDN can serve a matching hash+binary pair.
+   Distinct from SEC-R2-01 (no hash check) — the check exists but its trust anchor is the
+   same server being defended against.
+   Fix: Hardcode `ZIG_SHA256` per release as a CI variable; remove dynamic index.json fetch.
+   GitLab: [#142](https://gitlab.com/devnw/zig/uuid/-/work_items/142)
+
+### SEC-R7-01 Reclassification (Cycle 9)
+
+The original SEC-R7-01 finding claimed ZIG_VERSION is "interpolated into Python string
+literals" enabling Python code injection (CWE-94). After re-analysis this is **incorrect**:
+
+- ZIG_VERSION is passed to python3 as the env var `ZIG_VER=` (line 56), not interpolated
+  into the `-c` source string.
+- `os.environ['ZIG_VER']` is used as a dict key lookup only — not evaluated.
+- Python code injection does NOT exist in this script.
+
+The shell variable injection into PATH/URL is real but causes CI DoS at worst, not RCE.
+A correction note was added to issue [#128](https://gitlab.com/devnw/zig/uuid/-/work_items/128).
+
+### False Positive Notes (Cycle 9)
+
+- **SEC-R7-01 Python code injection:** Confirmed false positive (see reclassification above).
+- **`UUID.eql()` in hash map contexts:** `HashContext.eql` is only called after hash
+  equality, so in-map key lookup timing is not exploitable. The timing risk is only for
+  direct API callers using `eql()` for token verification.
+- **`saveState` rename() symlink safety:** `rename(2)` replaces symlink itself (not target).
+  The `.tmp` → final atomic rename does not follow symlinks. Not a vulnerability.
+- **loadState path null bytes:** Calling convention issue (caller must validate path);
+  `std.fs.*Absolute` rejects relative paths. Not a library vulnerability.
+- **SBOM content authenticity:** SBOM generated from local source tree; no external fetch.
+  Not a risk.
+- **fuzz job `allow_failure: true`:** Intentional design (documented in Cycle 8). The job
+  fails correctly on crash (SEC-R5-02 fix); `allow_failure` prevents blocking MR pipelines
+  for scheduled-only fuzz runs. Not a finding.
