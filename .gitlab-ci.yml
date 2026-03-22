@@ -38,18 +38,16 @@ stages:
   - export PATH="$PWD/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
   - zig version
 
-# Build job
+# Build job (QC-18: use `zig build check` so all source files are actually
+# type-checked.  `zig build` with no installArtifact in build.zig is a no-op
+# for source compilation — only the build-runner binary gets compiled.)
 build:
   stage: build
   image: debian:bookworm-slim
   before_script:
     - *install-zig
   script:
-    - zig build
-  artifacts:
-    paths:
-      - zig-out/
-    expire_in: 1 hour
+    - zig build check
 
 # Unit tests
 test:
@@ -116,17 +114,27 @@ build-examples:
     - zig build examples
   needs: []
 
-# Cross-compilation tests (QC-8: includes x86_64-windows)
+# Cross-compilation checks (QC-8, QC-19: use `zig build check-cross` which
+# compiles all five target triples in a single invocation via the check-cross
+# step defined in build.zig.  The previous `zig build -Dtarget=X` invocations
+# were no-ops for the same reason as QC-18 — no installArtifact in build.zig.)
 test-cross-build:
   stage: test
   image: debian:bookworm-slim
   before_script:
     - *install-zig
   script:
-    - zig build -Dtarget=x86_64-linux
-    - zig build -Dtarget=aarch64-linux
-    - zig build -Dtarget=x86_64-macos
-    - zig build -Dtarget=aarch64-macos
-    - zig build -Dtarget=x86_64-windows
+    - zig build check-cross
   needs:
     - build
+
+# Bench build verification (QC-20: ensures bench/main.zig compiles and stays
+# in sync with the public API; catches API drift that unit tests may miss.)
+build-bench:
+  stage: build
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+  script:
+    - zig build bench -Doptimize=ReleaseFast
+  needs: []

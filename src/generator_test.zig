@@ -582,6 +582,84 @@ test "GeneratorInterface: newV7AtTime dispatches correctly (G-8)" {
     try std.testing.expectEqual(ms, ts.toUnixMs());
 }
 
+// QC-22: GeneratorInterface vtable coverage — the 7 remaining methods.
+// Each test verifies that the trampoline dispatches to the concrete Generator
+// and that the returned UUID has the correct version/variant bits.
+
+test "GeneratorInterface: newV7 dispatches correctly (G-8, QC-22)" {
+    var gen = Generator.init();
+    var iface = GeneratorInterface.fromGenerator(&gen);
+    const u = try iface.newV7();
+    try std.testing.expectEqual(Version.v7, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+}
+
+test "GeneratorInterface: newV1 dispatches correctly (G-8, QC-22)" {
+    var gen = Generator.init();
+    var iface = GeneratorInterface.fromGenerator(&gen);
+    const u = try iface.newV1();
+    try std.testing.expectEqual(Version.v1, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+}
+
+test "GeneratorInterface: newV1AtTime dispatches correctly (G-8, QC-22)" {
+    const ts_mod = @import("timestamp.zig");
+    var gen = Generator.init();
+    var iface = GeneratorInterface.fromGenerator(&gen);
+    // Use a fixed Gregorian-epoch timestamp (RFC-9562 §5.1): 2024-01-01 00:00 UTC.
+    const greg_ts = ts_mod.Timestamp{ .value = 139_806_912_000_000_000 };
+    const u = try iface.newV1AtTime(greg_ts);
+    try std.testing.expectEqual(Version.v1, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+    // Round-trip: extract timestamp and confirm it matches.
+    const got = try ts_mod.timestampFromV1(u);
+    try std.testing.expectEqual(greg_ts.value, got.value);
+}
+
+test "GeneratorInterface: newV5 dispatches correctly (G-8, QC-22)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    var iface = GeneratorInterface.fromGenerator(&gen);
+    const u = iface.newV5(ns_mod.namespace_dns, "www.example.com");
+    var buf: [36]u8 = undefined;
+    // RFC-9562 / Python uuid.uuid5() test vector for V5 DNS / www.example.com.
+    try std.testing.expectEqualStrings(
+        "2ed6657d-e927-568b-95e1-2665a8aea6a2",
+        u.toString(&buf),
+    );
+}
+
+test "GeneratorInterface: newV6 dispatches correctly (G-8, QC-22)" {
+    var gen = Generator.init();
+    var iface = GeneratorInterface.fromGenerator(&gen);
+    const u = try iface.newV6();
+    try std.testing.expectEqual(Version.v6, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+}
+
+test "GeneratorInterface: newV6AtTime dispatches correctly (G-8, QC-22)" {
+    const ts_mod = @import("timestamp.zig");
+    var gen = Generator.init();
+    var iface = GeneratorInterface.fromGenerator(&gen);
+    const greg_ts = ts_mod.Timestamp{ .value = 139_806_912_000_000_000 };
+    const u = try iface.newV6AtTime(greg_ts);
+    try std.testing.expectEqual(Version.v6, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+    const got = try ts_mod.timestampFromV6(u);
+    try std.testing.expectEqual(greg_ts.value, got.value);
+}
+
+test "GeneratorInterface: newV8 dispatches correctly (G-8, QC-22)" {
+    var gen = Generator.init();
+    var iface = GeneratorInterface.fromGenerator(&gen);
+    const a = [6]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
+    const b_bytes = [2]u8{ 0x07, 0x08 };
+    const c = [8]u8{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
+    const u = try iface.newV8(a, b_bytes, c);
+    try std.testing.expectEqual(Version.v8, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+}
+
 // =============================================================================
 // Regression tests for gofrs/uuid Issue #216:
 // V1/V6 same-timestamp calls must produce distinct clock_seq values.

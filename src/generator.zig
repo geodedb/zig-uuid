@@ -477,6 +477,10 @@ pub const Generator = struct {
 
     /// Save generator state to stable storage (F-9, SEC-1, SEC-9, SEC-10).
     ///
+    /// **`path` must be an absolute filesystem path** (e.g. `/var/lib/myapp/uuid.state`).
+    /// Relative paths are rejected by the underlying `std.fs.*Absolute` calls
+    /// with `error.InvalidArgument` on POSIX or `error.BadPathName` on Windows.
+    ///
     /// Persists V1/V6 state (clock_seq, last_v1_ts, node_cache) AND V7 state
     /// (last_ms, mono_seq) so that all UUID versions remain monotone and
     /// collision-free across process restarts.
@@ -546,6 +550,10 @@ pub const Generator = struct {
     }
 
     /// Load generator state from stable storage (F-9, SEC-10, PERF-04).
+    ///
+    /// **`path` must be an absolute filesystem path** (e.g. `/var/lib/myapp/uuid.state`).
+    /// Relative paths are rejected by `std.fs.openFileAbsolute` with
+    /// `error.InvalidArgument` on POSIX or `error.BadPathName` on Windows.
     ///
     /// Accepts both state format version 1 (22 bytes, V1/V6 state only) and
     /// version 2 (32 bytes, V1/V6 + V7 state).  Returns error.InvalidFormat
