@@ -63,7 +63,9 @@ pub fn newV7AtTime(ts: i64) Error!UUID {
 /// Generate a Version 8 (custom) UUID with caller-supplied bit fields.
 /// `a` fills bytes 0-5, `b` fills bytes 6-7 (high 4 bits become version nibble),
 /// `c` fills bytes 8-15 (high 2 bits become variant bits).
-pub fn newV8(a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
+///
+/// This function is infallible — no clock, random, or I/O is needed.
+pub fn newV8(a: [6]u8, b: [2]u8, c: [8]u8) UUID {
     return gen_mod.default_generator.newV8(a, b, c);
 }
 
@@ -146,7 +148,7 @@ test "top-level newV8 delegates to default_generator (QC-30)" {
     const a = [6]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
     const b = [2]u8{ 0x07, 0x08 };
     const c = [8]u8{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
-    const u = try newV8(a, b, c);
+    const u = newV8(a, b, c);
     try std.testing.expectEqual(uuid_mod.Version.v8, u.version());
     try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
 }

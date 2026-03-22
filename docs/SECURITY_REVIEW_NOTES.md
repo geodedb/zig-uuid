@@ -448,3 +448,176 @@ A correction note was added to issue [#128](https://gitlab.com/devnw/zig/uuid/-/
 - **fuzz job `allow_failure: true`:** Intentional design (documented in Cycle 8). The job
   fails correctly on crash (SEC-R5-02 fix); `allow_failure` prevents blocking MR pipelines
   for scheduled-only fuzz runs. Not a finding.
+
+---
+
+## Adversarial Review Cycle 10 — 2026-03-22
+
+### Tool Versions (Cycle 10)
+
+| Tool | Version | Status |
+| ---- | ------- | ------ |
+| gitleaks | 8.30.0 | Available |
+| trufflehog | 3.92.5 | Available (self-update error; gitleaks covers gap) |
+| osv-scanner | 2.3.2 | Available (no Zig package sources found — expected) |
+| trivy | 0.69.0 | Available |
+| syft | 1.41.1 | Available |
+| grype | 0.107.0 | Available |
+| semgrep | 1.150.0 | Available (p/ci ruleset; 0 findings) |
+| shellcheck | 0.9.0 | Available (no tracked .sh files) |
+| checkov | 3.2.499 | Available |
+
+### Automated Scan Results (Cycle 10)
+
+| Tool | Exit | Findings |
+| ---- | ---- | -------- |
+| gitleaks | 0 (clean) | 0 secrets |
+| trufflehog | N/A | Self-update error; gitleaks covers gap |
+| syft | 0 | SBOM generated (0 parseable Zig components) |
+| grype | 0 | 0 CVE matches |
+| osv-scanner | N/A | No Zig package sources found (expected) |
+| trivy fs | 0 | 0 vulns, 0 misconfigs, 0 secrets |
+| trivy config | 0 | 0 misconfigurations |
+| semgrep p/ci | 0 | 0 findings |
+| shellcheck | 0 | No tracked .sh files |
+| checkov | 0 | 13 passed, 0 failed |
+
+### Files Reviewed (Cycle 10)
+
+All files reviewed for changes since Cycle 9 (branch `fix/sec-r9-01-timing-safe-eql`):
+
+- `src/uuid.zig` — timingSafeEql implementation reviewed; HashContext.eql/SecureHashContext.eql analysed
+- `src/uuid_test.zig` — 5 new SEC-R9-01 tests verified
+- `src/generator.zig` — spin-wait @rem/@intCast re-verified; saveState/loadState reviewed
+- `src/timestamp.zig` — bounds guards confirmed present (SEC-R8-01)
+- `src/fuzz.zig` — all 6 fuzz targets confirmed present (SEC-R8-02)
+- `src/null_uuid.zig` — jsonUnmarshal reviewed; no injection risk
+- `src/root.zig` — confirmed no default_generator re-export (SEC-R5-01)
+- `src/versions.zig` — delegation pattern confirmed correct
+- `src/namespace.zig` — compile-time constants; no runtime concerns
+- `src/hwaddr/*.zig` — broadcast MAC skip (SEC-R6-03) and ifc_len guard confirmed
+- `bench/main.zig` — no security concerns (sink pattern, no secrets)
+- `examples/basic.zig` — safe patterns demonstrated; no hardcoded secrets
+- `.gitlab-ci.yml` — no new CI secrets exposure; fuzz artifacts reviewed
+- `build.zig`, `build.zig.zon` — dependency hash verified; grype clean
+- `Makefile` — no security concerns
+- `SECURITY.md` — reviewed; missing timingSafeEql (new finding SEC-R10-01)
+- `README.md` — reviewed; missing timingSafeEql in API table and Security section
+
+### New Findings (Cycle 10)
+
+**1. SEC-R10-01** (Info, CWE-208, Risk 8): `README.md` and `SECURITY.md` missing
+`timingSafeEql` guidance. SEC-R9-01 fix (commit `3a29957`) added `timingSafeEql` to
+`src/uuid.zig` but did not update the two public-facing documentation files listed
+in issue #141 acceptance criteria. Users consulting README/SECURITY.md will not discover
+`timingSafeEql` exists.
+GitLab: [#143](https://gitlab.com/devnw/zig/uuid/-/work_items/143)
+
+### False Positive Notes (Cycle 10)
+
+- **`HashContext.eql` / `SecureHashContext.eql` non-constant-time:** HashMap collision
+  resolution only; `SecureHashContext` random seed makes collision engineering infeasible.
+  Not a meaningful timing oracle. Not a finding.
+- **`@rem(ns_now, 1_000_000)` spin-wait cast:** Guarded by `ns_now > 0`; result in
+  `[0, 999_999]` — safe `@intCast` to u64. Not a finding.
+- **Fuzz job artifacts:** Contain only malformed UUID parser inputs; no secrets. Not a finding.
+- **Fuzz job runs in Debug mode:** Correct for safety-checked fuzz testing. Not a finding.
+- **`build.zig.zon` json dependency:** Pinned by commit SHA + content hash; grype clean.
+  Not a finding.
+
+### Won't Do Reconfirmation (Cycle 10)
+
+| Item | Reason |
+|------|--------|
+| CI/CD component semver→SHA pinning | Pipeline governance |
+| Docker image digest pinning | Infrastructure controls |
+| Pre-commit `check-yaml --unsafe` | Required by CI YAML anchors |
+| SEC-R2-01: Unverified Zig download | Pipeline governance |
+| SEC-R9-02: CI hash TOFU | Pipeline governance — same policy as SEC-R2-01. Future agents MUST NOT re-open. |
+
+---
+
+## Security Review — Cycle 11 (2026-03-22) — CLOSED
+
+Adversarial full-codebase re-audit. All automated tools rerun. 4 new findings; all closed.
+
+### Findings (Cycle 11)
+
+**1. SEC-R11-01** (Low, CWE-190, Risk 16): `Timestamp.now()` missing upper-bound guard on
+`@intCast(@divTrunc(ns, 100))`. Far-future clock (year >60,424) panics in Debug/ReleaseSafe.
+✅ Fixed: upper-bound guard added matching `fromUnixNano`; 1 new test.
+GitLab: [#149](https://gitlab.com/devnw/zig/uuid/-/work_items/149)
+
+**2. SEC-R11-02** (Info, Risk 4): `test_io` fuzz artifact not in `.gitignore`.
+✅ False Positive: `test_*` pattern on line 20 of `.gitignore` already covers `test_io`.
+Verified: `git check-ignore -v test_io` → `.gitignore:20:test_*`.
+GitLab: [#150](https://gitlab.com/devnw/zig/uuid/-/work_items/150)
+
+**3. SEC-R11-03** (Info, CWE-208, Risk 8): `UUID.isNil()` and `UUID.isMax()` missing CWE-208
+timing-safety warning (same gap as SEC-R9-01 which fixed `eql()`).
+✅ Fixed: CWE-208 timing notes added to both doc comments; callers directed to `timingSafeEql`.
+GitLab: [#151](https://gitlab.com/devnw/zig/uuid/-/work_items/151)
+
+**4. SEC-R11-04** (Info, CWE-61, Risk 4): `Generator.loadState()` opens state file with
+`std.fs.openFileAbsolute(path, .{})` — no `O_NOFOLLOW`. Asymmetric with `saveState()`'s
+SEC-R3-01 fix (O_EXCL). Local attacker who can write to state dir can replace state file
+with symlink pointing to a sensitive read-only file.
+✅ Fixed: On POSIX, `loadState` now uses `std.posix.open` with `.NOFOLLOW = true`;
+Windows unchanged (different symlink model). 1 new test.
+GitLab: [#152](https://gitlab.com/devnw/zig/uuid/-/work_items/152)
+
+### False Positive Notes (Cycle 11)
+
+- **`ifreqs[0..count]` in `linux.zig:69`:** Linux kernel bounds `ifc_len` to buffer size; count always safe.
+- **`@intCast(ms)` in `newV7Locked`:** `ms >= 0` guaranteed by caller invariant.
+- **`newV4` without mutex:** Stack-local only; no shared state.
+- **`test_io` in `.gitignore`:** Already covered by `test_*` pattern (SEC-R11-02 false positive).
+
+### Won't Do Reconfirmation (Cycle 11)
+
+| Item | Reason |
+|------|--------|
+| CI/CD component semver→SHA pinning | Pipeline governance |
+| Docker image digest pinning | Infrastructure controls |
+| SEC-R2-01: Unverified Zig download | Pipeline governance |
+| SEC-R9-02: CI hash TOFU | Pipeline governance — same policy. MUST NOT re-open. |
+
+---
+
+## Security Review Cycle 12
+
+**Date:** 2026-03-22
+
+### Scan Results
+
+| Tool | Result |
+|------|--------|
+| gitleaks 8.30.0 | 0 secrets (54 commits) |
+| trufflehog 3.92.5 | 0 verified |
+| osv-scanner 2.3.2 | Exit 128 (no Zig DB — expected) |
+| shellcheck 0.9.0 | SC2016 info-only (intentional) |
+
+### Findings
+
+**1. SEC-R12-01** (Info, CWE-362, Risk 6): `newV1AtTime`/`newV6AtTime` read `self.node_cache`
+at `generator.zig:390` and `generator.zig:419` without holding the mutex — technically a data
+race under the LLVM memory model.
+🚫 Won't Do: This is an **intentional PERF-05 optimization**. The race is benign because
+`resolveV1V6State` re-checks authoritatively under the mutex. The only consequence is an
+unnecessary or skipped `hw_address()` syscall — not a security concern. Documented.
+GitLab: [#153](https://gitlab.com/devnw/zig/uuid/-/work_items/153)
+
+**2. SEC-R12-02** (Info, CWE-190, Risk 4): `Timestamp.fromUnixNano` at `timestamp.zig:84` —
+existing `> maxInt(u64)` guard prevents `@intCast` panic but does NOT prevent the subsequent
+`intervals_u64 + gregorian_offset` addition overflow. For `intervals_u64` in
+`[18_324_551_145_709_551_616, 18_446_744_073_709_551_615]` (years 60,037–60,424 AD), Debug
+builds panic and ReleaseFast silently wraps.
+🔓 Open: Fix identified (`if (intervals_u64 > maxInt(u64) - gregorian_offset) return Error.InvalidTimestamp;`). Not applied during review phase.
+GitLab: [#154](https://gitlab.com/devnw/zig/uuid/-/work_items/154)
+
+### Won't Do Reconfirmation (Cycle 12)
+
+| Item | Reason |
+|------|--------|
+| SEC-R9-02: CI hash TOFU | Pipeline governance — MUST NOT re-open. |
+| SEC-R12-01: node_cache data race | Intentional PERF-05; benign by design — MUST NOT re-open. |

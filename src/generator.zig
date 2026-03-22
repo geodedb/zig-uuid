@@ -2,6 +2,7 @@
 // Copyright (c) 2024-2025 CodePros
 
 const std = @import("std");
+const builtin = @import("builtin");
 const UUID = @import("uuid.zig").UUID;
 const Version = @import("uuid.zig").Version;
 const Variant = @import("uuid.zig").Variant;
@@ -84,12 +85,18 @@ pub const Generator = struct {
     /// MAC-based node IDs.
     hwaddr_fn: ?HWAddrFn = null,
 
-    // V7 monotonicity state (all protected by mutex)
-    mutex: std.Thread.Mutex = .{},
+    // PERF-19: Two independent mutexes for V7 and V1/V6 clock domains.
+    // V7 generation only acquires v7_mutex; V1/V6 generation only acquires
+    // v1v6_mutex.  saveState/loadState acquire both in fixed order
+    // (v7_mutex first, then v1v6_mutex) to prevent deadlock.
+
+    // V7 monotonicity state (protected by v7_mutex)
+    v7_mutex: std.Thread.Mutex = .{},
     last_ms: i64 = 0,
     mono_seq: u12 = 0,
 
-    // V1/V6 shared clock state (F-8: documented above)
+    // V1/V6 shared clock state (protected by v1v6_mutex; F-8: documented above)
+    v1v6_mutex: std.Thread.Mutex = .{},
     clock_seq: u14 = 0,
     clock_seq_initialized: bool = false,
     last_v1_ts: u60 = 0,
@@ -101,16 +108,24 @@ pub const Generator = struct {
     /// Previously-used node ID for change detection (F-4).
     last_node: ?[6]u8 = null,
 
+    /// Create a new generator with default clock (std.time.nanoTimestamp),
+    /// CSPRNG (std.crypto.random), and random multicast node ID.
     pub fn init() Generator {
         return .{};
     }
 
+    /// Create a generator with a custom clock function, useful for testing
+    /// or deterministic UUID generation.  The clock function must return
+    /// the current time in nanoseconds as an i128.
     pub fn withClock(f: ClockFn) Generator {
         var g = Generator.init();
         g.clock = f;
         return g;
     }
 
+    /// Create a generator with a custom random function, useful for testing
+    /// or deterministic UUID generation.  The function fills the provided
+    /// buffer with random bytes.
     pub fn withRand(f: RandFn) Generator {
         var g = Generator.init();
         g.rand = f;
@@ -128,16 +143,20 @@ pub const Generator = struct {
     /// Force the next V1/V6 generation to re-fetch the node ID (F-6/G-6).
     /// If the node ID changes after a re-fetch, clock_seq is incremented (F-4).
     ///
-    /// SEC-R6-01: Acquires the mutex before writing node_cache so that the
+    /// SEC-R6-01: Acquires v1v6_mutex before writing node_cache so that the
     /// write is not concurrent with resolveV1V6State (which also reads and
     /// writes node_cache under the same mutex).  Without this lock, a race
     /// exists between clearNodeCache and any in-flight V1/V6 generation.
     pub fn clearNodeCache(self: *Generator) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.v1v6_mutex.lock();
+        defer self.v1v6_mutex.unlock();
         self.node_cache = null;
     }
 
+    /// Generate a UUIDv4 (random).
+    ///
+    /// All 122 non-version/variant bits are filled from the CSPRNG source.
+    /// Returns `Error.RandomError` if the underlying random function fails.
     pub fn newV4(self: *Generator) Error!UUID {
         var u: UUID = undefined;
         self.rand(&u.bytes) catch return Error.RandomError;
@@ -160,17 +179,25 @@ pub const Generator = struct {
     pub fn newV7(self: *Generator) Error!UUID {
         // PERF-07: Read clock inside the mutex to use the freshest possible
         // timestamp and avoid stale-timestamp collisions under high contention.
-        self.mutex.lock();
+        self.v7_mutex.lock();
         const ms = clockToMs(self.clock()) catch |err| {
-            self.mutex.unlock();
+            self.v7_mutex.unlock();
             return err;
         };
         return self.newV7Locked(ms);
     }
 
+    /// Generate a UUIDv7 using the given Unix millisecond timestamp instead
+    /// of the system clock.  Useful for deterministic UUID generation and
+    /// migrating existing timestamps into UUID form.
+    ///
+    /// **Errors:**
+    /// - `Error.InvalidTimestamp` — `ts` is negative, or the monotonic counter
+    ///   is exhausted and the injected clock fails to advance past `ts`.
+    /// - `Error.RandomError` — the CSPRNG source failed.
     pub fn newV7AtTime(self: *Generator, ts: i64) Error!UUID {
         if (ts < 0) return Error.InvalidTimestamp; // QC-2: same error as newV7 for same condition
-        self.mutex.lock();
+        self.v7_mutex.lock();
         return self.newV7Locked(ts);
     }
 
@@ -215,27 +242,38 @@ pub const Generator = struct {
         while (ms == self.last_ms and self.mono_seq == std.math.maxInt(u12)) {
             spins += 1;
             if (spins > max_spins) {
-                self.mutex.unlock();
+                self.v7_mutex.unlock();
                 return Error.InvalidTimestamp;
             }
+            // SEC-R13-01: Cache one clock reading per spin iteration. Both
+            // the sleep-duration computation and the ms-advance check use
+            // ns_now, preventing divergence from two independent self.clock()
+            // calls under non-monotonic or injected clocks.
+            const ns_now = self.clock();
+
+            // SEC-R4-01: derive ms from the cached clock reading; propagate
+            // InvalidTimestamp if the value is out of range.
+            ms = clockToMs(ns_now) catch |err| {
+                self.v7_mutex.unlock();
+                return err;
+            };
+
+            // If the clock has already advanced past last_ms (or another
+            // thread reset mono_seq), skip the sleep — the while condition
+            // will exit on the next check.
+            if (ms != self.last_ms or self.mono_seq != std.math.maxInt(u12)) break;
+
             // Compute nanoseconds remaining in the current millisecond.
             // @rem(ns_now, 1_000_000) gives the fraction within [0, 999_999];
             // subtracting from 1_000_000 gives the sleep duration [1, 1_000_000].
             // Fall back to 500µs if the clock returns an invalid/negative value.
-            const ns_now = self.clock();
             const sleep_ns: u64 = if (ns_now > 0) blk: {
                 const ns_frac: u64 = @intCast(@rem(ns_now, 1_000_000));
                 break :blk 1_000_000 - ns_frac;
             } else 500_000;
-            self.mutex.unlock();
+            self.v7_mutex.unlock();
             std.Thread.sleep(sleep_ns);
-            self.mutex.lock();
-            // SEC-R4-01: use clockToMs() to guard against extreme clock
-            // values; propagate InvalidTimestamp if the clock misbehaves.
-            ms = clockToMs(self.clock()) catch |err| {
-                self.mutex.unlock();
-                return err;
-            };
+            self.v7_mutex.lock();
         }
 
         // Single branch: same-ms increment OR new-ms reset. seq is always assigned.
@@ -248,7 +286,7 @@ pub const Generator = struct {
             // New ms: seed mono_seq with random jitter (RFC-9562 §6.2).
             var rand_seq: [2]u8 = undefined;
             self.rand(&rand_seq) catch {
-                self.mutex.unlock();
+                self.v7_mutex.unlock();
                 return Error.RandomError;
             };
             self.mono_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
@@ -256,10 +294,10 @@ pub const Generator = struct {
             self.last_ms = ms;
         }
 
-        // PERF-02: Release the mutex before the 8-byte rand_b CSPRNG call.
+        // PERF-02: Release v7_mutex before the 8-byte rand_b CSPRNG call.
         // All shared state (last_ms, mono_seq) is committed above; UUID
         // construction uses only stack-local variables.
-        self.mutex.unlock();
+        self.v7_mutex.unlock();
 
         var u: UUID = undefined;
         // unix_ts_ms: 48 bits big-endian in bytes 0-5
@@ -337,20 +375,20 @@ pub const Generator = struct {
 
     /// Shared state-resolution helper for V1 and V6 generation (QC-1).
     ///
-    /// Acquires and releases the mutex, initialises clock_seq, updates
+    /// Acquires and releases v1v6_mutex, initialises clock_seq, updates
     /// last_v1_ts, populates the node cache, and handles F-4 node-change
     /// detection.  Returns the resolved (timestamp, node, clock_seq) so that
     /// each public function only needs to perform its version-specific
     /// timestamp byte encoding.
     ///
-    /// **caller must NOT hold the mutex on entry.**
+    /// **caller must NOT hold v1v6_mutex on entry.**
     fn resolveV1V6State(
         self: *Generator,
         ts: Timestamp,
         prefetched: ?[6]u8,
     ) Error!struct { t: u60, node: [6]u8, clock_seq: u14 } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.v1v6_mutex.lock();
+        defer self.v1v6_mutex.unlock();
         try self.initClockSeq(); // F-3: propagate CSPRNG failure
         // Increment clock_seq on clock regression OR same-timestamp call (RFC-9562 §6.1).
         // Using <= (not <) ensures concurrent/repeated calls at identical timestamps
@@ -490,7 +528,12 @@ pub const Generator = struct {
         return u;
     }
 
-    pub fn newV8(_: *Generator, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
+    /// Generate a UUIDv8 (custom/experimental) from caller-provided fields.
+    ///
+    /// This function is infallible — the body contains no fallible operations.
+    /// The return type is `UUID` (not `Error!UUID`) because the caller provides
+    /// all data directly; no clock, random, or I/O call is needed.
+    pub fn newV8(_: *Generator, a: [6]u8, b: [2]u8, c: [8]u8) UUID {
         var u: UUID = undefined;
         // custom_a: bits 0-47 → bytes 0-5
         @memcpy(u.bytes[0..6], &a);
@@ -551,11 +594,14 @@ pub const Generator = struct {
     ///           mutex is released before any file I/O.  UUID generation is not
     ///           blocked by slow storage (NFS, spinning disk, etc.).
     pub fn saveState(self: *Generator, path: []const u8) !void {
-        // Snapshot state under the mutex; release before I/O.
+        // Snapshot state under both mutexes; release before I/O.
+        // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
         var buf: [state_size]u8 = undefined;
         {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.v7_mutex.lock();
+            defer self.v7_mutex.unlock();
+            self.v1v6_mutex.lock();
+            defer self.v1v6_mutex.unlock();
 
             @memcpy(buf[0..4], &state_magic);
             buf[4] = state_format_version; // = 2
@@ -625,10 +671,26 @@ pub const Generator = struct {
     /// current (extremely fast restart within the same millisecond) is mono_seq
     /// set to maxInt(u12) to force a spin-wait and prevent collisions.
     pub fn loadState(self: *Generator, path: []const u8) !void {
-        const f = try std.fs.openFileAbsolute(path, .{});
+        // SEC-R11-04 (CWE-61): Open the state file without following symlinks
+        // on POSIX targets.  An attacker who can place a symlink at the state-file
+        // path before loadState runs could redirect the read to any world-readable
+        // file, leaking its contents.  O_NOFOLLOW causes open(2) to fail with
+        // ELOOP if the path is a symlink, closing the redirect.  On Windows,
+        // symlink handling is enforced differently by the OS; openFileAbsolute
+        // is used unchanged.
+        const f = if (builtin.os.tag == .windows)
+            try std.fs.openFileAbsolute(path, .{})
+        else blk: {
+            const fd = try std.posix.open(path, .{ .NOFOLLOW = true }, 0);
+            break :blk std.fs.File{ .handle = fd };
+        };
         defer f.close();
 
-        var buf: [state_size]u8 = undefined;
+        // SEC-R13-04 (CWE-908): Zero-initialize to prevent uninitialized reads.
+        // For v1 state files (22 bytes), bytes 22–31 are never written by readAll.
+        // The version-2 guard prevents consumption, but zeroing eliminates the
+        // latent risk if that guard is weakened in a future refactor.
+        var buf: [state_size]u8 = std.mem.zeroes([state_size]u8);
         const n = try f.readAll(&buf);
 
         // Accept both v1 (22 bytes) and v2 (32 bytes).
@@ -643,8 +705,22 @@ pub const Generator = struct {
         if (!std.mem.eql(u8, buf[0..4], &state_magic)) return Error.InvalidFormat;
         if (buf[4] != state_format_version_v1 and buf[4] != state_format_version) return Error.InvalidFormat;
 
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        // SEC-R13-08 (CWE-833): Read the clock BEFORE acquiring the mutex.
+        // If ClockFn blocks (network-backed NTP, slow hardware clock, test
+        // double with artificial delay), all concurrent UUID generation calls
+        // that contend on the mutexes would stall for the duration.  Reading
+        // clock outside the critical section eliminates this availability risk.
+        // QC-29: use the injectable clock (self.clock) instead of the raw
+        // syscall so that the fast-restart branch is testable via clock injection.
+        // Errors (negative/overflow clock) fall back to 0, which activates the
+        // conservative overflow path — the safe default.
+        const current_ms: i64 = clockToMs(self.clock()) catch 0;
+
+        // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
+        self.v7_mutex.lock();
+        defer self.v7_mutex.unlock();
+        self.v1v6_mutex.lock();
+        defer self.v1v6_mutex.unlock();
 
         const flags = buf[5];
         self.clock_seq = @truncate(std.mem.readInt(u16, buf[6..8], .little) & 0x3FFF);
@@ -665,18 +741,6 @@ pub const Generator = struct {
         // PERF-04 + SEC-10: restore V7 state only from version-2 files.
         if (buf[4] == state_format_version and n == state_size) {
             const saved_ms = std.mem.readInt(i64, buf[22..30], .little);
-            // Compare saved timestamp against current clock.  On typical
-            // restarts (>1ms downtime) the clock has already advanced past
-            // saved_ms, so there is no collision risk — reset both fields for
-            // a clean start with no spin-wait penalty.
-            // Only force mono_seq overflow when saved_ms is still current
-            // (extremely fast restart within the same millisecond).
-            // QC-29: use the injectable clock (self.clock) instead of the raw
-            // syscall so that the fast-restart branch is testable via clock injection,
-            // consistent with every other timestamp site in the generator.
-            // Errors (negative/overflow clock) fall back to 0, which activates the
-            // conservative overflow path — the safe default.
-            const current_ms: i64 = clockToMs(self.clock()) catch 0;
             if (current_ms > saved_ms) {
                 self.last_ms = 0;
                 self.mono_seq = 0;
@@ -739,33 +803,43 @@ pub const GeneratorInterface = struct {
         newV8: *const fn (*anyopaque, [6]u8, [2]u8, [8]u8) Error!UUID,
     };
 
+    /// Generate a random UUIDv4 via the underlying generator.
     pub fn newV4(self: GeneratorInterface) Error!UUID {
         return self.vtable.newV4(self.ptr);
     }
+    /// Generate a UUIDv7 using the system clock.
     pub fn newV7(self: GeneratorInterface) Error!UUID {
         return self.vtable.newV7(self.ptr);
     }
+    /// Generate a UUIDv7 using the given Unix millisecond timestamp.
     pub fn newV7AtTime(self: GeneratorInterface, ts: i64) Error!UUID {
         return self.vtable.newV7AtTime(self.ptr, ts);
     }
+    /// Generate a UUIDv1 (Gregorian timestamp + node ID).
     pub fn newV1(self: GeneratorInterface) Error!UUID {
         return self.vtable.newV1(self.ptr);
     }
+    /// Generate a UUIDv1 using the given Gregorian timestamp.
     pub fn newV1AtTime(self: GeneratorInterface, ts: Timestamp) Error!UUID {
         return self.vtable.newV1AtTime(self.ptr, ts);
     }
+    /// Generate a UUIDv3 (MD5 name-based) from namespace and name.
     pub fn newV3(self: GeneratorInterface, ns: UUID, name: []const u8) UUID {
         return self.vtable.newV3(self.ptr, ns, name);
     }
+    /// Generate a UUIDv5 (SHA-1 name-based) from namespace and name.
     pub fn newV5(self: GeneratorInterface, ns: UUID, name: []const u8) UUID {
         return self.vtable.newV5(self.ptr, ns, name);
     }
+    /// Generate a UUIDv6 (reordered Gregorian timestamp + node ID).
     pub fn newV6(self: GeneratorInterface) Error!UUID {
         return self.vtable.newV6(self.ptr);
     }
+    /// Generate a UUIDv6 using the given Gregorian timestamp.
     pub fn newV6AtTime(self: GeneratorInterface, ts: Timestamp) Error!UUID {
         return self.vtable.newV6AtTime(self.ptr, ts);
     }
+    /// Generate a UUIDv8 (custom/experimental) from caller-provided fields.
     pub fn newV8(self: GeneratorInterface, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
         return self.vtable.newV8(self.ptr, a, b, c);
     }

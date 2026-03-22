@@ -361,3 +361,31 @@ test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     try std.testing.expectEqual(saved_ms, gen.last_ms);
     try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
 }
+
+// --- SEC-R11-04: loadState rejects symlinks (O_NOFOLLOW) ---
+
+test "Generator.loadState: symlink at state path is rejected (SEC-R11-04)" {
+    // SEC-R11-04 (CWE-61): loadState must refuse to follow a symlink at the
+    // given path.  An attacker who can pre-place a symlink could redirect the
+    // read to any world-readable file, leaking its contents.  With O_NOFOLLOW
+    // the open(2) returns ELOOP and loadState propagates an error.
+    //
+    // Skip on Windows: symlink creation typically requires elevated privileges,
+    // and the OS enforces different symlink semantics.
+    if (builtin.os.tag == .windows) return;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // Place a symlink at the state path pointing to /dev/null.
+    try std.posix.symlink("/dev/null", path);
+
+    // loadState must fail — it must not read through the symlink.
+    var gen = Generator.init();
+    const result = gen.loadState(path);
+    try std.testing.expect(std.meta.isError(result));
+}

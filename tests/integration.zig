@@ -257,7 +257,7 @@ test "integration: V8 round-trip" {
     const a = [6]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
     const b = [2]u8{ 0x07, 0x08 };
     const c = [8]u8{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
-    const u = try uuid.newV8(a, b, c);
+    const u = uuid.newV8(a, b, c);
     var buf: [36]u8 = undefined;
     const s = u.toString(&buf);
     const parsed = try uuid.UUID.fromString(s);
@@ -379,4 +379,27 @@ test "integration: NullUUID.jsonUnmarshal rejects invalid UUID string (QC-69)" {
         uuid.Error.InvalidLength,
         uuid.NullUUID.jsonUnmarshal(alloc, json.Value{ .str = "not-a-uuid" }),
     );
+}
+
+// =============================================================================
+// timingSafeEql integration tests (QC-74): verify constant-time equality
+// through the public uuid package API.
+// =============================================================================
+
+test "integration: timingSafeEql equal UUIDs (QC-74)" {
+    // Equal UUIDs generated via the public package must compare equal.
+    const u = try uuid.newV4();
+    try std.testing.expect(u.timingSafeEql(u));
+}
+
+test "integration: timingSafeEql unequal UUIDs (QC-74)" {
+    // Two independently generated V4 UUIDs must not compare equal.
+    var gen = uuid.Generator.init();
+    const a = try gen.newV4();
+    const b = try gen.newV4();
+    // Independently generated UUIDs are astronomically unlikely to collide; treat
+    // equality as a test failure.
+    try std.testing.expect(!a.timingSafeEql(b));
+    // Symmetry: b.timingSafeEql(a) must agree with a.timingSafeEql(b).
+    try std.testing.expect(a.timingSafeEql(b) == b.timingSafeEql(a));
 }

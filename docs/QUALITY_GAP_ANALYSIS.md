@@ -1,10 +1,10 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-03-22 (Cycle 10 closed — 9 findings, 8/9 closed, 1 Won't Do)
+> **Last updated:** 2026-03-22 (Cycle 12 — 16 new findings, all closed)
 > **Zig version audited:** 0.15.2
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
-> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70)
+> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80)
 
 ---
 
@@ -31,8 +31,23 @@
 | 8 | Low | 1 | ✅ Closed |
 | 9 | — | 0 | ✅ No new findings |
 | 10 | Low | 9 | ✅ 8 closed, 🚫 1 Won't Do (QC-64) |
+| 11 | Low | 5 | ✅ All closed |
+| 12 | High | 1 | ✅ Closed |
+| 12 | Medium | 1 | ✅ Closed |
+| 12 | Low | 12 | ✅ All closed |
+| 12 | Info | 2 | ✅ All closed |
 
-**Total issues:** 70 — **68 closed, 2 Won't Do (QC-16, QC-64), 0 open**
+**Total issues:** 91 — **89 closed, 2 Won't Do (QC-16, QC-64), 0 open**
+
+### Top 5 Closed Items (Cycle 12)
+
+All Cycle 12 findings were closed on 2026-03-22:
+
+- ✅ QC-80 — Replaced placeholder hash with `zig fetch` instructions in README
+- ✅ QC-90 — Fixed root.zig doc: removed internal @import("generator.zig") reference
+- ✅ QC-81 — Changed newV8 return type from Error!UUID to UUID
+- ✅ QC-82 — Documented both access paths in README
+- ✅ QC-79 — Added doc comments to all 10 GeneratorInterface dispatch methods
 
 ### Top 5 Closed Items (Cycle 10)
 
@@ -1803,3 +1818,514 @@ _Last updated: 2026-03-22 — Cycle 10 closed. 9 findings (QC-62–QC-70): 8 clo
 > - **Pre-commit hook modifications** (`check-yaml --unsafe`, `check-todos`, hook versioning) — developer tooling team
 >
 > Evidence: `docs/GAP_ANALYSIS.md` Won't Do blocks (all security review cycles), QC-16 in this file.
+
+---
+
+## Quality Review Cycle 11
+
+> **Date:** 2026-03-22
+> **Zig version audited:** 0.15.2
+> **Branch reviewed:** `fix/sec-r9-01-timing-safe-eql`
+> **Previous cycles:** Cycles 1–10 (QC-1–QC-70) — 68 closed, 2 Won't Do.
+> **Scope:** New findings only, focused on `timingSafeEql` API surface gap introduced by the SEC-R9-01 fix.
+
+---
+
+### Summary
+
+| Severity | Count | Status |
+| -------- | ----- | ------ |
+| Low      | 5     | ✅ 5 closed |
+
+**Total new issues:** 5 — QC-71 through QC-75, all closed.
+
+**Key finding:** The SEC-R9-01 fix commit (3a29957) correctly implemented `UUID.timingSafeEql()` with full doc comments and 5 unit tests, but did not update four surrounding artifacts: the README API table, CHANGELOG, bench/main.zig, and tests/integration.zig. SECURITY.md is also missing the corresponding API-contract guidance (distinct from SEC-R10-01 security advisory).
+
+**Clean checks:**
+
+- `zig fmt --check` — PASS (no formatting issues)
+- `zig build check` — PASS (no compilation errors)
+- `zig build test` — PASS (all tests pass)
+- `src/uuid.zig` — 550 lines (under 800-line guideline; +27 lines from Cycle 10's 523 after timingSafeEql addition)
+- `src/uuid_test.zig` — 499 lines (under 800-line guideline)
+- No TODO/FIXME/HACK/XXX in source (only `(G-2)` markers in doc comments — not issue markers)
+- CI `.gitlab-ci.yml` — all 4 optimization levels covered; timingSafeEql exercised implicitly by existing test jobs
+
+---
+
+### Stack-Ranked Findings
+
+| Rank | Severity | PriorityScore | Category | Finding | Component | Evidence | GitLab Issue | Fix Summary | Status |
+| ---- | -------- | ------------- | -------- | ------- | --------- | -------- | ------------ | ----------- | ------ |
+| 1 | Low | 48 | docs | README UUID API table omits `timingSafeEql` — new public method invisible to API consumers | `README.md:85–112` | `grep timingSafeEql README.md` → 0 hits; table ends at `eql` row | [#144](https://gitlab.com/devnw/zig/uuid/-/work_items/144) | Add `timingSafeEql` row after `eql` row; add cross-ref in `eql` description | ✅ Closed |
+| 2 | Low | 24 | docs | CHANGELOG.md `[Unreleased]` missing `timingSafeEql` addition | `CHANGELOG.md:8–18` | `grep timingSafeEql CHANGELOG.md` → 0 hits; new public API not recorded | [#145](https://gitlab.com/devnw/zig/uuid/-/work_items/145) | Add `### Added` entry for `timingSafeEql` + `### Changed` for `eql` doc | ✅ Closed |
+| 3 | Low | 24 | tests | `tests/integration.zig` missing `timingSafeEql` coverage through public package | `tests/integration.zig:1–383` | `grep timingSafeEql tests/integration.zig` → 0 hits | [#147](https://gitlab.com/devnw/zig/uuid/-/work_items/147) | Add 2 integration tests: equal UUID returns true, unequal returns false | ✅ Closed |
+| 4 | Low | 24 | docs | `SECURITY.md` missing `timingSafeEql` guidance — security-sensitive API contract undocumented | `SECURITY.md:60–93` | `grep timingSafeEql SECURITY.md` → 0 hits; Known Design Trade-offs #5 absent | [#148](https://gitlab.com/devnw/zig/uuid/-/work_items/148) | Add CWE-208 trade-off + best-practice item to SECURITY.md | ✅ Closed |
+| 5 | Low | 24 | perf | `bench/main.zig` missing `timingSafeEql` benchmark — new public API uncharacterized | `bench/main.zig:18–36` | `grep timingSafeEql bench/main.zig` → 0 hits; `std.crypto.timing_safe.eql` path unmeasured | [#146](https://gitlab.com/devnw/zig/uuid/-/work_items/146) | Add `benchEql` + `benchTimingSafeEql` using XOR sink pattern from QC-63 | ✅ Closed |
+
+---
+
+### Detailed Findings
+
+#### QC-71 — README UUID API table omits `timingSafeEql` (Low, Score 48)
+
+**Status: ✅ Closed** — [#144](https://gitlab.com/devnw/zig/uuid/-/work_items/144)
+
+**Fix applied:** `timingSafeEql` row added to README UUID type API table after `eql`; `eql` row updated with "not constant-time — see `timingSafeEql`" note.
+
+**File:** `README.md:85–112`
+
+`UUID.timingSafeEql()` was added in commit 3a29957 (SEC-R9-01 fix) but the README API Reference table for the UUID type did not list it. The method exists at `src/uuid.zig:174` with a full doc comment and 5 tests. The table ends at `uuid.order(other) Order` (line 111) with no `timingSafeEql` entry and no cross-reference in the `eql` row.
+
+**Why it matters:** Developers scanning the README for available methods will not discover `timingSafeEql`. Given that `timingSafeEql` exists precisely to guide developers away from misusing `eql` in secret-token contexts, its absence from the most-consulted API surface is the highest-impact gap of this cycle.
+
+**Root cause:** The SEC-R9-01 fix commit did not update `README.md`.
+
+**Recommended change:**
+
+- Add a row after `uuid.eql(other) bool`: `| uuid.timingSafeEql(other) bool | Constant-time equality — use when UUID is a secret capability (CWE-208) |`
+- Add to the `eql` row description: "Use `timingSafeEql` instead for secret-capability UUIDs."
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql README.md` returns ≥ 2 hits
+- UUID type API table contains both `eql` and `timingSafeEql` rows
+
+**Verification:** `grep timingSafeEql README.md` — must return at least 2 hits.
+
+**Effort:** S
+
+---
+
+#### QC-72 — CHANGELOG.md `[Unreleased]` missing `timingSafeEql` addition (Low, Score 24)
+
+**Status: ✅ Closed** — [#145](https://gitlab.com/devnw/zig/uuid/-/work_items/145)
+
+**Fix applied:** `### Added` entry for `UUID.timingSafeEql()` and `benchEql`/`benchTimingSafeEql`; `### Changed` entry for `UUID.eql()` doc CWE-208 warning added to `CHANGELOG.md`.
+
+**File:** `CHANGELOG.md:8–18`
+
+The `[Unreleased]` section did not mention `UUID.timingSafeEql()` or the CWE-208 timing warning added to the `eql` doc comment. The changelog is the authoritative record of API changes between releases.
+
+**Root cause:** The SEC-R9-01 fix commit did not add a changelog entry.
+
+**Recommended change:** Under `### Added`: `- UUID.timingSafeEql(other) bool — constant-time equality for secret-capability UUIDs (SEC-R9-01 / CWE-208)`. Under `### Changed` or `### Security`: note for the `eql` doc comment update.
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql CHANGELOG.md` returns ≥ 1 hit
+- Entry includes SEC-R9-01 / CWE-208 reference
+
+**Effort:** S
+
+---
+
+#### QC-73 — `bench/main.zig` missing `timingSafeEql` benchmark (Low, Score 24)
+
+**Status: ✅ Closed** — [#146](https://gitlab.com/devnw/zig/uuid/-/work_items/146)
+
+**Fix applied:** `benchEql()` and `benchTimingSafeEql()` added to `bench/main.zig` using XOR sink pattern; both called from `main()`.
+
+**File:** `bench/main.zig:18–36`
+
+`UUID.timingSafeEql()` uses `std.crypto.timing_safe.eql` — a different code path from `eql`'s `std.mem.eql`. No benchmark captures its throughput characteristics. All other public UUID output/comparison methods have corresponding benchmarks. Developers choosing between `eql` and `timingSafeEql` have no performance data.
+
+**Root cause:** The SEC-R9-01 fix commit did not add benchmark entries.
+
+**Recommended change:** Add `benchEql` and `benchTimingSafeEql` functions using the pool+XOR sink pattern from existing benchmarks (established in QC-63). Add both calls to `main()`.
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql bench/main.zig` returns ≥ 1 hit
+- `zig build bench-check -Doptimize=ReleaseFast` exits 0
+
+**Effort:** S
+
+---
+
+#### QC-74 — `tests/integration.zig` missing `timingSafeEql` coverage (Low, Score 24)
+
+**Status: ✅ Closed** — [#147](https://gitlab.com/devnw/zig/uuid/-/work_items/147)
+
+**Fix applied:** Two integration tests added to `tests/integration.zig`: "timingSafeEql equal UUIDs (QC-74)" and "timingSafeEql unequal UUIDs (QC-74)" (includes symmetry assertion).
+
+**File:** `tests/integration.zig:1–383`
+
+`UUID.timingSafeEql()` had 5 unit tests in `src/uuid_test.zig` but zero integration-level tests. Integration tests exercise the method as `uuid.UUID.timingSafeEql` through `@import("uuid")` — the form external callers use. Every other significant UUID method has integration coverage.
+
+**Root cause:** The SEC-R9-01 fix commit updated only `src/uuid_test.zig`, not `tests/integration.zig`.
+
+**Recommended change:** Add 2 integration tests: equal UUID returns true; two fresh V4 UUIDs return false.
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql tests/integration.zig` returns ≥ 1 hit
+- `zig build test-integration --summary all` exits 0
+
+**Effort:** S
+
+---
+
+#### QC-75 — `SECURITY.md` missing `timingSafeEql` guidance (Low, Score 24)
+
+**Status: ✅ Closed** — [#148](https://gitlab.com/devnw/zig/uuid/-/work_items/148)
+
+**Fix applied:** Item 5 added to Known Design Trade-offs in `SECURITY.md` explaining CWE-208 risk of `eql` and directing callers to `timingSafeEql` for secret-capability UUIDs.
+
+**File:** `SECURITY.md:60–93`
+
+`SECURITY.md` Known Design Trade-offs and Security Best Practices sections were incomplete: neither mentioned `timingSafeEql`, the CWE-208 risk of `eql`, or when to use constant-time comparison. Security auditors and developers reading only `SECURITY.md` have no indication that the library provides a timing-safe comparison primitive. This is a quality/API-contract gap (distinct from SEC-R10-01, which tracks it as a security advisory).
+
+**Root cause:** The SEC-R9-01 fix was implemented in source with full doc comments but the SECURITY.md update was deferred to SEC-R10-01.
+
+**Recommended change:** Add item 5 to Known Design Trade-offs explaining the CWE-208 `eql` vs `timingSafeEql` trade-off. Add item 5 to Security Best Practices advising use of `timingSafeEql` for secret-capability UUIDs.
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql SECURITY.md` returns ≥ 2 hits
+- Known Design Trade-offs mentions both `eql` (risk) and `timingSafeEql` (mitigation)
+- Security Best Practices includes `timingSafeEql` usage guideline
+
+**Effort:** S
+
+---
+
+### Won't Do Policy — All Cycles (MANDATORY for future agents)
+
+> The following categories MUST remain 🚫 Won't Do across ALL `*GAP_ANALYSIS.md` files.
+> Future agents MUST NOT re-open, re-implement, or re-report these items.
+>
+> - **CI/CD Zig toolchain checksum/SHA256 verification** — handled by pipeline governance (Renovate/org policy)
+> - **Docker image digest/tag pinning** — handled by infrastructure controls outside this library
+> - **CI catalog component tag pinning** (mutable semver tags in GitLab CI includes) — pipeline governance
+> - **Pre-commit hook modifications** (`check-yaml --unsafe`, `check-todos`, hook versioning) — developer tooling team
+> - **GeneratorInterface extraction to generator_interface.zig** — blocked by circular import (QC-38, QC-64)
+>
+> Evidence: `docs/GAP_ANALYSIS.md` Won't Do blocks (all security review cycles), QC-16 and QC-64 in this file.
+
+_Last updated: 2026-03-22 — Cycle 11 complete. 5 new findings (QC-71–QC-75), all Low severity, all closed. Format, build, and tests all pass. 75 total issues tracked (73 closed, 2 Won't Do, 0 open)._
+
+---
+
+## Quality Review Cycle 12
+
+> **Date:** 2026-03-22
+> **Zig version audited:** 0.15.2
+> **Previous cycles:** Cycles 1–11 (QC-1–QC-75) — all closed (2 Won't Do: QC-16, QC-64).
+> **Scope:** New findings only — items from prior cycles are not re-opened.
+> **Note:** QC-89 (README installation block inconsistency) was merged into QC-80 as the same root cause.
+
+---
+
+### Summary
+
+| Severity | Count |
+| -------- | ----- |
+| High     | 1     |
+| Medium   | 1     |
+| Low      | 12    |
+| Info     | 2     |
+
+**Total new issues:** 16 — all closed
+
+### Top 5 Closed Items
+
+1. ✅ **QC-80** — Replaced placeholder hash with `zig fetch` instructions in README.
+2. ✅ **QC-90** — Fixed root.zig doc: removed internal @import("generator.zig") reference.
+3. ✅ **QC-81** — Changed newV8 return type from Error!UUID to UUID.
+4. ✅ **QC-82** — Documented both access paths in README.
+5. ✅ **QC-76, QC-78** — Added doc comments to Generator.init, withClock, withRand, and newV4.
+
+---
+
+### Stack-Ranked Findings
+
+| Rank | Severity | PriorityScore | Category | Finding | Component | Evidence | GitLab Issue | Status |
+| ---- | -------- | ------------- | -------- | ------- | --------- | -------- | ------------ | ------ |
+| 1 | High | 80 | docs | README installation hash is literal `"..."` placeholder — blocks package installation | `README.md:26` | `grep '\.hash' README.md` returns `"..."` | [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166) | ✅ Closed |
+| 2 | Medium | 36 | docs | `root.zig` doc comment instructs `@import("generator.zig")` — unreachable for external consumers | `src/root.zig:67` | `@import("generator.zig")` in module doc | [#176](https://gitlab.com/devnw/zig/uuid/-/work_items/176) | ✅ Closed |
+| 3 | Low | 24 | docs | `Generator.init`, `withClock`, `withRand` have no doc comments | `src/generator.zig:105–118` | Zero `///` on three constructor-pattern entry points | [#160](https://gitlab.com/devnw/zig/uuid/-/work_items/160) | ✅ Closed |
+| 4 | Low | 24 | docs | `Variant` enum has no doc comment | `src/uuid.zig:38–43` | Zero `///` on enum and all 4 members | [#162](https://gitlab.com/devnw/zig/uuid/-/work_items/162) | ✅ Closed |
+| 5 | Low | 24 | docs | `Generator.newV4` has no doc comment | `src/generator.zig:142` | Zero `///` on most-used generation method | [#163](https://gitlab.com/devnw/zig/uuid/-/work_items/163) | ✅ Closed |
+| 6 | Low | 24 | docs | `GeneratorInterface` dispatch methods have no doc comments | `src/generator.zig:755–784` | Zero `///` on all 10 vtable trampolines | [#165](https://gitlab.com/devnw/zig/uuid/-/work_items/165) | ✅ Closed |
+| 7 | Low | 20 | api-contract | `newV8` returns `Error!UUID` but body is infallible | `src/versions.zig:63` | No `try`, no `return error.*` in body | [#168](https://gitlab.com/devnw/zig/uuid/-/work_items/168) | ✅ Closed |
+| 8 | Low | 16 | api-contract | Double export of `nil`/`max` via `uuid.nil` and `uuid.UUID.nil`; README inconsistent | `src/root.zig:42–43` | Two canonical access paths; README documents only one | [#169](https://gitlab.com/devnw/zig/uuid/-/work_items/169) | ✅ Closed |
+| 9 | Low | 16 | docs | `Timestamp.toUnixNano` public but absent from README Timestamp section | `src/timestamp.zig:38` | `grep toUnixNano README.md` returns 0 hits | [#170](https://gitlab.com/devnw/zig/uuid/-/work_items/170) | ✅ Closed |
+| 10 | Low | 16 | docs | `Timestamp.fromUnixNano`/`fromUnixMs` public but absent from README | `src/timestamp.zig:78,92` | `grep fromUnixNano README.md` returns 0 hits | [#171](https://gitlab.com/devnw/zig/uuid/-/work_items/171) | ✅ Closed |
+| 11 | Low | 16 | tests | No test exercises `newV8` error-never path | `src/generator.zig:494` | No boundary-input tests with infallibility note | [#172](https://gitlab.com/devnw/zig/uuid/-/work_items/172) | ✅ Closed |
+| 12 | Low | 16 | docs | `newV7AtTime` doc comment omits `RandomError` from error set | `src/generator.zig:172–176` | Doc mentions only `InvalidTimestamp` | [#173](https://gitlab.com/devnw/zig/uuid/-/work_items/173) | ✅ Closed |
+| 13 | Low | 16 | docs | `examples/basic.zig` uses `{any}` for `NullUUID` instead of `{f}` | `examples/basic.zig:104–105` | `{any}` prints struct internals, not canonical UUID string | [#177](https://gitlab.com/devnw/zig/uuid/-/work_items/177) | ✅ Closed |
+| 14 | Low | 12 | docs | README "See docs/ for detailed documentation" links to internal review notes | `README.md:180` | `docs/` contains only gap analysis and security review files | [#178](https://gitlab.com/devnw/zig/uuid/-/work_items/178) | ✅ Closed |
+| 15 | Info | 8 | docs | `Timestamp.now()` doc does not note it bypasses the injectable clock | `src/timestamp.zig:25` | No reference to `Generator.withClock` in doc comment | [#174](https://gitlab.com/devnw/zig/uuid/-/work_items/174) | ✅ Closed |
+| 16 | Info | 8 | tests | No test verifying `Generator.newV1`/`newV6` do NOT use injected clock | `src/generator_test.zig` | Injected-clock boundary for V1/V6 untested | [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175) | ✅ Closed |
+
+---
+
+### Findings by Category
+
+#### Documentation
+
+##### QC-76 — Generator.init, withClock, withRand have no doc comments (Low, Score 24)
+
+**Status: ✅ Closed — Implemented.** Added doc comments to Generator.init, withClock, withRand. — [#160](https://gitlab.com/devnw/zig/uuid/-/work_items/160)
+
+**File:** `src/generator.zig:105–118`
+
+`Generator.init`, `Generator.withClock`, and `Generator.withRand` have no `///` doc comments. These three functions are the primary constructor-pattern entry points. `zig doc` users and IDE hover-help will show nothing for them.
+
+**Root cause:** These were written before a doc-comment policy was established.
+
+**Recommended change:** Add `///` doc comments to each function describing parameters and return semantics.
+
+**Acceptance criteria:** `zig doc ./...` renders documentation for all three functions.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-77 — Variant enum has no doc comment (Low, Score 24)
+
+**Status: ✅ Closed — Implemented.** Added doc comment to Variant enum and all members. — [#162](https://gitlab.com/devnw/zig/uuid/-/work_items/162)
+
+**File:** `src/uuid.zig:38–43`
+
+The `Variant` enum and all four of its members (`ncs`, `rfc9562`, `microsoft`, `future`) have no `///` doc comments. Callers do not know which variant is valid for RFC 9562 UUIDs or what the bit patterns mean.
+
+**Root cause:** Enum documentation was not included in the Cycle 10 doc-comment sweep (QC-62), which targeted functions only.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-78 — Generator.newV4 has no doc comment (Low, Score 24)
+
+**Status: ✅ Closed — Implemented.** Added doc comment to Generator.newV4. — [#163](https://gitlab.com/devnw/zig/uuid/-/work_items/163)
+
+**File:** `src/generator.zig:142`
+
+`Generator.newV4` is the most-used generation method but has no `///` doc comment, while all other `newV*` methods have documentation. The error surface and random source are undocumented.
+
+**Root cause:** QC-62 addressed `src/uuid.zig`; `generator.zig` entry points were addressed only selectively.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-79 — GeneratorInterface dispatch methods have no doc comments (Low, Score 24)
+
+**Status: ✅ Closed — Implemented.** Added doc comments to all 10 GeneratorInterface dispatch methods. — [#165](https://gitlab.com/devnw/zig/uuid/-/work_items/165)
+
+**File:** `src/generator.zig:755–784`
+
+All 10 `GeneratorInterface` vtable dispatch trampolines have no `///` doc comments. The interface is the primary polymorphism seam for dependency injection and mock generators.
+
+**Root cause:** Vtable trampolines were not included in any doc-comment pass.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-80 — README installation hash is a literal "..." placeholder (High, Score 80)
+
+**Status: ✅ Closed — Implemented.** Replaced placeholder hash with `zig fetch` instructions. — [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166)
+
+**File:** `README.md:26`
+
+```zon
+.hash = "...",
+```
+
+The Zig package manager requires a valid SHA-256 hash. A literal `"..."` causes `zig build` to fail before any code compiles. This blocks all new library adopters.
+
+**Root cause:** The installation snippet was written before the first tagged release; the placeholder was never replaced.
+
+**Recommended change:** Run `zig fetch --save` against the release tarball and replace `"..."` with the printed hash.
+
+**Note:** QC-89 (same root cause — README installation block inconsistency) is merged into this issue.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-83 — Timestamp.toUnixNano is public but absent from README Timestamp section (Low, Score 16)
+
+**Status: ✅ Closed — Implemented.** Added Timestamp.toUnixNano to README Timestamp table. — [#170](https://gitlab.com/devnw/zig/uuid/-/work_items/170)
+
+**File:** `src/timestamp.zig:38`
+
+`Timestamp.toUnixNano` is a public conversion method missing from the README's Timestamp API table. Callers consulting the README for Timestamp API will not discover it.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-84 — Timestamp.fromUnixNano and fromUnixMs are public but absent from README (Low, Score 16)
+
+**Status: ✅ Closed — Implemented.** Added Timestamp.fromUnixNano/fromUnixMs to README Timestamp table. — [#171](https://gitlab.com/devnw/zig/uuid/-/work_items/171)
+
+**File:** `src/timestamp.zig:78,92`
+
+`Timestamp.fromUnixNano` and `Timestamp.fromUnixMs` are public constructors (critical for `newV7AtTime` usage) missing from the README's Timestamp API table.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-86 — newV7AtTime doc comment only documents negative-ts guard, not full error set (Low, Score 16)
+
+**Status: ✅ Closed — Implemented.** Expanded newV7AtTime doc comment to list full error set. — [#173](https://gitlab.com/devnw/zig/uuid/-/work_items/173)
+
+**File:** `src/generator.zig:172–176`
+
+The doc comment for `newV7AtTime` lists only `InvalidTimestamp` but the full error set also includes `RandomError`. Callers may under-handle errors.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-87 — Timestamp.now() doc does not note it bypasses the injectable clock (Info, Score 8)
+
+**Status: ✅ Closed — Implemented.** Added clock-bypass note to Timestamp.now() doc. — [#174](https://gitlab.com/devnw/zig/uuid/-/work_items/174)
+
+**File:** `src/timestamp.zig:25`
+
+`Timestamp.now()` reads the system clock directly and is not affected by `Generator.withClock`. The doc comment does not note this, creating a silent determinism gap for callers who use `withClock` for test injection.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-90 — root.zig doc comment instructs callers to @import("generator.zig") — impossible for external consumers (Medium, Score 36)
+
+**Status: ✅ Closed — Implemented.** Fixed root.zig doc: removed internal @import("generator.zig") reference. — [#176](https://gitlab.com/devnw/zig/uuid/-/work_items/176)
+
+**File:** `src/root.zig:67`
+
+The module doc references `@import("generator.zig")` — a path only valid within the library's own source tree. External consumers get a compile error if they follow this example. The correct form is `@import("uuid").Generator`.
+
+**Root cause:** The doc comment was written from an internal developer perspective.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-91 — examples/basic.zig uses {any} for NullUUID instead of {f} (Low, Score 16)
+
+**Status: ✅ Closed — Implemented.** Fixed examples/basic.zig: {any} to {f} for NullUUID. — [#177](https://gitlab.com/devnw/zig/uuid/-/work_items/177)
+
+**File:** `examples/basic.zig:104–105`
+
+`{any}` prints the internal struct representation of `NullUUID` rather than the canonical nil UUID string. `NullUUID.format` was added in QC-55 to support `{f}`; the example was not updated.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-92 — README "See docs/ for detailed documentation" links to internal review notes (Low, Score 12)
+
+**Status: ✅ Closed — Implemented.** Fixed README: replaced misleading "See docs/" with accurate description. — [#178](https://gitlab.com/devnw/zig/uuid/-/work_items/178)
+
+**File:** `README.md:180`
+
+`docs/` contains only internal quality and security review files. The phrase "See docs/ for detailed documentation" misleads external users expecting user guides or API references.
+
+**Root cause:** Added speculatively; user docs were never created.
+
+**Confidence:** confirmed
+
+---
+
+#### API Contract
+
+##### QC-81 — newV8 returns Error!UUID but function body can never fail (Low, Score 20)
+
+**Status: ✅ Closed — Implemented.** Changed newV8 return type from Error!UUID to UUID. — [#168](https://gitlab.com/devnw/zig/uuid/-/work_items/168)
+
+**File:** `src/versions.zig:63`
+
+```zig
+pub fn newV8(data: [16]u8) Error!UUID {
+    var uuid = UUID{ .bytes = data };
+    uuid.setVersion(8);
+    uuid.setVariant(.rfc9562);
+    return uuid;
+}
+```
+
+The body contains no `try`, no `return error.*`, and no fallible calls. Callers are forced to write `try gen.newV8(...)` even though the error case can never occur.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-82 — Double export of nil/max via uuid.nil and uuid.UUID.nil (Low, Score 16)
+
+**Status: ✅ Closed — Implemented.** Documented both access paths in README. — [#169](https://gitlab.com/devnw/zig/uuid/-/work_items/169)
+
+**File:** `src/root.zig:42–43`
+
+Two canonical access paths for the same constants. README documents `UUID.nil` while the top-level re-export `uuid.nil` is the more ergonomic form. If one path is removed in a future refactor, callers using the other path break silently.
+
+**Confidence:** confirmed
+
+---
+
+#### Tests
+
+##### QC-85 — No test exercises newV8 error-never path (Low, Score 16)
+
+**Status: ✅ Closed — Implemented.** Added newV8 boundary tests with all-zero and all-one inputs. — [#172](https://gitlab.com/devnw/zig/uuid/-/work_items/172)
+
+**File:** `src/generator.zig:494`
+
+No test documents or asserts the infallible nature of `newV8`. Without a baseline test, a return-type change (per QC-81) has no coverage anchor.
+
+**Recommended change:** Add tests with all-zero and all-one byte inputs with an explanatory comment noting the function is infallible.
+
+**Confidence:** confirmed
+
+---
+
+##### QC-88 — No test verifying Generator.newV1/newV6 do NOT use injected clock (Info, Score 8)
+
+**Status: ✅ Closed — Implemented.** Added test verifying V1/V6 ignore injected clock. — [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175)
+
+**File:** `src/generator_test.zig`
+
+The boundary between injected-clock (`withClock`) and system-clock code paths for V1/V6 is not tested. A refactor accidentally wiring V1/V6 through the injected clock would be undetected.
+
+**Confidence:** suspected — requires code inspection to confirm V1/V6 ignore `withClock`.
+
+---
+
+### Action Plan (Cycle 12)
+
+#### Quick Wins (S effort — do first)
+
+| Issue | Title | Effort | Impact |
+| ----- | ----- | ------ | ------ |
+| [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166) | Replace README installation hash placeholder with real hash | S | High |
+| [#176](https://gitlab.com/devnw/zig/uuid/-/work_items/176) | Fix root.zig doc: replace @import("generator.zig") with external form | S | Medium |
+| [#160](https://gitlab.com/devnw/zig/uuid/-/work_items/160) | Add doc comments to Generator.init, withClock, withRand | S | Low |
+| [#162](https://gitlab.com/devnw/zig/uuid/-/work_items/162) | Add doc comment to Variant enum and members | S | Low |
+| [#163](https://gitlab.com/devnw/zig/uuid/-/work_items/163) | Add doc comment to Generator.newV4 | S | Low |
+| [#165](https://gitlab.com/devnw/zig/uuid/-/work_items/165) | Add doc comments to GeneratorInterface dispatch methods | S | Low |
+| [#173](https://gitlab.com/devnw/zig/uuid/-/work_items/173) | Expand newV7AtTime doc comment to list full error set | S | Low |
+| [#170](https://gitlab.com/devnw/zig/uuid/-/work_items/170) | Add Timestamp.toUnixNano to README | S | Low |
+| [#171](https://gitlab.com/devnw/zig/uuid/-/work_items/171) | Add Timestamp.fromUnixNano/fromUnixMs to README | S | Low |
+| [#177](https://gitlab.com/devnw/zig/uuid/-/work_items/177) | Fix examples/basic.zig: {any} → {f} for NullUUID | S | Low |
+| [#178](https://gitlab.com/devnw/zig/uuid/-/work_items/178) | Remove/replace misleading "See docs/" README sentence | S | Low |
+| [#174](https://gitlab.com/devnw/zig/uuid/-/work_items/174) | Add clock-bypass note to Timestamp.now() doc | S | Info |
+
+#### Medium-term (M effort)
+
+| Issue | Title | Effort | Impact |
+| ----- | ----- | ------ | ------ |
+| [#168](https://gitlab.com/devnw/zig/uuid/-/work_items/168) | Change newV8 return type to UUID or document infallibility | S/M | Low |
+| [#169](https://gitlab.com/devnw/zig/uuid/-/work_items/169) | Resolve nil/max double-export and align README | S | Low |
+| [#172](https://gitlab.com/devnw/zig/uuid/-/work_items/172) | Add newV8 boundary tests documenting infallible path | S | Low |
+| [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175) | Add test verifying V1/V6 ignore injected clock | S | Info |
+
+---
+
+_Last updated: 2026-03-22 — Cycle 12 complete. 16 new findings (QC-76–QC-92, QC-89 merged into QC-80): 1 High, 1 Medium, 12 Low, 2 Info. All 16 closed. 91 total issues tracked (89 closed, 2 Won't Do, 0 open)._

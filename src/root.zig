@@ -59,17 +59,10 @@ pub const GeneratorInterface = @import("generator.zig").GeneratorInterface;
 // `uuid.default_generator` would have no effect on the UUIDs produced by the
 // convenience functions.
 //
-// Callers who need direct access to the shared generator (e.g. to call
-// `loadState`/`saveState`) should import generator.zig explicitly:
-//
-//   const uuid_gen = @import("uuid").Generator;  // type for your own instance
-//   // OR for the shared instance:
-//   const gen_mod = @import("generator.zig");
-//   try gen_mod.default_generator.loadState("/var/lib/app/uuid.state");
-//
 // For most use-cases, the convenience functions are sufficient.
 // For persistent state, create and manage your own `Generator` instance:
 //
+//   const uuid = @import("uuid");
 //   var gen = uuid.Generator.init();
 //   try gen.loadState("/var/lib/app/uuid.state");
 //   const u = try gen.newV7();

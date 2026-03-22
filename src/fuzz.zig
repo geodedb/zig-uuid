@@ -192,6 +192,12 @@ const nano_corpus: []const []const u8 = &.{
     "\x64\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\x00",
     // maxInt(u64) * 100 - 100 (just below the bound — should succeed)
     "\x9c\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xff\x00",
+    // SEC-R12-02: secondary addition overflow boundary for fromUnixNano.
+    // ns = (maxInt(u64) - gregorian_offset + 1) * 100 — the first value
+    // where intervals_u64 + gregorian_offset overflows u64.
+    "\x00\x00\x83\x61\xf0\x59\x6c\x56\x63\x00\x00\x00\x00\x00\x00\x00",
+    // SEC-R12-02: just below the secondary overflow boundary (should succeed)
+    "\x9c\xff\x82\x61\xf0\x59\x6c\x56\x63\x00\x00\x00\x00\x00\x00\x00",
     // A real-world timestamp (2023-11-14 in ns)
     "\x00\xb0\x7a\x2c\x5c\x79\x94\x68\x01\x00\x00\x00\x00\x00\x00\x00",
 };

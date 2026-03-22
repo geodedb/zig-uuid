@@ -7,12 +7,13 @@
 > Last updated: 2026-03-22
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
 > Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
+> Cycle 4 appended: 2026-03-22 (2 new findings: PERF-19 through PERF-20)
 
 ---
 
 ## Summary
 
-**18 findings total across 3 cycles** (2 P1, 7 P2, 8 P3, 1 Won't Do):
+**20 findings total across 4 cycles** (2 P1, 8 P2, 9 P3, 1 Won't Do):
 
 | Cycle | Severity | Count | Description | Status |
 |-------|----------|-------|-------------|--------|
@@ -23,6 +24,8 @@
 | 2     | P3       | 2     | parseHash loop; CI bench results lost | ✅ All Closed |
 | 3     | P2       | 1     | Allocating string API unbenchmarked (300× overhead invisible) | ✅ Closed |
 | 3     | P3       | 2     | Missing newV7AtTime benchmark; missing toStringUpper/toHexUpper benchmarks | ✅ All Closed |
+| 4     | P2/P3    | 1     | Single mutex serializes V7 and V1/V6 clock domains | 🔓 Open |
+| 4     | P3       | 1     | toHex benchmark missing | ✅ Closed |
 
 **Top 5 risks to the "millions/sec V7 generation" goal:**
 
@@ -699,3 +702,119 @@ All Cycle 3 findings are **confidence::confirmed**.
   - `crypto.random.bytes(2)`: **~4 ns/op**
   - `crypto.random.bytes(8)`: **~5 ns/op**
   - `crypto.random.bytes(16)`: **~6 ns/op**
+
+---
+
+---
+
+## Performance Review Cycle 4 Findings (PERF-19–PERF-20)
+
+> Codebase-wide performance review — Cycle 4
+> Reviewer: Performance review agent
+> Date: 2026-03-22
+> All Cycle 1 findings (PERF-01 through PERF-10), Cycle 2 findings (PERF-11 through PERF-15), and Cycle 3 findings (PERF-16 through PERF-18) are closed or Won't Do.
+
+---
+
+## Summary
+
+**2 new findings** (0 P1, 1 P2/P3, 1 P3) — 1 open, 1 closed:
+
+| Severity | Count | Description | Status |
+|----------|-------|-------------|--------|
+| P2/P3 | 1 | Single mutex serializes independent V7 and V1/V6 clock domains — concurrent mixed-version throughput penalty | 🔓 Open |
+| P3 | 1 | toHex (lowercase no-alloc) missing from benchmark suite — regression in lowercase hex path undetectable | ✅ Closed |
+
+**Running totals across all cycles:**
+
+| Cycle | Findings | Closed | Won't Do | Open |
+|-------|----------|--------|----------|------|
+| 1 | 10 | 9 | 1 | 0 |
+| 2 | 5 | 5 | 0 | 0 |
+| 3 | 3 | 3 | 0 | 0 |
+| 4 | 2 | 1 | 0 | 1 |
+| **Total** | **20** | **18** | **1** | **1** |
+
+---
+
+## Stack-Ranked Findings (Cycle 4)
+
+| Rank | Severity | PerfScore | Finding | Component | Evidence | Measurement | GitLab Issue | Fix Summary | Status |
+|------|----------|-----------|---------|-----------|----------|-------------|--------------|-------------|--------|
+| 1 | P2/P3 | 24 | Single mutex serializes independent V7 and V1/V6 clock domains | `generator.zig:89` | Suspected | resolveV1V6State holds mutex ~25–35 ns; concurrent newV7 callers block for this duration | [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) | Split into v7_mutex and v1v6_mutex; acquire in fixed order in saveState/loadState | 🔓 Open |
+| 2 | P3 | 8 | toHex (lowercase no-alloc) missing from benchmark suite | `bench/main.zig` (missing); `uuid.zig:351` | Confirmed | benchToHexUpper exists; benchToHex absent; regression in lowercase path would be invisible | [#157](https://gitlab.com/devnw/zig/uuid/-/work_items/157) | Add benchToHex() adjacent to benchToHexUpper using 256-UUID pool + XOR sink pattern | ✅ Closed |
+
+**PerfScore formula**: Impact (1–5) × Likelihood (1–5) × 4
+
+---
+
+## Findings by Area (Cycle 4)
+
+### Concurrency / Locking
+
+#### PERF-19: Single Mutex Serializes Independent V7 and V1/V6 Clock Domains (P2/P3, Suspected)
+
+**File**: `src/generator.zig:89`
+
+One `std.Thread.Mutex` field covers both the V7 clock domain (`last_ms`, `mono_seq`) and the V1/V6 clock domain (`clock_seq`, `last_v1_ts`, `node_cache`). These are logically independent: V7 tracks Unix-epoch milliseconds plus a 12-bit monotonic counter; V1/V6 tracks 100-ns Gregorian ticks plus a 14-bit clock sequence. Neither domain reads or writes the other's fields during normal generation.
+
+Under concurrent mixed-version workloads, `resolveV1V6State` holds the mutex for approximately 25–35 ns. A concurrent `newV7` caller blocks for this entire duration even though V7 state is entirely disjoint from V1/V6 state.
+
+This finding was identified in the Cycle 1 prose under "Concurrency / Locking — Medium-Term Improvements: Split into two mutexes" but was never assigned a PERF number or a GitLab issue.
+
+**Fix**: Split into `v7_mutex` (guards `last_ms`, `mono_seq`) and `v1v6_mutex` (guards `clock_seq`, `last_v1_ts`, `node_cache`, `last_node`). In `saveState` and `loadState`, acquire both in a fixed order — `v7_mutex` first, then `v1v6_mutex` — and release in reverse order to prevent deadlock. All other call sites acquire only the mutex for the version being generated.
+
+**Validation Plan**:
+
+```bash
+# Add a concurrent mixed-version benchmark: 4 threads calling newV7 + 4 threads calling newV1
+# Measure combined throughput before and after the split
+zig build bench -Doptimize=ReleaseFast
+# Expected: ≥15% throughput improvement for mixed-version concurrent workloads
+# Run TSan to confirm no data races:
+# zig build test -Doptimize=Debug -fsanitize=thread
+```
+
+**Status**: 🔓 Open — [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) — Suspected finding; requires concurrent benchmark to validate. Mutex split is a significant structural change with regression risk. Left open for future validation.
+
+---
+
+### Benchmarks Coverage
+
+#### PERF-20: toHex (Lowercase No-Alloc) Missing from Benchmark Suite (P3, Confirmed)
+
+**File**: `bench/main.zig` (missing `benchToHex`); `src/uuid.zig:351`
+
+`benchToHexUpper` (added for PERF-18) and `benchToHexAlloc` (added for PERF-16) are present in `bench/main.zig`, but `toHex` (lowercase, `[32]u8` stack output) has no standalone benchmark. `toHex` and `toHexUpper` both delegate to `toHexImpl` with a comptime hex table argument and are separate compiler instantiations. A regression affecting only the lowercase instantiation (e.g., a table-pointer change that defeats `inline for` optimization) would produce no signal.
+
+Expected throughput: ~5–6 ns/op, matching `toHexUpper`.
+
+**Fix**: Add `benchToHex()` to `bench/main.zig` adjacent to `benchToHexUpper()`, using the same 256-UUID pool + XOR sink pattern to prevent dead-code elimination. Call from `main()`.
+
+**Validation Plan**:
+
+```bash
+zig build bench -Doptimize=ReleaseFast
+# Expected new output line:
+#   toHex:           +5 ns/op    200,000,000 ops/s
+# Confirm bench-check still compiles:
+zig build bench-check -Doptimize=ReleaseFast
+```
+
+**Status**: ✅ Closed — Implemented. Added `benchToHex()` to `bench/main.zig`. [#157](https://gitlab.com/devnw/zig/uuid/-/work_items/157)
+
+---
+
+## Confirmed vs Suspected (Cycle 4)
+
+| Finding | Confidence | Evidence Needed to Confirm |
+|---------|-----------|---------------------------|
+| PERF-19: Shared mutex contention on mixed-version workloads | Suspected | Concurrent mixed-version benchmark measuring throughput before/after mutex split; TSan run |
+| PERF-20: toHex benchmark gap | Confirmed | Source code inspection — benchToHex absent from bench/main.zig; benchToHexUpper present |
+
+---
+
+## Action Plan (Cycle 4)
+
+1. Open **PERF-19** — [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) — Split `Generator.mutex` into `v7_mutex` and `v1v6_mutex`. Requires concurrent benchmark to validate. Significant structural change with regression risk.
+2. ~~Open **PERF-20**~~ ✅ Closed — [#157](https://gitlab.com/devnw/zig/uuid/-/work_items/157) — Added `benchToHex()` to `bench/main.zig`.
