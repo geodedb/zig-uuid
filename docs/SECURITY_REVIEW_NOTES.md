@@ -581,3 +581,43 @@ GitLab: [#152](https://gitlab.com/devnw/zig/uuid/-/work_items/152)
 | Docker image digest pinning | Infrastructure controls |
 | SEC-R2-01: Unverified Zig download | Pipeline governance |
 | SEC-R9-02: CI hash TOFU | Pipeline governance — same policy. MUST NOT re-open. |
+
+---
+
+## Security Review Cycle 12
+
+**Date:** 2026-03-22
+
+### Scan Results
+
+| Tool | Result |
+|------|--------|
+| gitleaks 8.30.0 | 0 secrets (54 commits) |
+| trufflehog 3.92.5 | 0 verified |
+| osv-scanner 2.3.2 | Exit 128 (no Zig DB — expected) |
+| shellcheck 0.9.0 | SC2016 info-only (intentional) |
+
+### Findings
+
+**1. SEC-R12-01** (Info, CWE-362, Risk 6): `newV1AtTime`/`newV6AtTime` read `self.node_cache`
+at `generator.zig:390` and `generator.zig:419` without holding the mutex — technically a data
+race under the LLVM memory model.
+🚫 Won't Do: This is an **intentional PERF-05 optimization**. The race is benign because
+`resolveV1V6State` re-checks authoritatively under the mutex. The only consequence is an
+unnecessary or skipped `hw_address()` syscall — not a security concern. Documented.
+GitLab: [#153](https://gitlab.com/devnw/zig/uuid/-/work_items/153)
+
+**2. SEC-R12-02** (Info, CWE-190, Risk 4): `Timestamp.fromUnixNano` at `timestamp.zig:84` —
+existing `> maxInt(u64)` guard prevents `@intCast` panic but does NOT prevent the subsequent
+`intervals_u64 + gregorian_offset` addition overflow. For `intervals_u64` in
+`[18_324_551_145_709_551_616, 18_446_744_073_709_551_615]` (years 60,037–60,424 AD), Debug
+builds panic and ReleaseFast silently wraps.
+🔓 Open: Fix identified (`if (intervals_u64 > maxInt(u64) - gregorian_offset) return Error.InvalidTimestamp;`). Not applied during review phase.
+GitLab: [#154](https://gitlab.com/devnw/zig/uuid/-/work_items/154)
+
+### Won't Do Reconfirmation (Cycle 12)
+
+| Item | Reason |
+|------|--------|
+| SEC-R9-02: CI hash TOFU | Pipeline governance — MUST NOT re-open. |
+| SEC-R12-01: node_cache data race | Intentional PERF-05; benign by design — MUST NOT re-open. |

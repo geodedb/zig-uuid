@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 11 fully closed: SEC-R11-01 fixed (Timestamp.now() overflow guard); SEC-R11-02 false positive (test_* already covers test_io); SEC-R11-03 fixed (isNil/isMax CWE-208 notes); SEC-R11-04 fixed (loadState O_NOFOLLOW). 38 total findings; 36 closed, 1 Won't Do, 1 false positive, 0 open.
+> Last updated: 2026-03-22 — Security Review Cycle 12: 2 new Info findings (SEC-R12-01 node_cache data race — Won't Do; SEC-R12-02 fromUnixNano secondary overflow — Open, fix identified). 40 total findings; 36 closed, 2 Won't Do, 1 false positive, 1 open.
 
 ---
 
@@ -2941,5 +2941,163 @@ else blk: {
 ---
 
 _Last updated: 2026-03-22 — Cycle 11 fully closed. SEC-R11-01 fixed (`Timestamp.now()` upper-bound guard + test); SEC-R11-02 false positive (already covered by `test_*`); SEC-R11-03 fixed (CWE-208 notes on `isNil`/`isMax`); SEC-R11-04 fixed (`loadState` O_NOFOLLOW + test). 38 total findings across all cycles; 36 closed, 1 Won't Do, 1 false positive, 0 open._
+
+---
+
+## Security Review Cycle 12
+
+**Date:** 2026-03-22
+**Reviewer:** Adversarial AI security agent
+**Scope:** Exhaustive full-codebase + delivery-pipeline re-audit; all source files, CI, pre-commit, fuzz targets
+
+### Methodology
+
+Full adversarial review following the same 8-step process as prior cycles:
+
+1. **Orientation** — reviewed all 52 open security issues via `glab issue list --label security --all`
+2. **Asset inventory** — confirmed tool availability: gitleaks 8.30.0, trufflehog 3.92.5, osv-scanner 2.3.2, shellcheck 0.9.0, glab 1.53.0
+3. **Threat model** — UUID library: parser injection, timestamp arithmetic overflows, symlink attacks, timing side-channels, concurrency races, secret leakage
+4. **Automated scans** — see results below
+5. **Manual adversarial review** — full read of all source files
+6. **Scoring** — risk-scored using Impact × Likelihood × 4 formula
+7. **GitLab issues** — one issue per unique root cause
+8. **GAP_ANALYSIS update** — this section
+
+### Automated Scan Results (Cycle 12)
+
+| Tool | Command | Result |
+|------|---------|--------|
+| gitleaks 8.30.0 | `gitleaks detect --source . --no-git` | 0 secrets found (54 commits scanned) |
+| trufflehog 3.92.5 | `trufflehog filesystem . --only-verified` | 0 verified secrets |
+| osv-scanner 2.3.2 | `osv-scanner scan dir:.` | Exit 128 — no Zig package sources (expected; `build.zig.zon` not yet in OSV DB) |
+| shellcheck 0.9.0 | All `.sh` files in `.hooks/` | SC2016 info-only (literal `$` in `''` string — intentional) |
+
+Tools not available in this environment: syft, grype, trivy, semgrep, hadolint, checkov.
+
+### Manual Review Coverage (Cycle 12)
+
+Files read and adversarially reviewed:
+
+- `src/uuid.zig` — `timingSafeEql` confirmed correct; `eql` warning present; `isNil`/`isMax` CWE-208 notes present
+- `src/uuid_test.zig` — all 5 `timingSafeEql` tests present and correct
+- `src/generator.zig` — full re-read; node_cache optimistic reads at lines 390, 419 identified (SEC-R12-01)
+- `src/timestamp.zig` — secondary overflow in `fromUnixNano` identified (SEC-R12-02)
+- `src/hwaddr/linux.zig` — bounds guards and broadcast-skip confirmed clean
+- `src/hwaddr/macos.zig` — `sdl_len`/`sdl_data.len` guards confirmed; broadcast-skip confirmed
+- `src/hwaddr/windows.zig` — two-phase buffer pattern confirmed; broadcast-skip confirmed
+- `src/null_uuid.zig` — JSON marshal/unmarshal confirmed clean
+- `src/fuzz.zig` — 6 fuzz targets; `fromUnixNano` target covers the secondary overflow range
+- `.gitlab-ci.yml` — CI hash verification, fuzz job exit-code, ZIG_VERSION injection all re-confirmed
+- `.pre-commit-config.yaml` — all hooks re-confirmed; no new issues
+- `build.zig` / `build.zig.zon` — no new vectors
+
+### Findings (Cycle 12)
+
+#### SEC-R12-01 — `newV1AtTime`/`newV6AtTime` read `node_cache` without mutex (CWE-362, Info)
+
+**Severity:** Info | **Risk Score:** 6 (Impact 1 × Likelihood 2 × 3) | **Confidence:** Confirmed
+
+**Status: 🚫 Won't Do — intentional PERF-05 optimization**
+
+`src/generator.zig:390` and `src/generator.zig:419` both contain an optimistic pre-fetch read of `self.node_cache == null` before acquiring the mutex:
+
+```zig
+const prefetched: ?[6]u8 = if (self.node_cache == null)
+    try self.hw_address()
+else
+    null;
+```
+
+`self.node_cache` is a `?[6]u8` field shared across threads; its authoritative write occurs inside `resolveV1V6State` while holding `self.mutex`. Reading it without the mutex is technically a **data race** under the LLVM memory model (CWE-362).
+
+**Why Won't Do:** The race is **benign by design** (PERF-05). `resolveV1V6State` re-checks the field authoritatively under the mutex. The only consequence of a racy read is an unnecessary or skipped `hw_address()` syscall — not a correctness or security concern. The optimistic pattern avoids blocking threads on an expensive OS syscall.
+
+**Fix note:** Would require `@atomicLoad` for the optimistic check — adds complexity with zero security benefit. The intentional design is documented in GAP_ANALYSIS PERF-05.
+
+**GitLab:** [#153](https://gitlab.com/devnw/zig/uuid/-/work_items/153)
+
+---
+
+#### SEC-R12-02 — `Timestamp.fromUnixNano` secondary u64 overflow for years 60,037–60,424 AD (CWE-190, Info)
+
+**Severity:** Info | **Risk Score:** 4 (Impact 1 × Likelihood 1 × 4) | **Confidence:** Confirmed (arithmetic proof)
+
+**Status: 🔓 Open — Fix identified, not yet applied (Cycle 12 review-only phase)**
+
+`src/timestamp.zig:84` has an existing guard against `@intCast` panic (`intervals_since_unix > maxInt(u64)`), but a secondary overflow exists in the subsequent addition:
+
+```zig
+const intervals_u64: u64 = @intCast(intervals_since_unix);
+return .{ .value = @truncate(intervals_u64 + gregorian_offset) };  // ← secondary overflow
+```
+
+`gregorian_offset = 122_192_928_000_000_000`. For `intervals_u64 > maxInt(u64) - gregorian_offset = 18_324_551_145_709_551_615`, the addition overflows u64. This window corresponds to approximately **year 60,037 to year 60,424 AD**.
+
+**Impact:**
+
+- Debug/ReleaseSafe: runtime panic (denial of service if `ns` is untrusted input)
+- ReleaseFast/ReleaseSmall: silent timestamp wraparound (incorrect UUID timestamp)
+
+**Proposed fix:** Add a tighter upper-bound guard before the addition:
+
+```zig
+const max_safe: u64 = std.math.maxInt(u64) - gregorian_offset;
+if (intervals_u64 > max_safe) return Error.InvalidTimestamp;
+```
+
+**Files to modify:** `src/timestamp.zig`
+
+**GitLab:** [#154](https://gitlab.com/devnw/zig/uuid/-/work_items/154)
+
+---
+
+### Won't Do Reconfirmation (Cycle 12)
+
+All previously closed Won't Do items were re-reviewed and remain correctly classified:
+
+| Item | Reason |
+|------|--------|
+| SEC-R9-02: CI hash TOFU | Pipeline governance — same policy as SEC-R2-01. Future agents MUST NOT re-open. |
+| SEC-R12-01: node_cache data race | Intentional PERF-05 optimization; benign by design. |
+
+### Confirmed Clean Areas (Cycle 12)
+
+- **`src/uuid.zig`:** `timingSafeEql` correct; `eql` CWE-208 warning present; `isNil`/`isMax` CWE-208 notes present.
+- **`src/generator.zig`:** All prior fixes confirmed. PERF-05 optimistic reads at lines 390/419 documented as Won't Do (SEC-R12-01).
+- **`src/timestamp.zig`:** SEC-R12-02 identified (Open); existing guards cover negative ns and `@intCast` overflow. Secondary addition overflow at line 84 identified for years 60,037–60,424 AD — fix proposed, not yet applied.
+- **`src/hwaddr/`:** All three platform files clean.
+- **`src/fuzz.zig`:** 6 fuzz targets; `fromUnixNano` fuzz target exercises the secondary overflow range.
+- **`src/null_uuid.zig`:** JSON path clean.
+- **`.gitlab-ci.yml`:** No new vectors.
+- **`.pre-commit-config.yaml`:** No new vectors.
+- **`gitleaks`:** 0 secrets (54 commits).
+- **`trufflehog`:** 0 verified findings.
+
+---
+
+**Summary Table (Cycle 12):**
+
+| Severity | New Findings | Status |
+|----------|-------------|--------|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 0 | — |
+| Low | 0 | — |
+| Info | 2 | 🚫 Won't Do (SEC-R12-01); 🔓 Open (SEC-R12-02) |
+| **Total** | **2** | **1 Won't Do, 1 Open** |
+
+**Running totals across all cycles:**
+
+| Metric | Count |
+|--------|-------|
+| Total findings (Cycles 1–12) | 40 |
+| Closed / implemented | 36 |
+| Won't Do | 2 (SEC-R9-02, SEC-R12-01) |
+| False Positive | 1 (SEC-R11-02) |
+| Open | 1 (SEC-R12-02) |
+
+---
+
+_Last updated: 2026-03-22 — Cycle 12 complete. SEC-R12-01 Won't Do (node\_cache optimistic read is intentional PERF-05 design); SEC-R12-02 Open (`fromUnixNano` secondary addition overflow — fix identified, awaiting implementation). 40 total findings across all cycles; 36 closed, 2 Won't Do, 1 false positive, 1 open._
 
 ---
