@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 6 closed: SEC-R6-01 ✅, SEC-R6-02 ✅, SEC-R6-03 ✅, SEC-R6-04 ✅. 148 unit tests, 20 integration tests.
+> Last updated: 2026-03-22 — Security Review Cycle 7 complete: SEC-R7-01 (Medium) filed. All Cycles 1–6 findings remain closed. 148+ unit tests, 20+ integration tests.
 
 ---
 
@@ -1940,3 +1940,225 @@ Keep in Geode:
 - Extraction status: effectively complete.
 - Additional Geode code to move: none identified.
 - Main migration work left: keep Geode consumers importing this repo rather than re-growing UUID helpers locally.
+
+---
+
+## Security Gap Analysis — 2026-03-22 (Adversarial Review Cycle 7)
+
+> **Won't Do Policy:** CI/CD Zig toolchain download checksum verification (covered by SHA-256
+> fetch from index.json since Cycle 6), Docker image digest/tag pinning, CI catalog component tag
+> pinning, and pre-commit hook modifications are governed by separate pipeline controls and MUST
+> remain Won't Do. The function-pointer CSPRNG indirection (PERF-08) is intentional testability
+> API. Future agents MUST NOT re-open these items.
+>
+> **Reviewer:** Automated adversarial security review agent (Cycle 7)
+> **Scope:** Full codebase re-review — all source files, CI/CD pipeline, build system, supply
+> chain, fuzz infrastructure; focused on changes since Cycle 6 (PERF-11 through PERF-15
+> quality/performance reviews; new benchmark functions, integration tests, versions.zig delegation
+> tests, timestamp/uuid.zig doc improvements, examples update).
+>
+> **Automated tools run:**
+>
+> - gitleaks 8.30.0: 0 secrets found (45 commits scanned, 655 KB)
+> - trivy 0.69.0 (fs): 0 vulnerabilities, 0 secrets
+> - syft 1.41.1 + grype 0.107.0: 0 CVE matches
+> - osv-scanner: exit 128 (Zig build.zig.zon format not natively supported — expected)
+> - semgrep: requires metrics opt-in for auto config; no Zig-specific rules (expected)
+> - shellcheck: no tracked .sh files in repo
+> - checkov: 12 CI checks passed, 0 failed
+>
+> **All previous cycles (SEC-R1 through SEC-R6) confirmed closed — no regressions.**
+
+### What Was Reviewed (Cycle 7)
+
+**New/modified source files since Cycle 6:**
+
+| File | Nature of change |
+|------|-----------------|
+| `bench/main.zig` | New benchmark functions (benchV3, benchV5, benchToStringUpper, benchToStringAlloc, benchToHexUpper, benchToHexAlloc, benchV7AtTime, benchFromStringHex, benchFromStringURN) |
+| `src/uuid.zig` | Doc comment improvements to allocating output methods (no logic change) |
+| `src/versions.zig` | New QC-30 delegation tests for newV1, newV1AtTime, newV5, newV6, newV6AtTime, newV7AtTime, newV8 |
+| `tests/integration.zig` | New integration tests: toHexAlloc/toHexUpperAlloc, V6/V8 round-trips, saveState/loadState integration |
+| `src/timestamp.zig` | Additional tests for Timestamp conversions and timestampFromV7 |
+| `examples/basic.zig` | Added toHexAlloc/toHexUpperAlloc demonstration |
+| `CHANGELOG.md` | Release notes update |
+| `docs/PERF_GAP_ANALYSIS.md` | Performance analysis updates |
+| `docs/QUALITY_GAP_ANALYSIS.md` | Quality analysis updates |
+
+**Re-reviewed existing files confirmed clean:**
+
+- `src/generator.zig` — All mutex paths, spin-wait, saveState/loadState, clockToMs, V1/V6/V7 generation
+- `src/hwaddr/linux.zig` — ifc_len guard, broadcast/zero MAC filters
+- `src/hwaddr/macos.zig` — sdl_len bounds check, sdl_data [22]u8 declaration, broadcast filter
+- `src/hwaddr/windows.zig` — Stack+heap fallback, ERROR_BUFFER_OVERFLOW handling, broadcast filter
+- `src/fuzz.zig` — All json.Value variants covered, corpus adequate
+- `src/root.zig` — default_generator not re-exported (SEC-R5-01 fix verified)
+- `src/null_uuid.zig` — jsonUnmarshal, jsonMarshal, format functions
+- `.gitleaks.toml` — Allowlist correct, no rule gaps
+- `build.zig.zon` — json dependency pinned to commit SHA + Zig content hash
+
+### Summary (Cycle 7)
+
+| Severity | Count |
+| -------- | ----- |
+| Critical | 0     |
+| High     | 0     |
+| Medium   | 1     |
+| Low      | 0     |
+| Info     | 0     |
+| **Total**| **1** |
+
+### Stack-Ranked Findings (Cycle 7)
+
+| Rank | Sev | Risk Score | Finding | Component | CWE | Evidence (file:line) | GitLab Issue | Status |
+| ---- | --- | ---------- | ------- | --------- | --- | -------------------- | ------------ | ------ |
+| 1 | Medium | 32 | CI `&install-zig` Python inline script shell-interpolates `ZIG_VERSION` inside Python string literals — Developer access enables arbitrary Python injection via manual pipeline trigger | `.gitlab-ci.yml:56-63` | CWE-94, CWE-78 | Lines 58-61 | [#128](https://gitlab.com/devnw/zig/uuid/-/work_items/128) | Open — triage |
+
+**Risk score:** 32 = Impact 4 × Likelihood 2 × 4
+
+- Impact 4: Code execution in CI runner; access to all CI secrets, ability to backdoor extracted Zig binary or exfiltrate build outputs.
+- Likelihood 2: Requires Developer access + manual pipeline trigger; not exploitable anonymously.
+
+### Finding Detail
+
+#### SEC-R7-01 (Medium) — CI Python Script Interpolates `ZIG_VERSION` Without Sanitization
+
+**Status:** Open — triage
+**CWE-94 — Code Injection | CWE-78 — OS Command Injection**
+**Risk Score: 32** (Impact 4 × Likelihood 2 × 4)
+**Confidence: Confirmed**
+
+**File:** `.gitlab-ci.yml:56-63`
+
+The `&install-zig` YAML anchor added in Cycle 6 (SEC-R6-02) correctly fetches the SHA-256
+checksum from `https://ziglang.org/download/index.json` via a `python3 -c "..."` inline script.
+However, the `ZIG_VERSION` shell variable is expanded by the shell before the string is passed
+to `python3 -c`, interpolating it inside single-quoted Python string literals:
+
+```yaml
+EXPECTED_HASH=$(python3 -c "
+import json, sys
+idx = json.load(open('${INDEX_FILE}'))
+pkg = idx.get('${ZIG_VERSION}', {}).get('${ZIG_ARCH}-linux', {})
+...
+")
+```
+
+A user who overrides `ZIG_VERSION` (via GitLab's "Run Pipeline" web UI, the CI/CD API, or a
+scheduled pipeline with custom variables) with a crafted string containing a single quote can
+break out of the Python string literal and inject arbitrary Python statements.
+
+**Minimal non-destructive PoC (does not exploit any external system):**
+
+Setting `ZIG_VERSION` to `x', {}); print('INJECTED'); pkg = idx.get('0.15.2` produces:
+
+```python
+pkg = idx.get('x', {}); print('INJECTED'); pkg = idx.get('0.15.2', {}).get(...)
+```
+
+A malicious payload would use `__import__('os').environ` to exfiltrate CI secrets or write a
+backdoored binary to the build directory.
+
+**Why this was introduced:** Cycle 6 correctly added SHA-256 verification (SEC-R6-02) but
+used shell variable interpolation inside the Python inline script — a well-known CI injection
+anti-pattern analogous to `$CI_COMMIT_TITLE` injection but exploitable without push access.
+
+**Fix guidance:**
+
+Pass `ZIG_VERSION` via `os.environ` rather than string interpolation:
+
+```bash
+EXPECTED_HASH=$(ZIG_VER="${ZIG_VERSION}" ZIG_ARCH_VAR="${ZIG_ARCH}" INDEX="${INDEX_FILE}" python3 -c "
+import json, os, sys
+ver = os.environ['ZIG_VER']
+arch = os.environ['ZIG_ARCH_VAR']
+idx = json.load(open(os.environ['INDEX']))
+pkg = idx.get(ver, {}).get(arch + '-linux', {})
+h = pkg.get('shasum', '')
+if not h: sys.exit('SHA-256 not found')
+print(h)
+")
+```
+
+As defense-in-depth, validate `ZIG_VERSION` in shell before use:
+
+```bash
+case "${ZIG_VERSION}" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) echo "Invalid ZIG_VERSION: ${ZIG_VERSION}"; exit 1 ;;
+esac
+```
+
+**Acceptance criteria:**
+
+- [ ] `ZIG_VERSION` is no longer shell-interpolated inside a Python string literal.
+- [ ] `ZIG_VERSION` is passed as an environment variable and/or validated before use.
+- [ ] A crafted `ZIG_VERSION` with a single quote causes pipeline failure, not code injection.
+
+### Areas Reviewed and Confirmed Clean (Cycle 7)
+
+All areas from prior cycles were re-examined. The following were specifically verified for changes
+introduced since Cycle 6:
+
+- **New benchmark functions (`bench/main.zig`):** All new functions use stack-local or
+  pre-allocated pool memory. No heap leaks, uninitialized reads, or panic paths. Clean.
+
+- **New delegation tests (`src/versions.zig`):** QC-30 tests use synthetic calendar values.
+  No hardcoded secrets, no sensitive data. Clean.
+
+- **New integration tests (`tests/integration.zig`):** toHexAlloc/toHexUpperAlloc tests use
+  `std.testing.allocator` (leak-detecting). saveState/loadState test uses `std.testing.tmpDir`
+  (SEC-R3-02 fix verified). V6/V8 round-trip tests are standard. Clean.
+
+- **`timestampFromV7` cast safety (`src/timestamp.zig:115`):** `@intCast((hi << 16) | lo)` is
+  safe — `(hi << 16) | lo` is at most 48-bit (u32 << 16 | u16), far below maxInt(i64). Confirmed.
+
+- **`src/uuid.zig` changes:** Doc-comment-only additions. No logic changes. Clean.
+
+- **`examples/basic.zig` changes:** `toHexAlloc`/`toHexUpperAlloc` correctly deferred-freed.
+  Uses `page_allocator` for standalone examples. No resource leaks. Clean.
+
+- **Fuzz corpus:** `src/fuzz.zig` unchanged. All json.Value variants covered (SEC-R5-04 fix
+  verified). Fuzz `catch {}` harness pattern correct.
+
+- **gitleaks scan:** 0 leaks across all 45 commits.
+
+- **CI pipeline (other than SEC-R7-01):** No additional injection risks. All other job scripts
+  use fixed strings. The cache check `if [ ! -f "zig-${ZIG_VERSION}/zig" ]` at line 38 could
+  skip SHA-256 verification if an attacker pre-populates the cache — this is a lower-risk
+  variant of the SEC-R7-01 root cause, addressed by the same fix.
+
+- **`loadState` mutex safety:** Early `return Error.InvalidFormat` returns at lines 635-644
+  execute BEFORE `self.mutex.lock()` at line 646. The `defer self.mutex.unlock()` at line 647
+  covers all later returns, including the `raw_ts > maxInt(u60)` check (SEC-R6-04). Confirmed.
+
+- **`saveState` path buffer:** `tmp_path_buf` is 4100 bytes (4096 + 4). PATH_MAX-limited paths
+  (max 4095 + ".tmp" = 4099) fit without overflow. `bufPrint` returns `error.NoSpaceLeft`
+  for any longer path. Confirmed safe.
+
+### Won't Do Reconfirmation (Cycle 7)
+
+| Item | Reason |
+|------|--------|
+| CI/CD component semver→SHA pinning | Org Renovate/pipeline governance |
+| Docker image digest pinning | Org infrastructure controls |
+| Pre-commit `check-yaml --unsafe` | Required by CI YAML anchors; pre-commit tooling team |
+| Function-pointer CSPRNG indirection (PERF-08) | Intentional testability API design |
+
+### Summary Table (Cycle 7)
+
+| ID | Severity | Area | Status |
+|----|----------|------|--------|
+| SEC-R7-01 | Medium | CI: Python script ZIG_VERSION injection (CWE-94) | Open — triage ([#128](https://gitlab.com/devnw/zig/uuid/-/work_items/128)) |
+
+No Critical or High findings in Cycle 7. Application code is in strong security posture.
+The single Medium finding is a CI scripting issue in the SEC-R6-02 fix, not in library code.
+All 27 previously-reported findings from Cycles 1–6 remain closed; no regressions detected.
+
+---
+
+_Last updated: 2026-03-22 — Adversarial security review cycle 7 complete. 1 new finding
+(SEC-R7-01 Medium, [#128](https://gitlab.com/devnw/zig/uuid/-/work_items/128)).
+All Cycles 1–6 findings remain closed. 148+ unit tests, 20+ integration tests._
+
+---

@@ -205,3 +205,52 @@ Two new findings identified not covered by Cycles 1 or 2:
 - **V7 @intCast overflow (292 million year AD):** `@intCast(i128 -> i64)` after dividing nanoseconds by 1_000_000 would only overflow at astronomical timestamps. Not a practical risk.
 - **`loadState` negative-timestamp @intCast:** Same analysis — overflow only at year −292 million. Not a practical risk.
 - **Empty truncation-detection block in linux.zig:** Intentional — code continues searching returned interfaces and falls back gracefully. Not dead code in the semantic sense.
+
+---
+
+## Adversarial Review Cycle 7 — 2026-03-22
+
+### Automated Scan Results (Cycle 7)
+
+| Tool | Version | Exit | Findings |
+| ---- | ------- | ---- | -------- |
+| gitleaks | 8.30.0 | 0 (clean) | 0 secrets (45 commits, 655 KB) |
+| trufflehog | 3.92.5 | N/A | Not run (self-update error in prior cycles; gitleaks covers gap) |
+| syft | 1.41.1 | 0 | SBOM generated |
+| grype | 0.107.0 | 0 | 0 CVEs |
+| osv-scanner | 2.3.2 | 128 | No Zig package sources found (expected) |
+| trivy fs | 0.69.0 | 0 | 0 vulnerabilities, 0 secrets |
+| semgrep | 1.150.0 | N/A | Requires metrics opt-in for auto config; no Zig rules (expected) |
+| shellcheck | 0.9.0 | 0 | No tracked .sh files |
+| checkov | 3.2.499 | 0 | 12 passed, 0 failed |
+
+### New Files Reviewed (Cycle 7)
+
+No new source files added. Reviewed substantially modified/added test and benchmark files:
+
+- `bench/main.zig` — 9 new benchmark functions
+- `src/versions.zig` — 7 new QC-30 delegation tests
+- `tests/integration.zig` — 5 new integration tests (toHexAlloc, V6/V8 round-trips, saveState)
+- `src/timestamp.zig` — additional Timestamp conversion tests
+- `examples/basic.zig` — toHexAlloc/toHexUpperAlloc demonstration
+
+### New Findings (Cycle 7)
+
+One new finding identified:
+
+1. **SEC-R7-01** (Medium, CWE-94): CI `&install-zig` YAML anchor uses `python3 -c "..."` with
+   `ZIG_VERSION` shell-interpolated inside Python string literals. A user with Developer access
+   who triggers a pipeline manually (web UI, API, or scheduled pipeline with variable override)
+   can inject arbitrary Python code into the CI runner context.
+   GitLab: [#128](https://gitlab.com/devnw/zig/uuid/-/work_items/128)
+
+### False Positive Notes (Cycle 7)
+
+- **`timestampFromV7` `@intCast` (line 115):** `@intCast((hi << 16) | lo)` is safe; the
+  value is at most 48-bit (far below maxInt(i64)). Not a vulnerability.
+- **`saveState` path buffer:** 4100-byte `tmp_path_buf` is exactly sufficient for
+  PATH_MAX-length paths (4095 + ".tmp" = 4099 < 4100). Not a vulnerability.
+- **`fetchRawNode` TOCTOU:** The pre-fetch/cache race documented as PERF-05 is intentional
+  and safe. Not a vulnerability.
+- **`loadState` mutex early returns:** All `return Error.InvalidFormat` at lines 635-644
+  execute before the mutex is acquired at line 646. No deadlock risk.
