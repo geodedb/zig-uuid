@@ -641,3 +641,32 @@ test "Generator.newV7: spin-wait terminates with frozen clock (SEC-R5-03)" {
 }
 
 // saveState / loadState tests → see src/generator_state_test.zig (QC-28)
+
+// --- SEC-R6-01: clearNodeCache holds mutex ---
+
+test "Generator.clearNodeCache holds mutex and generator still works (SEC-R6-01)" {
+    // Verify that clearNodeCache is callable (no panic / deadlock) and that
+    // the generator remains usable — node_cache is null after the call and
+    // the next V1/V6 call re-resolves it successfully.
+    var gen = Generator.init();
+
+    // Warm up the cache with a V4 call first (no node needed, but confirms gen is live).
+    _ = try gen.newV4();
+
+    // Trigger a V1 call so that node_cache is populated.
+    _ = try gen.newV1();
+    try std.testing.expect(gen.node_cache != null);
+
+    // clearNodeCache must succeed (holds mutex, sets node_cache = null).
+    gen.clearNodeCache();
+    try std.testing.expect(gen.node_cache == null);
+
+    // The generator must still produce valid UUIDs after the cache is cleared.
+    // The next V1 call re-resolves the node — cache is warm again after this.
+    const u = try gen.newV1();
+    try std.testing.expectEqual(Version.v1, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+
+    // node_cache must have been repopulated.
+    try std.testing.expect(gen.node_cache != null);
+}

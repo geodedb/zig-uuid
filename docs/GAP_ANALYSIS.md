@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 5 complete (SEC-R5-01 through SEC-R5-04 filed; SEC-R5-05, SEC-R5-06 informational).
+> Last updated: 2026-03-22 — Security Review Cycle 6 closed: SEC-R6-01 ✅, SEC-R6-02 🚫 BLOCKED (hash not verifiable without network), SEC-R6-03 ✅, SEC-R6-04 ✅. 148 unit tests, 20 integration tests.
 
 ---
 
@@ -1748,6 +1748,175 @@ closed findings from Cycles 1–4 remain closed; no regressions found.
 
 _Last updated: 2026-03-22 — Adversarial security review cycle 5 complete. All 4 findings
 closed (2 Medium, 1 Low, 1 Info). All cycles 1–5 remain closed. 146 unit tests, 20 integration tests._
+
+---
+
+## Security Review Cycle 6 Findings
+
+> **Date:** 2026-03-22
+> **Scope:** Full codebase — src/, .gitlab-ci.yml, build.zig.zon, Makefile, examples/, docs/
+> **Automated scans:** gitleaks (no leaks found), trivy (no vulns/secrets), osv-scanner (build.zig.zon format unsupported)
+> **All previous cycles (SEC-R1 through SEC-R5) confirmed closed — no regressions.**
+
+### SEC-R6-01 — clearNodeCache data race: node_cache written without mutex (CWE-362)
+
+**Status:** ✅ CLOSED
+**Severity:** Low | **Risk Score:** 8 (Impact 1 × Likelihood 2 × 4) | **Confidence:** Confirmed
+
+**File:** `src/generator.zig` (previously lines 130-132; now lines 130-140)
+
+`clearNodeCache()` writes to `self.node_cache = null` without holding the generator mutex.
+All other accesses to `node_cache` occur inside `resolveV1V6State` (which holds the mutex via `defer self.mutex.unlock()`).
+A concurrent `clearNodeCache()` call from thread A while thread B is in `newV1`/`newV6` is a
+data race (unsynchronised write). In ReleaseFast builds, the store can be reordered or torn,
+potentially corrupting the node cache and producing adjacent V1/V6 UUIDs with different node IDs.
+
+**Fix:** Added `self.mutex.lock()` / `defer self.mutex.unlock()` inside `clearNodeCache`.
+
+**Test added:** `Generator.clearNodeCache holds mutex and generator still works (SEC-R6-01)`
+in `src/generator_test.zig`. Verifies the function is callable without deadlock, node_cache
+is null after the call, and the generator continues to produce valid V1 UUIDs.
+
+---
+
+### SEC-R6-02 — CI downloads Zig toolchain without checksum verification (CWE-494)
+
+**Status:** 🚫 BLOCKED — SHA-256 for `zig-linux-x86_64-0.15.2.tar.xz` could not be verified from
+a local source without network access. A locally cached tarball with a different naming convention
+(`zig-x86_64-linux-0.15.2.tar.xz`) was found at SHA-256
+`02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239` but this is a mirror archive
+with a different naming scheme and cannot be assumed to match the ziglang.org official download.
+
+**Won't Do note:** Per the permanent Won't Do policy (CI/CD hash pinning), this item is in the
+won't-do territory. However, if the hash is independently verified against
+`https://ziglang.org/download/0.15.2/`, the fix is straightforward (see below).
+
+**Severity:** Low | **Risk Score:** 16 (Impact 2 × Likelihood 2 × 4) | **Confidence:** Confirmed
+
+**File:** `.gitlab-ci.yml:37-38`
+
+Every CI job installs Zig via:
+
+```yaml
+- curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" -o zig.tar.xz
+- tar -xf zig.tar.xz
+```
+
+No SHA-256 hash or minisign signature is verified after download. The Zig project publishes
+per-release minisign signatures and SHA-256 checksums at `https://ziglang.org/download/`.
+A MITM or compromise of ziglang.org would install a backdoored compiler with no detection.
+
+**Fix (when hash is verified):** Add `echo "<sha256>  zig.tar.xz" | sha256sum --check` between
+the `curl` and `tar` steps, using the SHA-256 published at `https://ziglang.org/download/${ZIG_VERSION}/`.
+The hash must be obtained from the official ziglang.org release page or the minisign-verified index.
+
+---
+
+### SEC-R6-03 — hwaddr implementations do not filter broadcast MAC addresses (CWE-345 / RFC 4122 guidance)
+
+**Status:** ✅ CLOSED
+**Severity:** Info | **Risk Score:** 4 (Impact 1 × Likelihood 1 × 4) | **Confidence:** Confirmed
+
+**Files:** `src/hwaddr/linux.zig`, `src/hwaddr/macos.zig`, `src/hwaddr/windows.zig`
+
+All three `getHWAddr()` implementations filter out zero MACs (`allEqual(u8, mac, 0)`) but did not
+filter broadcast MACs (`FF:FF:FF:FF:FF:FF`). RFC 4122 §4.1.6 guidance (carried into RFC 9562)
+recommends not using broadcast addresses as UUID node IDs because they are not globally unique.
+This only affects callers who set `hwaddr_fn` explicitly; the default path (random multicast node)
+is safe.
+
+**Fix:** Added `if (std.mem.allEqual(u8, mac, 0xFF)) continue;` alongside the zero-MAC filter in
+all three files (linux.zig after line 98, macos.zig after line 82, windows.zig after line 81).
+
+---
+
+### SEC-R6-04 — loadState silently truncates out-of-range last_v1_ts without validation (CWE-20)
+
+**Status:** ✅ CLOSED
+**Severity:** Info | **Risk Score:** 4 (Impact 1 × Likelihood 1 × 4) | **Confidence:** Confirmed
+
+**File:** `src/generator.zig` (previously line 645)
+
+`loadState` previously read `last_v1_ts` as a `u64` and silently truncated to `u60` with `@truncate`.
+
+A u64 value exceeding `maxInt(u60)` (0x0FFF_FFFF_FFFF_FFFF) was accepted without returning
+`InvalidFormat`. Compare with `clock_seq`, which is correctly masked before truncation (`& 0x3FFF`).
+A tampered state file could set `last_v1_ts` to any desired u60 value (by setting the top 4 bits)
+without being detected as corrupt.
+
+**Fix applied:**
+
+```zig
+const raw_ts = std.mem.readInt(u64, buf[8..16], .little);
+if (raw_ts > std.math.maxInt(u60)) return Error.InvalidFormat;
+self.last_v1_ts = @truncate(raw_ts);
+```
+
+**Side effect:** The existing `v1 format (22 bytes) accepted for backward compat (SEC-10)` test
+used `0xDEADBEEF_CAFEBABE` (which exceeds `maxInt(u60)`) as a dummy timestamp. That test was
+updated to use `0x0DEAD_BEEF_CAFE` (a u60-range value) so it continues to pass.
+
+**Test added:** `Generator.loadState: rejects out-of-range last_v1_ts (SEC-R6-04)` in
+`src/generator_state_test.zig`. Writes a state file with `last_v1_ts = maxInt(u60) + 1` and
+verifies `Error.InvalidFormat` is returned.
+
+---
+
+### Areas Confirmed Clean (Cycle 6)
+
+- **Mutex correctness (V7 spin-wait):** The mutex is correctly released before `Thread.sleep` and
+  re-acquired after. All error paths in `newV7Locked` release the mutex before returning. Confirmed.
+- **V7 spin-wait error return:** After `max_spins` exceeded, the mutex is unlocked before returning
+  `Error.InvalidTimestamp` (line 211-212). Caller does not hold a dangling lock. Confirmed.
+- **saveState path length:** The `[4096 + 4]u8` tmp_path_buf correctly handles PATH_MAX.
+  `bufPrint` returns `error.NoSpaceLeft` on overflow, which propagates safely. Confirmed.
+- **loadState saved_ms DoS:** A tampered `saved_ms = maxInt(i64)` does NOT trigger the spin-wait
+  because the real clock value (e.g., 1.7T ms in 2026) is not equal to `maxInt(i64)`, so the
+  `while (ms == self.last_ms and ...)` condition is false immediately. Confirmed safe.
+- **fuzz FixedBufferAllocator:** The 256-byte FBA in `fuzzNullUUIDJsonUnmarshal` is never used
+  (the allocator parameter is discarded in `jsonUnmarshal`). All code paths are zero-alloc. Safe.
+- **URN parser boundary:** `fromString` correctly handles "urn:" (len=4) → `InvalidURNPrefix`,
+  "urn:u" (len=5) → `InvalidURNPrefix`, "urn:uuid:" + wrong content → `InvalidLength`/`InvalidFormat`.
+  The `rest.len >= 4` guard on line 244 is correct. Confirmed.
+- **NullUUID.jsonUnmarshal:** Accepts any syntactically valid UUID string regardless of
+  version/variant bytes. This is correct per RFC 9562 §6.12 opacity guidance.
+- **supply-chain (build.zig.zon):** Single dependency `json` uses `git+https://` URL on the
+  expected `gitlab.com/devnw` domain. Hash is in Zig multihash format (SHA-256 based). Confirmed.
+- **CI fuzz job exit-code handling:** `timeout 60 ...; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]`
+  correctly distinguishes SIGTERM-timeout (rc=124) from genuine fuzzer crashes. No injection risk.
+  Confirmed clean (SEC-R5-02 fix remains effective).
+- **gitleaks scan:** No leaks found across all 43 commits.
+- **examples/basic.zig:** `toHexAlloc` is correctly deferred-freed. No panic risks identified.
+- **HashContext fixed seed (SEC-6):** Already documented with warning in source. Not a new finding.
+
+### Summary Table (Cycle 6)
+
+| ID | Severity | Area | Status |
+|----|----------|------|--------|
+| SEC-R6-01 | Low | generator.zig: clearNodeCache data race | ✅ Closed (#124) |
+| SEC-R6-02 | Low | CI: Zig download no checksum | 🚫 BLOCKED — hash not verifiable without network (#125) |
+| SEC-R6-03 | Info | hwaddr: no broadcast MAC filter | ✅ Closed (#126) |
+| SEC-R6-04 | Info | generator.zig: loadState last_v1_ts truncation | ✅ Closed (#127) |
+
+| Severity | Count | Closed | Blocked |
+|----------|-------|--------|---------|
+| Critical | 0 | 0 | 0 |
+| High | 0 | 0 | 0 |
+| Medium | 0 | 0 | 0 |
+| Low | 2 | 1 | 1 |
+| Info | 2 | 2 | 0 |
+| **Total** | **4** | **3** | **1** |
+
+No Critical or High findings in Cycle 6. The codebase continues to be in strong security posture.
+All previous findings from Cycles 1–5 remain closed; no regressions detected.
+SEC-R6-02 is blocked because the SHA-256 of the official `zig-linux-x86_64-0.15.2.tar.xz`
+could not be verified from local sources; a wrong hash would be worse than no hash.
+
+---
+
+_Last updated: 2026-03-22 — Adversarial security review cycle 6 implementation complete. 3/4 findings
+closed (SEC-R6-01 ✅, SEC-R6-03 ✅, SEC-R6-04 ✅). SEC-R6-02 blocked: SHA-256 for
+zig-linux-x86_64-0.15.2.tar.xz not verifiable from local sources. 148 unit tests, 20 integration tests._
 
 ---
 

@@ -79,6 +79,8 @@ fn findMacInAdapters(head: *IP_ADAPTER_ADDRESSES) Error![6]u8 {
         if (mac_len != 6) continue;
         const mac = adapter.PhysicalAddress[0..6];
         if (std.mem.allEqual(u8, mac, 0)) continue;
+        // SEC-R6-03: Skip broadcast MAC (FF:FF:FF:FF:FF:FF) per RFC 4122 §4.1.6.
+        if (std.mem.allEqual(u8, mac, 0xFF)) continue;
         var result: [6]u8 = undefined;
         @memcpy(&result, mac);
         return result;

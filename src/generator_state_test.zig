@@ -148,7 +148,9 @@ test "Generator.loadState: v1 format (22 bytes) accepted for backward compat (SE
     blob[4] = Generator.state_format_version_v1; // version 1
     blob[5] = 0x01; // flags: clock_seq_initialized
     std.mem.writeInt(u16, blob[6..8], 0x0ABC, .little);
-    std.mem.writeInt(u64, blob[8..16], 0xDEADBEEF_CAFEBABE, .little);
+    // SEC-R6-04: last_v1_ts must be within u60 range (max 0x0FFF_FFFF_FFFF_FFFF).
+    // Use 0x0DEADBEEFCAFE (a recognisable value that fits in u60).
+    std.mem.writeInt(u64, blob[8..16], 0x0DEAD_BEEF_CAFE, .little);
     @memset(blob[16..22], 0); // no node cache
 
     const f = try std.fs.createFileAbsolute(path, .{});
@@ -286,6 +288,40 @@ test "Generator.loadState: fast-restart branch uses injectable clock (QC-29)" {
     // Clock advanced past saved_ms → clean reset: last_ms=0, mono_seq=0.
     try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
     try std.testing.expectEqual(@as(u12, 0), gen.mono_seq);
+}
+
+// --- SEC-R6-04: loadState rejects out-of-range last_v1_ts ---
+
+test "Generator.loadState: rejects out-of-range last_v1_ts (SEC-R6-04)" {
+    // A u64 last_v1_ts value above maxInt(u60) = 0x0FFF_FFFF_FFFF_FFFF must
+    // cause loadState to return Error.InvalidFormat rather than silently
+    // truncating to a valid-looking timestamp.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // Build a syntactically valid v2 blob (32 bytes) with an out-of-range
+    // last_v1_ts: maxInt(u60) + 1 = 0x1000_0000_0000_0000.
+    const out_of_range_ts: u64 = @as(u64, std.math.maxInt(u60)) + 1;
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version;
+    blob[5] = 0x01; // clock_seq_initialized
+    std.mem.writeInt(u16, blob[6..8], 0x0042, .little);
+    std.mem.writeInt(u64, blob[8..16], out_of_range_ts, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], 0, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const f = try std.fs.createFileAbsolute(path, .{});
+    try f.writeAll(&blob);
+    f.close();
+
+    var gen = Generator.init();
+    try std.testing.expectError(Error.InvalidFormat, gen.loadState(path));
 }
 
 test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {

@@ -127,7 +127,14 @@ pub const Generator = struct {
 
     /// Force the next V1/V6 generation to re-fetch the node ID (F-6/G-6).
     /// If the node ID changes after a re-fetch, clock_seq is incremented (F-4).
+    ///
+    /// SEC-R6-01: Acquires the mutex before writing node_cache so that the
+    /// write is not concurrent with resolveV1V6State (which also reads and
+    /// writes node_cache under the same mutex).  Without this lock, a race
+    /// exists between clearNodeCache and any in-flight V1/V6 generation.
     pub fn clearNodeCache(self: *Generator) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         self.node_cache = null;
     }
 
@@ -642,7 +649,13 @@ pub const Generator = struct {
         const flags = buf[5];
         self.clock_seq = @truncate(std.mem.readInt(u16, buf[6..8], .little) & 0x3FFF);
         self.clock_seq_initialized = (flags & 0x01) != 0;
-        self.last_v1_ts = @truncate(std.mem.readInt(u64, buf[8..16], .little));
+        // SEC-R6-04: Reject out-of-range last_v1_ts rather than truncating
+        // silently.  A u64 value above maxInt(u60) indicates a corrupt or
+        // tampered state file; return InvalidFormat instead of truncating to
+        // a valid-looking timestamp.
+        const raw_ts = std.mem.readInt(u64, buf[8..16], .little);
+        if (raw_ts > std.math.maxInt(u60)) return Error.InvalidFormat;
+        self.last_v1_ts = @truncate(raw_ts);
         if ((flags & 0x02) != 0) {
             self.node_cache = buf[16..22][0..6].*;
         } else {
