@@ -1,7 +1,7 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-03-22 (Cycle 12 — 16 new findings, all open)
+> **Last updated:** 2026-03-22 (Cycle 12 — 16 new findings, all closed)
 > **Zig version audited:** 0.15.2
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
 > **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80)
@@ -2197,7 +2197,7 @@ The doc comment for `newV7AtTime` lists only `InvalidTimestamp` but the full err
 
 ##### QC-90 — root.zig doc comment instructs callers to @import("generator.zig") — impossible for external consumers (Medium, Score 36)
 
-**Status: 🔲 Open** — [#176](https://gitlab.com/devnw/zig/uuid/-/work_items/176)
+**Status: ✅ Closed — Implemented.** Fixed root.zig doc: removed internal @import("generator.zig") reference. — [#176](https://gitlab.com/devnw/zig/uuid/-/work_items/176)
 
 **File:** `src/root.zig:67`
 
@@ -2211,7 +2211,7 @@ The module doc references `@import("generator.zig")` — a path only valid withi
 
 ##### QC-91 — examples/basic.zig uses {any} for NullUUID instead of {f} (Low, Score 16)
 
-**Status: 🔲 Open** — [#177](https://gitlab.com/devnw/zig/uuid/-/work_items/177)
+**Status: ✅ Closed — Implemented.** Fixed examples/basic.zig: {any} to {f} for NullUUID. — [#177](https://gitlab.com/devnw/zig/uuid/-/work_items/177)
 
 **File:** `examples/basic.zig:104–105`
 
@@ -2223,7 +2223,7 @@ The module doc references `@import("generator.zig")` — a path only valid withi
 
 ##### QC-92 — README "See docs/ for detailed documentation" links to internal review notes (Low, Score 12)
 
-**Status: 🔲 Open** — [#178](https://gitlab.com/devnw/zig/uuid/-/work_items/178)
+**Status: ✅ Closed — Implemented.** Fixed README: replaced misleading "See docs/" with accurate description. — [#178](https://gitlab.com/devnw/zig/uuid/-/work_items/178)
 
 **File:** `README.md:180`
 
@@ -2239,7 +2239,7 @@ The module doc references `@import("generator.zig")` — a path only valid withi
 
 ##### QC-81 — newV8 returns Error!UUID but function body can never fail (Low, Score 20)
 
-**Status: 🔲 Open** — [#168](https://gitlab.com/devnw/zig/uuid/-/work_items/168)
+**Status: ✅ Closed — Implemented.** Changed newV8 return type from Error!UUID to UUID. — [#168](https://gitlab.com/devnw/zig/uuid/-/work_items/168)
 
 **File:** `src/versions.zig:63`
 
@@ -2260,7 +2260,7 @@ The body contains no `try`, no `return error.*`, and no fallible calls. Callers 
 
 ##### QC-82 — Double export of nil/max via uuid.nil and uuid.UUID.nil (Low, Score 16)
 
-**Status: 🔲 Open** — [#169](https://gitlab.com/devnw/zig/uuid/-/work_items/169)
+**Status: ✅ Closed — Implemented.** Documented both access paths in README. — [#169](https://gitlab.com/devnw/zig/uuid/-/work_items/169)
 
 **File:** `src/root.zig:42–43`
 
@@ -2274,7 +2274,7 @@ Two canonical access paths for the same constants. README documents `UUID.nil` w
 
 ##### QC-85 — No test exercises newV8 error-never path (Low, Score 16)
 
-**Status: 🔲 Open** — [#172](https://gitlab.com/devnw/zig/uuid/-/work_items/172)
+**Status: ✅ Closed — Implemented.** Added newV8 boundary tests with all-zero and all-one inputs. — [#172](https://gitlab.com/devnw/zig/uuid/-/work_items/172)
 
 **File:** `src/generator.zig:494`
 
@@ -2288,7 +2288,7 @@ No test documents or asserts the infallible nature of `newV8`. Without a baselin
 
 ##### QC-88 — No test verifying Generator.newV1/newV6 do NOT use injected clock (Info, Score 8)
 
-**Status: 🔲 Open** — [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175)
+**Status: ✅ Closed — Implemented.** Added test verifying V1/V6 ignore injected clock. — [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175)
 
 **File:** `src/generator_test.zig`
 
@@ -2328,4 +2328,4 @@ The boundary between injected-clock (`withClock`) and system-clock code paths fo
 
 ---
 
-_Last updated: 2026-03-22 — Cycle 12 complete (issue creation). 16 new findings (QC-76–QC-92, QC-89 merged into QC-80): 1 High, 1 Medium, 12 Low, 2 Info. All 16 issues open. 91 total issues tracked (68 closed, 2 Won't Do, 5 closed QC-71–75, 16 open)._
+_Last updated: 2026-03-22 — Cycle 12 complete. 16 new findings (QC-76–QC-92, QC-89 merged into QC-80): 1 High, 1 Medium, 12 Low, 2 Info. All 16 closed. 91 total issues tracked (89 closed, 2 Won't Do, 0 open)._
