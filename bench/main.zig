@@ -68,25 +68,45 @@ fn benchV6() !void {
 }
 
 fn benchToString() !void {
+    // PERF-11: Pre-build a pool of distinct UUIDs so the compiler cannot
+    // hoist or constant-fold the toString call.  XOR one result byte into
+    // `sink` and conditionally print `sink` after the loop so the
+    // computation is observable and LLVM cannot DCE the loop body.
     var gen = uuid.Generator.init();
-    const u = try gen.newV4();
+    const pool_size = 256;
+    var pool: [pool_size]uuid.UUID = undefined;
+    for (&pool) |*u| u.* = try gen.newV4();
+
     var buf: [36]u8 = undefined;
+    var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        _ = u.toString(&buf);
+        const s = pool[i % pool_size].toString(&buf);
+        sink ^= s[0];
     }
     report("toString", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
 fn benchFromString() !void {
-    const s = "550e8400-e29b-41d4-a716-446655440000";
+    // PERF-11: Derive the input string at runtime from a freshly-generated
+    // UUID so the parser cannot be constant-folded away.  XOR a result byte
+    // into `sink` and conditionally print it to prevent DCE of the loop body.
+    var gen = uuid.Generator.init();
+    const u = try gen.newV4();
+    var str_buf: [36]u8 = undefined;
+    const s = u.toString(&str_buf);
+
+    var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        _ = try uuid.UUID.fromString(s);
+        const parsed = try uuid.UUID.fromString(s);
+        sink ^= parsed.bytes[0];
     }
     report("fromString", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 
 fn report(name: []const u8, start: i128) void {

@@ -83,6 +83,12 @@ pub fn build(b: *std.Build) void {
     const run_bench = b.addRunArtifact(bench_exe);
     bench_step.dependOn(&run_bench.step);
 
+    // Compile-only bench check (PERF-15): used by CI to verify bench/main.zig
+    // compiles without running the benchmarks (which would execute 6M iterations
+    // and discard results, wasting CI minutes).
+    const bench_check_step = b.step("bench-check", "Compile-only check for bench/main.zig (used in CI)");
+    bench_check_step.dependOn(&bench_exe.step);
+
     // Examples build step (QC-15: ensures examples compile and API drift is caught)
     const examples_step = b.step("examples", "Build examples");
     const example_exe = b.addExecutable(.{

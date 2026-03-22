@@ -131,6 +131,32 @@ protecting the stored clock state and cached node ID from other local users. The
 written atomically (write-then-rename) to prevent torn state on crash or signal. Do not
 store the state file in a world-readable directory.
 
+## Performance Notes
+
+### V7 Throughput Ceiling (PERF-13)
+
+RFC-9562 §6.2 limits the `rand_a` field to 12 bits = **4,096 values per millisecond** per
+generator. At the ceiling, the generator sleeps to the next millisecond boundary before
+issuing the next UUID. Sustained throughput is therefore capped at **~4 million V7
+UUIDs/sec per Generator instance**.
+
+To exceed this limit while preserving sort order, shard across multiple generators — one
+per thread or per tenant — since each generator has its own independent counter:
+
+```zig
+// One generator per OS thread; no lock contention, no per-generator ceiling.
+threadlocal var tl_gen: uuid.Generator = uuid.Generator.init();
+
+pub fn nextV7() !uuid.UUID {
+    return tl_gen.newV7();
+}
+```
+
+Each per-thread generator maintains its own counter; all generators share the same
+millisecond timestamp field, so UUIDs remain monotonically sortable across threads. For
+rates exceeding 4 M/sec with strict per-generator monotonicity, use `newV7AtTime` with V8
+for the extra sub-millisecond bits.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

@@ -1343,3 +1343,38 @@ The following were exhaustively re-examined with no new issues found:
 
 _Last updated: 2026-03-21 — Adversarial security review cycle 4 complete and all 3
 findings implemented. 132 tests pass (117 unit + 15 integration). All cycles 1–4 closed._
+
+## Geode Extraction Metadata
+
+This repository is already the correct home for the reusable UUID core extracted from Geode. The Geode review found no adjacent subsystem that should move with it.
+
+### Geode Boundary
+
+Move/own here:
+
+| Geode source | Why it belongs in `uuid` |
+|---|---|
+| `src/uuid.zig:5`, `:11`, `:38`, `:43`, `:73`, `:85`, `:96`, `:106`, `:134` | Pure UUIDv7 generation, parsing, formatting, ordering, timestamp extraction, and hashing |
+| `src/uuid.zig:141`, `:157`, `:172` | Core UUID correctness tests |
+
+Keep in Geode:
+
+| Geode source | Why it stays |
+|---|---|
+| `src/graph_registry.zig:24`, `:42`, `:78`, `:140` | Graph-registry persistence and CRC semantics are Geode-specific consumers of UUIDs |
+| `src/graph_store.zig:625`, `:695`, `:753`, `:2812`, `:2875`, `:4018` | Graph-file naming, handle identity binding, and file-swap validation are storage/runtime integration, not UUID-library behavior |
+
+### Geode Tests And Consumers
+
+| Geode reference | Purpose |
+|---|---|
+| `src/uuid.zig:141`, `:157`, `:172` | Direct unit coverage of UUID generation, string conversion, and ordering |
+| `src/graph_registry.zig:223`, `:271`, `:299`, `:322`, `:338`, `:360` | Confirms UUID integration in the graph registry |
+| `src/graph_store.zig:5065` | Confirms UUID identity binding in per-graph file validation |
+| `benchmarks/benchmark_extended_builtins_overhead.zig:9`, `:22`, `:26` | Performance reference for UUID builtin dispatch overhead |
+
+### Current Assessment
+
+- Extraction status: effectively complete.
+- Additional Geode code to move: none identified.
+- Main migration work left: keep Geode consumers importing this repo rather than re-growing UUID helpers locally.

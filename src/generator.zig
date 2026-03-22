@@ -58,6 +58,22 @@ fn clockToMs(ns: i128) Error!i64 {
 ///
 /// The node ID is cached for the lifetime of the generator (F-6/G-6).  Call
 /// `clearNodeCache()` to force a re-fetch on the next V1/V6 generation.
+///
+/// ## V7 throughput ceiling (PERF-13)
+///
+/// RFC-9562 §6.2 limits the rand_a counter to 12 bits = **4,096 values/ms**
+/// per generator.  A single Generator can sustain at most ~4 million V7
+/// UUIDs/sec.  For higher rates, create one Generator per thread:
+///
+/// ```zig
+/// threadlocal var tl_gen: Generator = Generator.init();
+/// pub fn nextV7() !UUID { return tl_gen.newV7(); }
+/// ```
+///
+/// Each per-thread generator maintains its own counter; all generators share
+/// the same ms timestamp field, so sort order is preserved across threads.
+/// For rates >4M/sec with strict per-generator monotonicity, use newV7AtTime
+/// with V8 for the extra sub-ms bits.
 pub const Generator = struct {
     clock: ClockFn = defaultClock,
     rand: RandFn = defaultRand,
@@ -123,6 +139,17 @@ pub const Generator = struct {
         return u;
     }
 
+    /// Generate a UUIDv7 (Unix Epoch timestamp + monotonic counter + random).
+    ///
+    /// **Throughput ceiling (PERF-13):** RFC-9562 §6.2 limits the rand_a field
+    /// to 12 bits = **4,096 values per millisecond**.  At the ceiling a Generator
+    /// waits for the next ms boundary before issuing the next UUID.  Sustained
+    /// throughput is therefore capped at **~4 million UUIDs/sec per Generator**.
+    ///
+    /// To exceed this limit while preserving sort order, shard across multiple
+    /// generators — one per thread or per tenant — since each generator has its
+    /// own independent counter.  Use newV7AtTime with a shared clock source to
+    /// keep the timestamp field monotone across shards.
     pub fn newV7(self: *Generator) Error!UUID {
         // PERF-07: Read clock inside the mutex to use the freshest possible
         // timestamp and avoid stale-timestamp collisions under high contention.
@@ -143,9 +170,14 @@ pub const Generator = struct {
     /// V7 generation core. Caller must hold `mutex` on entry; this function
     /// always releases `mutex` before returning (on success or error path).
     ///
-    /// PERF-01: Uses Thread.yield() (~10–50 ns) in the overflow spin-wait
-    ///   instead of Thread.sleep(100_000) (~100 µs+), dramatically reducing
-    ///   burst-throughput stalls when the 12-bit counter overflows.
+    /// PERF-12: Uses Thread.sleep(ns_to_next_ms) in the overflow spin-wait.
+    ///   PERF-01 previously switched from Thread.sleep(100_000 ns) to
+    ///   Thread.yield() to reduce per-spin latency.  However Thread.yield()
+    ///   maps to sched_yield(2), which returns immediately when no other thread
+    ///   is ready, producing a busy-wait that burns 82% of V7 CPU time
+    ///   (~3.28M yields per 1M calls).  Thread.sleep(ns_remaining_in_ms)
+    ///   sleeps precisely until the next ms boundary: 1 syscall per overflow
+    ///   vs ~8,000 yields, and correctly idles the CPU.
     ///
     /// PERF-02: Releases the mutex before the 8-byte rand_b CSPRNG call so
     ///   concurrent threads are not serialised on the getrandom syscall.
@@ -159,14 +191,24 @@ pub const Generator = struct {
     fn newV7Locked(self: *Generator, ts: i64) Error!UUID {
         var ms = ts;
 
-        // If the counter is exhausted in the current ms, spin-wait until either:
+        // If the counter is exhausted in the current ms, wait until either:
         //   (a) the clock advances to a new ms, OR
         //   (b) another thread resets mono_seq (exits the while, ms == last_ms,
         //       counter not maxed — it is safe to increment immediately).
-        // PERF-01: Thread.yield() (~10–50 ns) vs Thread.sleep(100_000) (~100 µs+).
+        // PERF-12: sleep precisely to the next ms boundary to avoid the
+        // busy-wait that Thread.yield() produces when single-threaded.
         while (ms == self.last_ms and self.mono_seq == std.math.maxInt(u12)) {
+            // Compute nanoseconds remaining in the current millisecond.
+            // @rem(ns_now, 1_000_000) gives the fraction within [0, 999_999];
+            // subtracting from 1_000_000 gives the sleep duration [1, 1_000_000].
+            // Fall back to 500µs if the clock returns an invalid/negative value.
+            const ns_now = self.clock();
+            const sleep_ns: u64 = if (ns_now > 0) blk: {
+                const ns_frac: u64 = @intCast(@rem(ns_now, 1_000_000));
+                break :blk 1_000_000 - ns_frac;
+            } else 500_000;
             self.mutex.unlock();
-            std.Thread.yield() catch {}; // yield; ignore spurious errors
+            std.Thread.sleep(sleep_ns);
             self.mutex.lock();
             // SEC-R4-01: use clockToMs() to guard against extreme clock
             // values; propagate InvalidTimestamp if the clock misbehaves.

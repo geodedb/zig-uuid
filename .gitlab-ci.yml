@@ -130,11 +130,14 @@ test-cross-build:
 
 # Bench build verification (QC-20: ensures bench/main.zig compiles and stays
 # in sync with the public API; catches API drift that unit tests may miss.)
+# PERF-15: use bench-check (compile only) instead of bench (run all benchmarks).
+# Running 6 × 1 M iterations in CI discards the results and wastes CI minutes;
+# compile-only is sufficient to verify the benchmark source remains valid.
 build-bench:
   stage: build
   image: debian:bookworm-slim
   before_script:
     - *install-zig
   script:
-    - zig build bench -Doptimize=ReleaseFast
+    - zig build bench-check -Doptimize=ReleaseFast
   needs: []
