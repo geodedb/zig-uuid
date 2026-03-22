@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 13: 6 new findings (SEC-R13-01 V7 double clock() — Medium/Open; SEC-R13-03 fuzz corpus gap — Low/Open; SEC-R13-04 undefined buffer in loadState — Medium/Open; SEC-R13-06 dead SIOCGIFCONF truncation block — Low/Open; SEC-R13-07 SECURITY.md gaps — Info/Open; SEC-R13-08 clock() under mutex — Low/Open). 46 total findings; 36 closed, 2 Won't Do, 1 false positive, 7 open.
+> Last updated: 2026-03-22 — Full codebase audit: Quality Cycle 12 (16 new, QC-76–92), Performance Cycle 4 (2 new, PERF-19–20), Security Cycle 13 (6 new, SEC-R13-01/03/04/06/07/08). 46 security + 16 quality + 20 performance findings tracked. 7 security open, 16 quality open, 2 performance open.
 
 ---
 
@@ -3262,5 +3262,285 @@ The truncation detection block at `src/hwaddr/linux.zig:57–61` (triggered when
 ---
 
 _Last updated: 2026-03-22 — Cycle 13 complete. 6 new findings: 2 Medium (SEC-R13-01 V7 double clock() TOCTOU; SEC-R13-04 undefined buffer in loadState), 3 Low (SEC-R13-03 fuzz corpus gap; SEC-R13-06 dead SIOCGIFCONF truncation block; SEC-R13-08 clock() under mutex), 1 Info (SEC-R13-07 SECURITY.md gaps). SEC-R13-02 deduplicated to SEC-R12-02; SEC-R13-05 retracted (false positive). 46 total findings across all cycles; 36 closed, 2 Won't Do, 1 false positive, 7 open._
+
+---
+
+## Quality Review Cycle 12 (2026-03-22)
+
+**Date:** 2026-03-22 | **Reviewer:** Adversarial AI quality agent
+**Scope:** Full codebase — public API surface, doc comments, examples, README, test coverage
+
+All findings below are new (QC-76 through QC-92). QC-89 merged into QC-80 (same root cause). Full detail in `docs/QUALITY_GAP_ANALYSIS.md`.
+
+### Stack-Ranked Findings (Cycle 12)
+
+| Rank | QC | Severity | Score | Finding | File:Line | Issue |
+|------|-----|----------|-------|---------|-----------|-------|
+| 1 | QC-80 | High | 80 | README `.hash = "..."` placeholder — library cannot be installed | `README.md:26` | [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166) |
+| 2 | QC-90 | Medium | 36 | `root.zig` doc instructs external callers to `@import("generator.zig")` — compile error outside repo | `src/root.zig:67` | [#176](https://gitlab.com/devnw/zig/uuid/-/work_items/176) |
+| 3 | QC-76 | Low | 24 | `Generator.init`, `withClock`, `withRand` have no doc comments | `src/generator.zig:105–118` | [#160](https://gitlab.com/devnw/zig/uuid/-/work_items/160) |
+| 4 | QC-77 | Low | 24 | `Variant` enum has no doc comment | `src/uuid.zig:38–43` | [#162](https://gitlab.com/devnw/zig/uuid/-/work_items/162) |
+| 5 | QC-78 | Low | 24 | `Generator.newV4` has no doc comment | `src/generator.zig:142` | [#163](https://gitlab.com/devnw/zig/uuid/-/work_items/163) |
+| 6 | QC-79 | Low | 24 | All 10 `GeneratorInterface` dispatch methods have no doc comments | `src/generator.zig:755–784` | [#165](https://gitlab.com/devnw/zig/uuid/-/work_items/165) |
+| 7 | QC-81 | Low | 20 | `newV8` returns `Error!UUID` but function body can never fail — doc gap | `src/versions.zig:63` | [#168](https://gitlab.com/devnw/zig/uuid/-/work_items/168) |
+| 8 | QC-82 | Low | 16 | Double export `uuid.nil`/`uuid.UUID.nil`; README documents wrong form | `src/root.zig:42–43` | [#169](https://gitlab.com/devnw/zig/uuid/-/work_items/169) |
+| 9 | QC-83 | Low | 16 | `Timestamp.toUnixNano` public but absent from README timestamp section | `src/timestamp.zig:38` | [#170](https://gitlab.com/devnw/zig/uuid/-/work_items/170) |
+| 10 | QC-84 | Low | 16 | `Timestamp.fromUnixNano`/`fromUnixMs` public but absent from README | `src/timestamp.zig:78,92` | [#171](https://gitlab.com/devnw/zig/uuid/-/work_items/171) |
+| 11 | QC-91 | Low | 16 | `examples/basic.zig` uses `{any}` for `NullUUID` instead of `{f}` | `examples/basic.zig:104–105` | [#177](https://gitlab.com/devnw/zig/uuid/-/work_items/177) |
+| 12 | QC-92 | Low | 16 | README "See docs/ for detailed documentation" links to internal review notes | `README.md:180` | [#178](https://gitlab.com/devnw/zig/uuid/-/work_items/178) |
+| 13 | QC-85 | Low | 12 | No test documents that `newV8` never errors (infallible body) | `src/generator.zig:494` | [#172](https://gitlab.com/devnw/zig/uuid/-/work_items/172) |
+| 14 | QC-86 | Low | 12 | `newV7AtTime` doc only mentions negative-ts guard; full error set undocumented | `src/generator.zig:172–176` | [#173](https://gitlab.com/devnw/zig/uuid/-/work_items/173) |
+| 15 | QC-87 | Info | 8 | `Timestamp.now()` doc doesn't note it bypasses the injectable clock | `src/timestamp.zig:25` | [#174](https://gitlab.com/devnw/zig/uuid/-/work_items/174) |
+| 16 | QC-88 | Info | 8 | No test asserts `Generator.newV1`/`newV6` do NOT use the injected clock | `src/generator_test.zig` | [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175) |
+
+### Finding Details (Cycle 12)
+
+#### QC-80 (#166, High) — README `.hash = "..."` placeholder blocks library installation
+
+**Status: 🔓 Open**
+
+`README.md:26` contains `.hash = "..."` as a literal placeholder. `zig fetch` requires a real content hash; any developer following the installation instructions gets an immediate error. The library is effectively un-installable from the documented steps.
+
+**Fix:** Run `zig fetch --save <tarball-url>` for the v0.1.0 release and replace the placeholder with the computed hash.
+
+---
+
+#### QC-90 (#176, Medium) — `root.zig` doc tells external callers to `@import("generator.zig")`
+
+**Status: 🔓 Open**
+
+`src/root.zig:67–68` contains a doc comment with the example:
+
+```zig
+//   const gen_mod = @import("generator.zig");
+//   try gen_mod.default_generator.loadState("/var/lib/app/uuid.state");
+```
+
+External consumers cannot `@import("generator.zig")` — they only have access to the published package root. This guidance compiles only inside the repository itself.
+
+**Fix:** Replace with the correct external API: create a private `uuid.Generator` instance and call `gen.loadState(path)`.
+
+---
+
+#### QC-76 (#160, Low) — `Generator.init`, `withClock`, `withRand` missing doc comments
+
+**Status: 🔓 Open**
+
+`src/generator.zig:105–118`: three public factory functions (`init`, `withClock`, `withRand`) have no `///` doc comments. `withHWAddr` (line 123) has one, making the surface inconsistent. `zig doc` shows blank entries for the most commonly called constructors.
+
+**Fix:** Add `///` doc comments to `init`, `withClock`, and `withRand` matching the style of `withHWAddr`.
+
+---
+
+#### QC-77 (#162, Low) — `Variant` enum has no doc comment
+
+**Status: 🔓 Open**
+
+`src/uuid.zig:38–43`: `Version` has a detailed doc comment; immediately below it `Variant` has none. Consumers do not know what the four values mean or which one well-formed RFC-9562 UUIDs use.
+
+**Fix:** Add a doc comment explaining the four variant classes and noting that all well-formed RFC-9562 UUIDs use `.rfc9562`.
+
+---
+
+#### QC-78 (#163, Low) — `Generator.newV4` has no doc comment
+
+**Status: 🔓 Open**
+
+`src/generator.zig:142`: every sibling generation method has a doc comment; `newV4` — the most commonly used function — has none.
+
+**Fix:** Add a brief doc comment describing the CSPRNG usage and `RandomError`.
+
+---
+
+#### QC-79 (#165, Low) — All 10 `GeneratorInterface` dispatch methods have no doc comments
+
+**Status: 🔓 Open**
+
+`src/generator.zig:755–784`: ten public methods on `GeneratorInterface` carry no doc comments while the struct-level doc and factory function have them. `zig doc` shows blank entries for each dispatch method.
+
+**Fix:** Add per-method doc comments pointing to the corresponding `Generator` method for details.
+
+---
+
+#### QC-81 (#168, Low) — `newV8` returns `Error!UUID` but can never fail
+
+**Status: 🔓 Open**
+
+`src/generator.zig:494–505`: `newV8` copies three fixed-size byte arrays, sets version and variant bits, and returns. No `rand` call, no clock call, no fallible operation. The `Error!UUID` return type is wider than necessary and creates misleading API surface. The doc comment in `src/versions.zig:63` never explains this.
+
+**Fix:** Add a doc comment noting "this function currently never errors; the error union is present for future extensibility."
+
+---
+
+#### QC-82 (#169, Low) — Double export of `nil`/`max`; README documents wrong form
+
+**Status: 🔓 Open**
+
+`src/root.zig:42–43` exports `pub const nil` and `pub const max` at the package level, so external callers use `uuid.nil` and `uuid.max`. The README lists `UUID.nil` and `UUID.max` (the qualified struct-field form). Both resolve correctly at compile time but the inconsistency confuses consumers.
+
+**Fix:** Update README to show `uuid.nil`/`uuid.max` as the canonical external form.
+
+---
+
+#### QC-83 (#170, Low) — `Timestamp.toUnixNano` absent from README
+
+**Status: 🔓 Open**
+
+`src/timestamp.zig:38`: public method giving nanosecond precision (needed for sub-ms interop with `std.time`) is not listed in the README "Timestamp extraction" table.
+
+**Fix:** Add `toUnixNano` row to the README Timestamp table.
+
+---
+
+#### QC-84 (#171, Low) — `Timestamp.fromUnixNano`/`fromUnixMs` absent from README
+
+**Status: 🔓 Open**
+
+`src/timestamp.zig:78,92`: callers who want to construct a `Timestamp` for use with `newV1AtTime`/`newV6AtTime` cannot discover the conversion path from the README.
+
+**Fix:** Add `fromUnixNano` and `fromUnixMs` rows to the README Timestamp section.
+
+---
+
+#### QC-85 (#172, Low) — No test documents `newV8` infallible path
+
+**Status: 🔓 Open**
+
+`src/generator.zig:494`: `newV8` can never error but is typed `Error!UUID`. No test asserts or documents that all `newV8` calls always succeed. If the signature is ever widened, there is no test to catch it.
+
+**Fix:** Add a test that calls `newV8` and verifies it succeeds with `try` (not just catches the error).
+
+---
+
+#### QC-86 (#173, Low) — `newV7AtTime` doc incomplete error set
+
+**Status: 🔓 Open**
+
+`src/generator.zig:172–176`: the brief comment mentions only the negative-ts guard. The function can also return `RandomError` (from the `rand_b` fill after mutex release) and `InvalidTimestamp` (from `clockToMs` in the spin-wait). Callers handling errors receive no guidance.
+
+**Fix:** Extend the doc comment to enumerate all possible errors.
+
+---
+
+#### QC-87 (#174, Info) — `Timestamp.now()` doc silent on injectable-clock bypass
+
+**Status: 🔓 Open**
+
+`src/timestamp.zig:25`: `Timestamp.now()` calls `std.time.nanoTimestamp()` directly, not `self.clock()` (since `Timestamp` has no injected clock). A `Generator.withClock(mock)` replacement does not affect `Timestamp.now()`. The doc comment gives no hint of this, causing test-authorship surprises.
+
+**Fix:** Add a note: "`Timestamp.now()` uses the system clock directly and is not affected by the `Generator`'s injectable clock function."
+
+---
+
+#### QC-88 (#175, Info) — No test asserts `newV1`/`newV6` bypass the injected clock
+
+**Status: 🔓 Open**
+
+`src/generator_test.zig`: `withClock` is tested for V7 only. `newV1`/`newV6` call `Timestamp.now()` directly (not `self.clock`). No test documents this architectural decision; a future refactor that accidentally wires V1/V6 to `self.clock` would not be caught.
+
+**Fix:** Add a test that installs a mock clock via `withClock`, generates V1 and V6 UUIDs, then verifies the embedded timestamp is NOT the mock value.
+
+---
+
+#### QC-91 (#177, Low) — `examples/basic.zig` uses `{any}` for `NullUUID` instead of `{f}`
+
+**Status: 🔓 Open**
+
+`examples/basic.zig:104–105`: `{any}` on a `?UUID` prints `optional(struct{ bytes: [16]u8{ ... } })` rather than a UUID string. The correct idiomatic form is `{f}` on a `NullUUID` value, using the `NullUUID.format` method added in QC-55.
+
+**Fix:** Change to `try w.print("NullUUID valid: {f}\n", .{nu_valid})`.
+
+---
+
+#### QC-92 (#178, Low) — README "See docs/ for detailed documentation" is misleading
+
+**Status: 🔓 Open**
+
+`README.md:180`: the `docs/` directory contains internal review notes (`QUALITY_GAP_ANALYSIS.md`, `PERF_GAP_ANALYSIS.md`, `GAP_ANALYSIS.md`, `SECURITY_REVIEW_NOTES.md`), not user-facing documentation. External users who follow the link find internal audits.
+
+**Fix:** Remove or replace with an accurate statement, e.g. "See `SECURITY.md` for the security policy."
+
+---
+
+### Summary Table (Quality Cycle 12)
+
+| Severity | New Findings | Status |
+|----------|-------------|--------|
+| High | 1 | 🔓 Open (QC-80) |
+| Medium | 1 | 🔓 Open (QC-90) |
+| Low | 12 | 🔓 Open (QC-76–79, QC-81–86, QC-91–92) |
+| Info | 2 | 🔓 Open (QC-87–88) |
+| **Total** | **16** | **16 Open** |
+
+_Last updated: 2026-03-22 — Quality Cycle 12: 16 new findings (QC-76–92). Full cycle history in `docs/QUALITY_GAP_ANALYSIS.md` (91 total quality findings)._
+
+---
+
+## Performance Review Cycle 4 (2026-03-22)
+
+**Date:** 2026-03-22 | **Reviewer:** Adversarial AI performance agent
+**Scope:** Full codebase — hot paths, mutex architecture, benchmark coverage
+**Prior cycles:** PERF-01–18 all closed (17 closed, 1 Won't Do). Full detail in `docs/PERF_GAP_ANALYSIS.md`.
+
+All 18 prior findings confirmed closed or Won't Do. 2 new findings identified.
+
+### Stack-Ranked Findings (Cycle 4)
+
+| Rank | PERF | Severity | PerfScore | Finding | File:Line | Issue |
+|------|------|----------|-----------|---------|-----------|-------|
+| 1 | PERF-19 | P2/P3 | 24 | Single mutex serializes independent V7 and V1/V6 clock domains under concurrent mixed-version load | `src/generator.zig:89` | [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) |
+| 2 | PERF-20 | P3 | 8 | `toHex` (lowercase no-alloc) missing from benchmark suite — regression in lowercase hex path undetectable | `bench/main.zig` | [#157](https://gitlab.com/devnw/zig/uuid/-/work_items/157) |
+
+### Finding Details (Cycle 4)
+
+#### PERF-19 (#155, P2/P3, PerfScore 24) — Single mutex serializes V7 and V1/V6 clock domains
+
+**Status: 🔓 Open** | **Confidence:** `confidence::suspected` (requires concurrent benchmark to quantify)
+
+`src/generator.zig:89`: one `std.Thread.Mutex` protects both the V7 clock domain (`last_ms`, `mono_seq`) and the V1/V6 clock domain (`clock_seq`, `clock_seq_initialized`, `last_v1_ts`, `last_node`, `node_cache`). These are independent RFC-9562 clock domains with no correctness dependency between them.
+
+Under concurrent mixed-version workloads, `resolveV1V6State` holds the mutex for ~25–35 ns (spanning `initClockSeq`, node cache check, `last_v1_ts` compare, and node-change detection). Any concurrent `newV7()` call must wait for the full V1/V6 critical section, and vice versa.
+
+This pattern was identified in the Cycle 1 concurrency prose and the "Medium-Term Improvements" list but was never assigned a PERF number or issue.
+
+**Impact:**
+
+- P3 for single-version workloads (zero impact)
+- P2 for concurrent mixed V7+V1/V6 workloads: ~35 ns additional latency per call under contention
+
+**Fix:** Split into `v7_mutex` (protecting `last_ms`, `mono_seq`) and `v1v6_mutex` (protecting `clock_seq`, `last_v1_ts`, `node_cache`, `last_node`). Acquire both in fixed order (`v7_mutex` first, then `v1v6_mutex`) in `saveState`/`loadState` to prevent deadlock.
+
+**Validation:** Run a two-thread concurrent benchmark (one thread `newV7`, one thread `newV1`) and measure wall-clock time. Confirm with `perf stat -e lock:contention` to count mutex contention events.
+
+---
+
+#### PERF-20 (#157, P3, PerfScore 8) — `toHex` (lowercase no-alloc) missing from benchmark suite
+
+**Status: 🔓 Open** | **Confidence:** `confidence::confirmed`
+
+`bench/main.zig` benchmarks `benchToHexUpper` (uppercase, added by PERF-18) and `benchToHexAlloc` (heap path, added by PERF-16), but has no `benchToHex` for the lowercase no-alloc stack variant at `src/uuid.zig:351`. Both `toHex` and `toHexUpper` share `toHexImpl` with a comptime hex-table argument; a regression affecting only the lowercase path would be invisible in CI bench output.
+
+**Fix:** Add `benchToHex()` to `bench/main.zig` using the 256-UUID pool + `[32]u8 buf` + XOR sink pattern, adjacent to `benchToHexUpper`. Expected: ~5–6 ns/op.
+
+---
+
+### Summary Table (Performance Cycle 4)
+
+| Severity | New Findings | Status |
+|----------|-------------|--------|
+| P2 | 1 | 🔓 Open (PERF-19) |
+| P3 | 1 | 🔓 Open (PERF-20) |
+| **Total** | **2** | **2 Open** |
+
+**Running totals (all performance cycles):**
+
+| Metric | Count |
+|--------|-------|
+| Total findings (Cycles 1–4) | 20 |
+| Closed / implemented | 17 |
+| Won't Do | 1 (PERF-08) |
+| Open | 2 (PERF-19, PERF-20) |
+
+_Last updated: 2026-03-22 — Performance Cycle 4: 2 new findings (PERF-19–20). All prior 18 findings confirmed closed or Won't Do. Full history in `docs/PERF_GAP_ANALYSIS.md`._
 
 ---
