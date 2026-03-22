@@ -25,17 +25,22 @@ pub const Timestamp = struct {
     ///
     /// Returns Error.InvalidTimestamp if the system clock reports a time
     /// before the Unix epoch (1970-01-01) or a time so far in the future
-    /// that the 100-ns interval count exceeds u64.  The upper-bound guard
-    /// matches the one in `fromUnixNano` (SEC-R11-01 / CWE-190).
+    /// that the 100-ns interval count exceeds u64, or when the subsequent
+    /// addition of `gregorian_offset` would overflow u64.  Both guards
+    /// match those in `fromUnixNano` (SEC-R11-01, SEC-R12-02 / CWE-190).
     pub fn now() Error!Timestamp {
         const ns: i128 = std.time.nanoTimestamp();
         if (ns < 0) return Error.InvalidTimestamp;
         const intervals: i128 = @divTrunc(ns, 100);
         // SEC-R11-01 (CWE-190): guard against @intCast panic when the system clock
         // is set to a far-future date (year >60,424). maxInt(u64) * 100 ns is the
-        // threshold.  Matches the guard in fromUnixNano().
+        // threshold.
         if (intervals > std.math.maxInt(u64)) return Error.InvalidTimestamp;
         const intervals_since_unix: u64 = @intCast(intervals);
+        // SEC-R14-01 / SEC-R12-02 (CWE-190): guard against secondary u64 overflow
+        // in the addition.  Matches the identical guard in fromUnixNano().
+        const max_safe: u64 = std.math.maxInt(u64) - gregorian_offset;
+        if (intervals_since_unix > max_safe) return Error.InvalidTimestamp;
         return .{ .value = @truncate(intervals_since_unix + gregorian_offset) };
     }
 

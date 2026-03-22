@@ -4,11 +4,13 @@
 const std = @import("std");
 const UUID = @import("uuid.zig").UUID;
 
-/// All-zero UUID (RFC-9562 nil UUID)
-pub const nil = UUID{ .bytes = [_]u8{0x00} ** 16 };
+/// All-zero UUID (RFC-9562 nil UUID).
+/// QC-93: single source of truth is UUID.nil in uuid.zig.
+pub const nil = UUID.nil;
 
-/// All-ones UUID (RFC-9562 max UUID)
-pub const max = UUID{ .bytes = [_]u8{0xFF} ** 16 };
+/// All-ones UUID (RFC-9562 max UUID).
+/// QC-93: single source of truth is UUID.max in uuid.zig.
+pub const max = UUID.max;
 
 /// DNS namespace UUID: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
 pub const namespace_dns = UUID{ .bytes = .{

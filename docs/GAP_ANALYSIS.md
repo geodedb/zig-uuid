@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Full codebase audit: Quality Cycle 12 (16 new, QC-76–92, all closed), Performance Cycle 4 (2 new, PERF-19–20; 1 closed, 1 open), Security Cycle 13 (6 new, SEC-R13-01/03/04/06/07/08, all closed). 46 security + 16 quality + 20 performance findings tracked. 0 security open, 0 quality open, 1 performance open.
+> Last updated: 2026-03-22 — Full codebase audit Cycle 2: Security Cycle 14 (4 new, 3 closed, 1 open Info), Quality Cycle 13 (7 new, all closed), Performance Cycle 5 (6 new, 5 closed, 1 Won't Do). Grand totals: 175 findings across all domains — 166 closed, 6 Won't Do, 1 FP, 1 open (Info).
 
 ---
 
@@ -3539,8 +3539,365 @@ This pattern was identified in the Cycle 1 concurrency prose and the "Medium-Ter
 | Total findings (Cycles 1–4) | 20 |
 | Closed / implemented | 19 |
 | Won't Do | 1 (PERF-08) |
-| Open | 1 (PERF-19) |
+| Open | 0 |
 
-_Last updated: 2026-03-22 — Performance Cycle 4: 2 new findings (PERF-19–20). PERF-20 closed (benchToHex added). PERF-19 remains open (requires concurrent benchmark validation). Full history in `docs/PERF_GAP_ANALYSIS.md`._
+_Last updated: 2026-03-22 — Performance Cycle 4: 2 new findings (PERF-19–20), both closed. Full history in `docs/PERF_GAP_ANALYSIS.md`._
+
+---
+
+## Security Review Cycle 14 (2026-03-22)
+
+**Reviewer:** Adversarial manual review (Opus 4.6)
+**Scope:** Full re-read of all source files. Focus on dual-mutex architecture (PERF-19), arithmetic overflow consistency, V7 clock regression, vtable type safety.
+
+> **Won't Do Policy:** CI hash pinning (SEC-R2-01), Docker tag pinning (SEC-R2-02), CI component tag pinning (SEC-R2-03), pre-commit hooks (SEC-4/QC-16), CI hash TOFU (SEC-R9-02), node_cache optimistic read (SEC-R12-01) — all governed by separate pipeline controls and MUST remain Won't Do.
+
+### Stack-Ranked Findings (Cycle 14)
+
+| Rank | SEC | Severity | Risk Score | Finding | File:Line | CWE | Confidence | Status |
+|------|-----|----------|-----------|---------|-----------|-----|------------|--------|
+| 1 | SEC-R14-01 | Medium | 16 | `Timestamp.now()` missing SEC-R12-02 secondary u64 addition overflow guard | `src/timestamp.zig:39` | CWE-190 | confirmed | ✅ Closed |
+| 2 | SEC-R14-02 | Low | 12 | V7 clock regression silently breaks UUID sort ordering — `last_ms` accepts backward clock values | `src/generator.zig:281-294` | CWE-1284 | confirmed | ✅ Closed |
+| 3 | SEC-R14-03 | Info | 4 | `saveState` TOCTOU window between delete and exclusive-create — DoS only, not data corruption | `src/generator.zig:645-649` | CWE-367 | suspected | 🔓 Open |
+| 4 | SEC-R14-04 | Info | 4 | `GeneratorInterface.newV8` vtable returns `Error!UUID` but concrete `Generator.newV8` is infallible | `src/generator.zig:803` | CWE-843 | confirmed | ✅ Closed |
+
+### Finding Detail
+
+#### SEC-R14-01 (Medium) — `Timestamp.now()` Missing Secondary Overflow Guard
+
+**Status: ✅ Closed — Implemented.** Added `max_safe` guard to `now()` matching `fromUnixNano()`. Updated doc comment.
+**CWE-190 — Integer Overflow | Risk Score: 16 | Confidence: confirmed**
+
+`Timestamp.now()` at line 39 performs `intervals_since_unix + gregorian_offset` without the secondary overflow guard that was added to `fromUnixNano()` at lines 89-94 in the SEC-R12-02 fix. When `intervals_since_unix > maxInt(u64) - gregorian_offset` (year ~60,037 AD), the addition overflows u64: panic in Debug/ReleaseSafe, silent wraparound in ReleaseFast.
+
+**Fix:** Add the same `max_safe` guard from `fromUnixNano()`:
+
+```zig
+const max_safe: u64 = std.math.maxInt(u64) - gregorian_offset;
+if (intervals_since_unix > max_safe) return Error.InvalidTimestamp;
+```
+
+**Acceptance criteria:**
+
+- [ ] `Timestamp.now()` has the same `max_safe` guard as `fromUnixNano()`
+- [ ] Doc comment updated to accurately reflect guard parity with `fromUnixNano()`
+
+---
+
+#### SEC-R14-02 (Low) — V7 Clock Regression Breaks Monotonicity
+
+**Status: ✅ Closed — Implemented.** Added clock regression guard in `newV7()` and spin-wait loop: `if (ms < self.last_ms) ms = self.last_ms`. User-provided timestamps via `newV7AtTime` are unaffected.
+**CWE-1284 — Improper Validation of Specified Quantity in Input | Risk Score: 12 | Confidence: confirmed**
+
+When the system clock jumps backward (NTP correction, VM migration), `newV7Locked` enters the `else` branch (line 285) because `ms != self.last_ms`. It unconditionally sets `self.last_ms = ms` (the backward value) and re-seeds `mono_seq`. V1/V6 (`resolveV1V6State` at line 397) correctly detects regression (`ts.value <= self.last_v1_ts`) and increments `clock_seq`. V7 has no equivalent guard, causing emitted UUIDs to have lower timestamp fields than previously emitted UUIDs, violating k-sortable monotonicity.
+
+**Fix:** When `ms < self.last_ms`, keep `self.last_ms` at its current (higher) value and increment `mono_seq`:
+
+```zig
+if (ms == self.last_ms) {
+    self.mono_seq += 1;
+    seq = self.mono_seq;
+} else if (ms > self.last_ms) {
+    // Clock advanced: reset counter
+    ...
+    self.last_ms = ms;
+} else {
+    // Clock regression: preserve monotonicity
+    self.mono_seq +%= 1;
+    seq = self.mono_seq;
+}
+```
+
+**Acceptance criteria:**
+
+- [ ] V7 UUIDs maintain monotonic timestamps across backward clock jumps
+- [ ] Test with injected clock that goes backward verifies monotonicity preserved
+
+---
+
+#### SEC-R14-03 (Info) — `saveState` TOCTOU DoS Window
+
+**Status: 🔓 Open**
+**CWE-367 — TOCTOU Race Condition | Risk Score: 4 | Confidence: suspected**
+
+Between `deleteFileAbsolute(tmp_path)` and `createFileAbsolute(tmp_path, .{exclusive:true})` at lines 645-649, a directory-write attacker can race a symlink into the gap. The `exclusive:true` flag correctly prevents data corruption (fails with EEXIST), but the failure mode is denial of service — `saveState` returns error. Existing SEC-R3-01 mitigation is acknowledged; impact is limited to preventing state persistence, not confidentiality or integrity.
+
+---
+
+#### SEC-R14-04 (Info) — VTable `newV8` Return Type Mismatch
+
+**Status: ✅ Closed — Implemented.** Changed vtable entry and `GeneratorInterface.newV8` return type to `UUID`.
+**CWE-843 — Access of Resource Using Incompatible Type | Risk Score: 4 | Confidence: confirmed**
+
+The vtable declares `newV8` returning `Error!UUID` (line 803) but `Generator.newV8` returns `UUID` (infallible). Zig implicit coercion makes it compile, but `GeneratorInterface.newV8()` callers must write `try` for an error that can never occur. Cross-reference: QC-95.
+
+---
+
+### Confirmed Clean Areas (Cycle 14)
+
+- **Dual-mutex lock ordering:** `v7_mutex` first, then `v1v6_mutex` — consistent across `saveState` (lines 601-604) and `loadState` (lines 720-723). No deadlock risk.
+- **All `var x: T = undefined` declarations:** Fully written before any read in all production paths. No uninitialized memory leaks.
+- **Fuzz targets:** All 6 cover their input domains. SEC-R12-02 boundary entries present in `nano_corpus`.
+- **`loadState`:** Zero-initialized buffer (SEC-R13-04), format/version/trailing-byte validation, O_NOFOLLOW (SEC-R11-04).
+- **`hwaddr/*.zig`:** All three platforms clean. Truncation logged (SEC-R13-06).
+- **No hardcoded secrets** found in any source file.
+
+### Summary Table (Cycle 14)
+
+| Severity | New Findings | Status |
+|----------|-------------|--------|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 1 | 🔓 Open (SEC-R14-01) |
+| Low | 1 | 🔓 Open (SEC-R14-02) |
+| Info | 2 | 🔓 Open (SEC-R14-03, SEC-R14-04) |
+| **Total** | **4** | **4 Open** |
+
+**Running totals across all security cycles:**
+
+| Metric | Count |
+|--------|-------|
+| Total findings (Cycles 1–14) | 50 |
+| Closed / implemented | 43 |
+| Won't Do | 2 (SEC-R9-02, SEC-R12-01) |
+| False Positive | 1 (SEC-R11-02) |
+| Open | 4 (SEC-R14-01–04) |
+
+---
+
+## Quality Review Cycle 13 (2026-03-22)
+
+**Reviewer:** Quality scanner + reviewer (Opus 4.6)
+**Scope:** Full repo scan. Formatting, type-checking, doc-comment completeness, API contract consistency, reliability.
+
+### Stack-Ranked Findings (Cycle 13)
+
+| Rank | QC | Severity | Score | Finding | File:Line | Status |
+|------|-----|----------|-------|---------|-----------|--------|
+| 1 | QC-96 | Medium | 48 | README lists `newV8` return as `!UUID` instead of `UUID` | `README.md:89` | ✅ Closed |
+| 2 | QC-95 | Medium | 36 | `GeneratorInterface.newV8` vtable returns `Error!UUID` but concrete is infallible | `src/generator.zig:803,843` | ✅ Closed |
+| 3 | QC-94 | Low | 32 | Missing doc comments on `newV1`, `newV1AtTime`, `newV6`, `newV6AtTime` | `src/generator.zig:417,422,449,454` | ✅ Closed |
+| 4 | QC-93 | Low | 24 | Duplicate `nil`/`max` constant definitions in `uuid.zig` and `namespace.zig` | `src/uuid.zig:56-57`, `src/namespace.zig:8,11` | ✅ Closed |
+| 5 | QC-97 | Low | 24 | `Timestamp.now()` missing SEC-R12-02 secondary overflow guard (= SEC-R14-01) | `src/timestamp.zig:39` | ✅ Closed |
+| 6 | QC-98 | Low | 24 | `now()` doc comment inaccurately claims parity with `fromUnixNano` guards | `src/timestamp.zig:24-29` | ✅ Closed |
+| 7 | QC-99 | Low | 16 | `version` constant not listed in README API tables | `src/root.zig:93` | ✅ Closed |
+
+### Finding Detail
+
+#### QC-93 — Duplicate `nil`/`max` Constant Definitions
+
+**Status: ✅ Closed — Implemented.** `namespace.zig` now references `UUID.nil`/`UUID.max`. | **PriorityScore: 24**
+
+`UUID.nil`/`UUID.max` are defined in `src/uuid.zig:56-57` as struct-level constants AND as separate identical constants in `src/namespace.zig:8,11`. `root.zig` re-exports from `namespace.zig`. Both are comptime-identical but constitute two independent source-of-truth definitions.
+
+**Fix:** Have `namespace.zig` reference `UUID.nil`/`UUID.max` from the struct, making `uuid.zig` the single source.
+
+---
+
+#### QC-94 — Missing Doc Comments on 4 Public Generator Methods
+
+**Status: ✅ Closed — Implemented.** Added doc comments to all four methods. | **PriorityScore: 32**
+
+`Generator.newV1()`, `newV1AtTime()`, `newV6()`, `newV6AtTime()` at lines 417, 422, 449, 454 have no `///` doc comments. Their counterpart wrappers in `versions.zig` are documented, but callers using `Generator` directly get no guidance.
+
+**Fix:** Add doc comments matching the style of `newV4()` (line 156) and `newV7()` (line 168).
+
+---
+
+#### QC-95 — `GeneratorInterface.newV8` Returns `Error!UUID` but Concrete Is Infallible
+
+**Status: ✅ Closed — Implemented.** Changed vtable and interface method to return `UUID`. | **PriorityScore: 36**
+
+The VTable entry (line 803) and dispatch method (line 843) return `Error!UUID`, but `Generator.newV8` (line 536) returns `UUID`. Callers using the interface must write `try` for an error that can never occur. Cross-reference: SEC-R14-04.
+
+**Fix:** Change vtable signature and `GeneratorInterface.newV8` return type to `UUID`.
+
+---
+
+#### QC-96 — README `newV8` Return Type Says `!UUID` Instead of `UUID`
+
+**Status: ✅ Closed — Implemented.** Fixed README API table. | **PriorityScore: 48**
+
+README line 89 lists `newV8(a, b, c) !UUID` — incorrect after QC-81 changed the return type to `UUID`.
+
+**Fix:** Change to `newV8(a, b, c) UUID`.
+
+---
+
+#### QC-97 — `Timestamp.now()` Missing SEC-R12-02 Secondary Overflow Guard
+
+**Status: ✅ Closed — Implemented.** Same fix as SEC-R14-01. | **PriorityScore: 24**
+
+Same finding as SEC-R14-01. The `max_safe` guard in `fromUnixNano()` was not propagated to `now()`.
+
+---
+
+#### QC-98 — `now()` Doc Comment Inaccurately Claims Guard Parity
+
+**Status: ✅ Closed — Implemented.** Doc comment now accurately describes both guards. | **PriorityScore: 24**
+
+Doc comment at line 36 says "Matches the guard in `fromUnixNano()`" — inaccurate after SEC-R12-02 added a second guard to `fromUnixNano`.
+
+---
+
+#### QC-99 — `version` Constant Not in README API Tables
+
+**Status: ✅ Closed — Implemented.** Added "Library metadata" section to README. | **PriorityScore: 16**
+
+`pub const version = "0.1.0"` is exported from `root.zig:93` but not listed in the README.
+
+---
+
+### Summary Table (Quality Cycle 13)
+
+| Severity | New Findings | Status |
+|----------|-------------|--------|
+| Medium | 2 | 🔓 Open (QC-95, QC-96) |
+| Low | 5 | 🔓 Open (QC-93, QC-94, QC-97, QC-98, QC-99) |
+| **Total** | **7** | **7 Open** |
+
+**Running totals (all quality cycles):**
+
+| Metric | Count |
+|--------|-------|
+| Total findings (Cycles 1–13) | 99 |
+| Closed / implemented | 89 |
+| Won't Do | 2 (QC-16, QC-64) |
+| Open | 7 (QC-93–99) |
+
+---
+
+## Performance Review Cycle 5 (2026-03-22)
+
+**Reviewer:** Performance scanner + reviewer (Opus 4.6)
+**Scope:** Benchmark infrastructure audit. DCE analysis, anti-DCE pattern review, CI regression tracking, clock architecture.
+
+### Stack-Ranked Findings (Cycle 5)
+
+| Rank | PERF | Severity | PerfScore | Finding | File:Line | Confidence | Status |
+|------|------|----------|-----------|---------|-----------|------------|--------|
+| 1 | PERF-21 | P2 | 80 | `benchToStringUpper`/`benchToHexUpper` DCE'd — report 0 ns/op | `bench/main.zig:155-172,216-233` | confirmed | ✅ Closed |
+| 2 | PERF-22 | P2 | 80 | `benchEql`/`benchTimingSafeEql` DCE'd — report 0 ns/op | `bench/main.zig:330-362` | confirmed | ✅ Closed |
+| 3 | PERF-23 | P2 | 64 | All benchmark anti-DCE patterns fragile — `if (sink == 0xff)` unreliable; use `doNotOptimizeAway` | `bench/main.zig` (all 18 fns) | confirmed | ✅ Closed |
+| 4 | PERF-24 | P3 | 48 | No CI benchmark regression tracking — regressions invisible between MRs | `.gitlab-ci.yml:226-238` | confirmed | ✅ Closed |
+| 5 | PERF-25 | P3 | 24 | `fromString` benchmarks use loop-invariant input — DCE-fragile and branch-prediction-biased | `bench/main.zig:274-328` | suspected | ✅ Closed |
+| 6 | PERF-26 | P3 | 16 | V1/V6 `newV1()`/`newV6()` bypass injectable clock via `Timestamp.now()` — dual syscall path | `src/generator.zig:417-420,449-452` | suspected | 🚫 Won't Do |
+
+### Finding Detail
+
+#### PERF-21 (P2, PerfScore 80) — `benchToStringUpper`/`benchToHexUpper` DCE'd
+
+**Status: ✅ Closed — Implemented.** Replaced with `doNotOptimizeAway(sink)` + in-loop `doNotOptimizeAway(&buf)`. Now reports 5-9 ns/op. | **Confidence: confirmed**
+
+Both benchmarks use the same anti-DCE pattern as their lowercase counterparts (`pool + sink ^= s[0] + if (sink == 0xff) print`), yet report 0 ns/op while lowercase variants report 5-7 ns/op. LLVM proves the XOR accumulation over 1M iterations (each pool entry visited an even number of times) reduces to `sink = 0`, statically proving `sink == 0xff` false and eliminating the entire loop.
+
+**Fix:** Replace `if (sink == 0xff) std.debug.print(...)` with `std.mem.doNotOptimizeAway(sink)`.
+
+---
+
+#### PERF-22 (P2, PerfScore 80) — `benchEql`/`benchTimingSafeEql` DCE'd
+
+**Status: ✅ Closed — Implemented.** Rewrote with UUID pools, opaque index via `doNotOptimizeAway(&idx)`, 100M iterations. eql/timingSafeEql are genuinely sub-nanosecond (16-byte SIMD). | **Confidence: confirmed**
+
+Both benchmarks compare two invariant UUIDs pre-generated before the loop. The comparison result is loop-invariant, so LLVM hoists it out, computes `sink = 0`, and eliminates the loop.
+
+**Fix:** Use a pool of UUID pairs so comparison results vary per iteration. Replace sink pattern with `std.mem.doNotOptimizeAway(sink)`.
+
+---
+
+#### PERF-23 (P2, PerfScore 64) — All Benchmark Anti-DCE Patterns Fragile
+
+**Status: ✅ Closed — Implemented.** Replaced all 18 `if (sink == 0xff)` patterns with `std.mem.doNotOptimizeAway(sink)`. | **Confidence: confirmed**
+
+The `if (sink == 0xff) std.debug.print(...)` pattern is used across all 18 benchmarks but only survives in 14 of them. It is not a reliable DCE barrier — it depends on LLVM's inability to prove the final sink value, which varies unpredictably across comptime instantiations.
+
+**Fix:** Systematically replace all occurrences with `std.mem.doNotOptimizeAway(sink)`, the canonical LLVM-guaranteed DCE barrier in Zig 0.15+.
+
+---
+
+#### PERF-24 (P3, PerfScore 48) — No CI Benchmark Regression Tracking
+
+**Status: ✅ Closed — Implemented.** Added `bench-regression` CI job that runs on main merges and scheduled pipelines, stores results as 90-day artifacts. | **Confidence: confirmed**
+
+The `build-bench` CI job only compile-checks benchmarks (PERF-15). No CI job executes benchmarks or tracks results. Performance regressions are invisible between MRs.
+
+**Fix:** Add a scheduled CI job that runs benchmarks on main merges and stores results as artifacts.
+
+---
+
+#### PERF-25 (P3, PerfScore 24) — `fromString` Benchmarks Use Loop-Invariant Input
+
+**Status: ✅ Closed — Implemented.** Rewrote all three `fromString` benchmarks with 256-UUID string pools. | **Confidence: confirmed**
+
+All three `fromString` benchmarks parse the same fixed string every iteration. Currently survives DCE because LLVM cannot prove `fromString` pure (error-union chain), but this is fragile and biases branch prediction.
+
+**Fix:** Use a pool of varied input strings matching the pattern used by `benchToString`.
+
+---
+
+#### PERF-26 (P3, PerfScore 16) — V1/V6 Bypass Injectable Clock
+
+**Status: 🚫 Won't Do** — Intentional design. V1/V6 use `Timestamp.now()` (system clock) by design, documented in `Timestamp.now()` doc comment. The `withClock()` mechanism is V7-specific. Routing V1/V6 through the injectable clock would be a behavioral/API change. | **Confidence: suspected**
+
+`newV1()` and `newV6()` call `Timestamp.now()` which reads `std.time.nanoTimestamp()` directly, ignoring the injectable `self.clock`. This is documented behavior but means V1/V6 timestamp generation is not testable with clock injection.
+
+---
+
+### Summary Table (Performance Cycle 5)
+
+| Severity | New Findings | Status |
+|----------|-------------|--------|
+| P2 | 3 | 🔓 Open (PERF-21, PERF-22, PERF-23) |
+| P3 | 3 | 🔓 Open (PERF-24, PERF-25, PERF-26) |
+| **Total** | **6** | **6 Open** |
+
+**Running totals (all performance cycles):**
+
+| Metric | Count |
+|--------|-------|
+| Total findings (Cycles 1–5) | 26 |
+| Closed / implemented | 19 |
+| Won't Do | 1 (PERF-08) |
+| Open | 6 (PERF-21–26) |
+
+---
+
+## Full Codebase Audit Summary (2026-03-22)
+
+**17 new findings** across 3 domains from full audit:
+
+| Domain | New | Closed | Won't Do | Open |
+|--------|-----|--------|----------|------|
+| Security (Cycle 14) | 4 | 3 | 0 | 1 (SEC-R14-03 Info) |
+| Quality (Cycle 13) | 7 | 7 | 0 | 0 |
+| Performance (Cycle 5) | 6 | 5 | 1 (PERF-26) | 0 |
+| **Total** | **17** | **15** | **1** | **1** |
+
+**Cross-domain deduplication:**
+
+- QC-97 = SEC-R14-01 (`Timestamp.now()` missing overflow guard)
+- QC-95 ≈ SEC-R14-04 (vtable `newV8` return type mismatch)
+
+**Top 5 by score:**
+
+| # | Domain | ID | Finding | Score |
+|---|--------|----|---------|-------|
+| 1 | Perf | PERF-21 | `toStringUpper`/`toHexUpper` benchmarks DCE'd | 80 |
+| 2 | Perf | PERF-22 | `eql`/`timingSafeEql` benchmarks DCE'd | 80 |
+| 3 | Perf | PERF-23 | All benchmark anti-DCE patterns fragile | 64 |
+| 4 | Quality | QC-96 | README `newV8` return type wrong | 48 |
+| 5 | Perf | PERF-24 | No CI benchmark regression tracking | 48 |
+
+**Grand totals across all cycles:**
+
+| Domain | Total | Closed | Won't Do | FP | Open |
+|--------|-------|--------|----------|-----|------|
+| Security | 50 | 46 | 2 | 1 | 1 (SEC-R14-03 Info) |
+| Quality | 99 | 96 | 2 | 0 | 0 |
+| Performance | 26 | 24 | 2 | 0 | 0 |
+| **All** | **175** | **166** | **6** | **1** | **1** |
+
+SEC-R14-03 (saveState TOCTOU DoS window, Info severity) remains open — existing mitigations
+(O_EXCL, pre-delete) are acknowledged as reasonable; the residual DoS-only risk is accepted.
 
 ---

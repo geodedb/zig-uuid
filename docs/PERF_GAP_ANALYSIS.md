@@ -24,7 +24,7 @@
 | 2     | P3       | 2     | parseHash loop; CI bench results lost | ✅ All Closed |
 | 3     | P2       | 1     | Allocating string API unbenchmarked (300× overhead invisible) | ✅ Closed |
 | 3     | P3       | 2     | Missing newV7AtTime benchmark; missing toStringUpper/toHexUpper benchmarks | ✅ All Closed |
-| 4     | P2/P3    | 1     | Single mutex serializes V7 and V1/V6 clock domains | 🔓 Open |
+| 4     | P2/P3    | 1     | Single mutex serializes V7 and V1/V6 clock domains | ✅ Closed |
 | 4     | P3       | 1     | toHex benchmark missing | ✅ Closed |
 
 **Top 5 risks to the "millions/sec V7 generation" goal:**
@@ -816,5 +816,5 @@ zig build bench-check -Doptimize=ReleaseFast
 
 ## Action Plan (Cycle 4)
 
-1. Open **PERF-19** — [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) — Split `Generator.mutex` into `v7_mutex` and `v1v6_mutex`. Requires concurrent benchmark to validate. Significant structural change with regression risk.
+1. ~~Open **PERF-19**~~ ✅ Closed — [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) — Split `Generator.mutex` into `v7_mutex` and `v1v6_mutex`. All tests pass; no benchmark regressions.
 2. ~~Open **PERF-20**~~ ✅ Closed — [#157](https://gitlab.com/devnw/zig/uuid/-/work_items/157) — Added `benchToHex()` to `bench/main.zig`.

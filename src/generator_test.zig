@@ -44,6 +44,29 @@ test "Generator.newV7AtTime: timestamp round-trips via toUnixMs" {
     try std.testing.expectEqual(ms, extracted.toUnixMs());
 }
 
+test "Generator.newV7: monotone across backward clock jump (SEC-R14-02)" {
+    // Inject a clock that goes backward: 2000ms → 1000ms
+    const regressing_clock = struct {
+        var call_count: u32 = 0;
+        fn clock() i128 {
+            call_count += 1;
+            // First two calls: 2000ms, then drop to 1000ms
+            return if (call_count <= 2)
+                @as(i128, 2_000) * 1_000_000
+            else
+                @as(i128, 1_000) * 1_000_000;
+        }
+    };
+    regressing_clock.call_count = 0;
+    var gen = Generator.withClock(regressing_clock.clock);
+    const a = try gen.newV7(); // ts=2000ms
+    const b = try gen.newV7(); // clock returns 1000ms but should preserve 2000ms
+    // b must NOT have a lower timestamp than a (monotonicity preserved)
+    const ts_a = try @import("timestamp.zig").timestampFromV7(a);
+    const ts_b = try @import("timestamp.zig").timestampFromV7(b);
+    try std.testing.expect(ts_b.toUnixMs() >= ts_a.toUnixMs());
+}
+
 test "Generator.newV7: monotone within same ms" {
     // Use deterministic clock that always returns the same ms
     const fixed_clock = struct {
@@ -549,7 +572,7 @@ test "GeneratorInterface: newV8 dispatches correctly (G-8, QC-22)" {
     const a = [6]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
     const b_bytes = [2]u8{ 0x07, 0x08 };
     const c = [8]u8{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
-    const u = try iface.newV8(a, b_bytes, c);
+    const u = iface.newV8(a, b_bytes, c);
     try std.testing.expectEqual(Version.v8, u.version());
     try std.testing.expectEqual(Variant.rfc9562, u.variant());
 }

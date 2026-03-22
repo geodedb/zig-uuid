@@ -86,7 +86,7 @@ pub fn main() !void {
 | `newV6AtTime(ts: Timestamp) !UUID` | V6 at a specific Gregorian timestamp |
 | `newV7() !UUID` | Unix-ms timestamp + random (recommended) |
 | `newV7AtTime(ms: i64) !UUID` | V7 at a specific Unix-ms timestamp |
-| `newV8(a, b, c) !UUID` | Custom 128-bit payload with V8 markers |
+| `newV8(a, b, c) UUID` | Custom 128-bit payload with V8 markers (infallible) |
 
 ### UUID type
 
@@ -169,6 +169,12 @@ pub fn main() !void {
 The nil and max UUIDs are available via both `uuid.nil`/`uuid.max` (top-level
 re-exports) and `uuid.UUID.nil`/`uuid.UUID.max` (struct-scoped constants).
 Both refer to the same values; prefer the shorter `uuid.nil`/`uuid.max` form.
+
+### Library metadata
+
+| Constant | Description |
+|----------|-------------|
+| `uuid.version` | Library version string (e.g. `"0.1.0"`) |
 
 ## Requirements
 

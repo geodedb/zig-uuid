@@ -180,10 +180,15 @@ pub const Generator = struct {
         // PERF-07: Read clock inside the mutex to use the freshest possible
         // timestamp and avoid stale-timestamp collisions under high contention.
         self.v7_mutex.lock();
-        const ms = clockToMs(self.clock()) catch |err| {
+        var ms = clockToMs(self.clock()) catch |err| {
             self.v7_mutex.unlock();
             return err;
         };
+        // SEC-R14-02 (CWE-1284): If the system clock jumped backward (NTP
+        // correction, VM migration), preserve last_ms to maintain V7 k-sortable
+        // monotonicity.  This only applies to clock-derived timestamps; user-
+        // provided timestamps via newV7AtTime are accepted as-is.
+        if (ms < self.last_ms) ms = self.last_ms;
         return self.newV7Locked(ms);
     }
 
@@ -257,6 +262,8 @@ pub const Generator = struct {
                 self.v7_mutex.unlock();
                 return err;
             };
+            // SEC-R14-02: clamp backward clock to preserve monotonicity
+            if (ms < self.last_ms) ms = self.last_ms;
 
             // If the clock has already advanced past last_ms (or another
             // thread reset mono_seq), skip the sleep — the while condition
@@ -277,6 +284,9 @@ pub const Generator = struct {
         }
 
         // Single branch: same-ms increment OR new-ms reset. seq is always assigned.
+        // Note: clock regression is handled upstream — newV7() clamps ms to last_ms
+        // before calling this function (SEC-R14-02), and the spin-wait loop applies
+        // the same clamp after each clock re-read.
         var seq: u12 = undefined;
         if (ms == self.last_ms) {
             // Same ms: increment (the spin-wait above guarantees mono_seq < maxInt).
@@ -414,11 +424,20 @@ pub const Generator = struct {
         return .{ .t = ts.value, .node = node, .clock_seq = self.clock_seq };
     }
 
+    /// Generate a UUIDv1 (Gregorian timestamp + node ID).
+    ///
+    /// Uses `Timestamp.now()` (system clock) — NOT affected by `withClock()`.
+    /// Returns `Error.InvalidTimestamp` if the system clock is before the Unix
+    /// epoch or far in the future, or `Error.RandomError` if the CSPRNG fails.
     pub fn newV1(self: *Generator) Error!UUID {
         const ts = try Timestamp.now();
         return self.newV1AtTime(ts);
     }
 
+    /// Generate a UUIDv1 using the given Gregorian timestamp.
+    ///
+    /// **Errors:** `Error.RandomError` (CSPRNG failure for clock_seq init or
+    /// random node ID), `Error.NoHWAddressFound` (hwaddr_fn set but failed).
     pub fn newV1AtTime(self: *Generator, ts: Timestamp) Error!UUID {
         // PERF-05: Pre-fetch node outside the mutex on the cold path to avoid
         // blocking all threads during OS syscalls (socket + ioctl on Linux,
@@ -446,11 +465,18 @@ pub const Generator = struct {
         return u;
     }
 
+    /// Generate a UUIDv6 (reordered Gregorian timestamp + node ID).
+    ///
+    /// Uses `Timestamp.now()` (system clock) — NOT affected by `withClock()`.
+    /// Same error surface as `newV1`.
     pub fn newV6(self: *Generator) Error!UUID {
         const ts = try Timestamp.now();
         return self.newV6AtTime(ts);
     }
 
+    /// Generate a UUIDv6 using the given Gregorian timestamp.
+    ///
+    /// Same error surface as `newV1AtTime`.
     pub fn newV6AtTime(self: *Generator, ts: Timestamp) Error!UUID {
         // PERF-05: Pre-fetch node outside the mutex on the cold path.
         const prefetched: ?[6]u8 = if (self.node_cache == null)
@@ -800,7 +826,7 @@ pub const GeneratorInterface = struct {
         newV5: *const fn (*anyopaque, UUID, []const u8) UUID,
         newV6: *const fn (*anyopaque) Error!UUID,
         newV6AtTime: *const fn (*anyopaque, Timestamp) Error!UUID,
-        newV8: *const fn (*anyopaque, [6]u8, [2]u8, [8]u8) Error!UUID,
+        newV8: *const fn (*anyopaque, [6]u8, [2]u8, [8]u8) UUID,
     };
 
     /// Generate a random UUIDv4 via the underlying generator.
@@ -840,7 +866,8 @@ pub const GeneratorInterface = struct {
         return self.vtable.newV6AtTime(self.ptr, ts);
     }
     /// Generate a UUIDv8 (custom/experimental) from caller-provided fields.
-    pub fn newV8(self: GeneratorInterface, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
+    /// This function is infallible — no clock, random, or I/O is needed.
+    pub fn newV8(self: GeneratorInterface, a: [6]u8, b: [2]u8, c: [8]u8) UUID {
         return self.vtable.newV8(self.ptr, a, b, c);
     }
 
@@ -903,7 +930,7 @@ const generator_vtable = GeneratorInterface.VTable{
         }
     }.f,
     .newV8 = struct {
-        fn f(p: *anyopaque, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
+        fn f(p: *anyopaque, a: [6]u8, b: [2]u8, c: [8]u8) UUID {
             return castGen(p).newV8(a, b, c);
         }
     }.f,

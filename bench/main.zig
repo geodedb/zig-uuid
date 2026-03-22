@@ -14,6 +14,8 @@ const std = @import("std");
 const uuid = @import("uuid");
 
 const iters: usize = 1_000_000;
+// Sub-nanosecond operations need more iterations to get measurable results.
+const fast_iters: usize = 100_000_000;
 
 pub fn main() !void {
     std.debug.print("UUID benchmark — {d}M iterations each\n", .{iters / 1_000_000});
@@ -49,7 +51,7 @@ fn benchV4() !void {
         sink ^= u.bytes[0];
     }
     report("newV4", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchV7() !void {
@@ -62,7 +64,7 @@ fn benchV7() !void {
         sink ^= u.bytes[0];
     }
     report("newV7", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchV1() !void {
@@ -75,7 +77,7 @@ fn benchV1() !void {
         sink ^= u.bytes[0];
     }
     report("newV1", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchV6() !void {
@@ -88,7 +90,7 @@ fn benchV6() !void {
         sink ^= u.bytes[0];
     }
     report("newV6", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchV3() !void {
@@ -108,7 +110,7 @@ fn benchV3() !void {
         sink ^= u.bytes[0];
     }
     report("newV3", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchV5() !void {
@@ -127,7 +129,7 @@ fn benchV5() !void {
         sink ^= u.bytes[0];
     }
     report("newV5", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchToString() !void {
@@ -149,7 +151,7 @@ fn benchToString() !void {
         sink ^= s[0];
     }
     report("toString", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchToStringUpper() !void {
@@ -166,9 +168,10 @@ fn benchToStringUpper() !void {
     while (i < iters) : (i += 1) {
         const s = pool[i % pool_size].toStringUpper(&buf);
         sink ^= s[0];
+        std.mem.doNotOptimizeAway(&buf);
     }
     report("toStringUpper", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchToStringAlloc() !void {
@@ -189,7 +192,7 @@ fn benchToStringAlloc() !void {
         sink ^= s[0];
     }
     report("toStringAlloc", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchToHex() !void {
@@ -210,7 +213,7 @@ fn benchToHex() !void {
         sink ^= s[0];
     }
     report("toHex", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchToHexUpper() !void {
@@ -227,9 +230,10 @@ fn benchToHexUpper() !void {
     while (i < iters) : (i += 1) {
         const s = pool[i % pool_size].toHexUpper(&buf);
         sink ^= s[0];
+        std.mem.doNotOptimizeAway(&buf);
     }
     report("toHexUpper", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchToHexAlloc() !void {
@@ -250,7 +254,7 @@ fn benchToHexAlloc() !void {
         sink ^= s[0];
     }
     report("toHexAlloc", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchV7AtTime() !void {
@@ -268,97 +272,142 @@ fn benchV7AtTime() !void {
         ms += 1;
     }
     report("newV7AtTime", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchFromString() !void {
-    // PERF-11: Derive the input string at runtime from a freshly-generated
-    // UUID so the parser cannot be constant-folded away.  XOR a result byte
-    // into `sink` and conditionally print it to prevent DCE of the loop body.
+    // PERF-11 / PERF-25: Pre-generate a pool of 256 distinct UUID strings so
+    // the parser cannot constant-fold or hoist the result across iterations.
     var gen = uuid.Generator.init();
-    const u = try gen.newV4();
-    var str_buf: [36]u8 = undefined;
-    const s = u.toString(&str_buf);
+    const pool_size = 256;
+    var str_pool: [pool_size][36]u8 = undefined;
+    var slices: [pool_size][]const u8 = undefined;
+    for (&str_pool, 0..) |*buf, j| {
+        const u = try gen.newV4();
+        const s = u.toString(buf);
+        slices[j] = s;
+    }
 
     var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        const parsed = try uuid.UUID.fromString(s);
+        const parsed = try uuid.UUID.fromString(slices[i % pool_size]);
         sink ^= parsed.bytes[0];
     }
     report("fromString", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchFromStringHex() !void {
-    // QC-45: benchmark fromString with 32-char hex (no-dashes) input.
+    // QC-45 / PERF-25: benchmark fromString with 32-char hex (no-dashes) input.
+    // Pre-generate a pool of 256 distinct hex strings to prevent constant folding.
     var gen = uuid.Generator.init();
-    const u = try gen.newV4();
-    var hex_buf: [32]u8 = undefined;
-    const s = u.toHex(&hex_buf);
+    const pool_size = 256;
+    var hex_pool: [pool_size][32]u8 = undefined;
+    var slices: [pool_size][]const u8 = undefined;
+    for (&hex_pool, 0..) |*buf, j| {
+        const u = try gen.newV4();
+        const s = u.toHex(buf);
+        slices[j] = s;
+    }
 
     var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        const parsed = try uuid.UUID.fromString(s);
+        const parsed = try uuid.UUID.fromString(slices[i % pool_size]);
         sink ^= parsed.bytes[0];
     }
     report("fromStr/hex", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchFromStringURN() !void {
-    // QC-45: benchmark fromString with urn:uuid: prefixed canonical input.
+    // QC-45 / PERF-25: benchmark fromString with urn:uuid: prefixed canonical input.
+    // Pre-generate a pool of 256 distinct URN strings to prevent constant folding.
     var gen = uuid.Generator.init();
-    const u = try gen.newV4();
-    var urn_buf: [45]u8 = undefined;
-    const s = u.toURN(&urn_buf);
+    const pool_size = 256;
+    var urn_pool: [pool_size][45]u8 = undefined;
+    var slices: [pool_size][]const u8 = undefined;
+    for (&urn_pool, 0..) |*buf, j| {
+        const u = try gen.newV4();
+        const s = u.toURN(buf);
+        slices[j] = s;
+    }
 
     var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
-        const parsed = try uuid.UUID.fromString(s);
+        const parsed = try uuid.UUID.fromString(slices[i % pool_size]);
         sink ^= parsed.bytes[0];
     }
     report("fromStr/urn", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchEql() !void {
-    // QC-73: benchmark UUID.eql() — non-constant-time byte comparison.
+    // QC-73 / PERF-22: benchmark UUID.eql() — non-constant-time byte comparison.
+    // Uses fast_iters (100M) because 16-byte memcmp is sub-nanosecond at ReleaseFast.
     var gen = uuid.Generator.init();
-    const a = try gen.newV4();
-    const b = try gen.newV4();
+    const pool_size = 256;
+    var pool_a: [pool_size]uuid.UUID = undefined;
+    var pool_b: [pool_size]uuid.UUID = undefined;
+    for (&pool_a) |*u| u.* = try gen.newV4();
+    for (&pool_b) |*u| u.* = try gen.newV4();
+    std.mem.doNotOptimizeAway(&pool_a);
+    std.mem.doNotOptimizeAway(&pool_b);
+
     var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
-    while (i < iters) : (i += 1) {
-        const result = a.eql(b);
-        sink ^= if (result) @as(u8, 1) else @as(u8, 0);
+    while (i < fast_iters) : (i += 1) {
+        var idx = i % pool_size;
+        std.mem.doNotOptimizeAway(&idx);
+        const result = pool_a[idx].eql(pool_b[idx]);
+        sink ^= @intFromBool(result);
     }
-    report("eql", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    reportN("eql", start, fast_iters);
+    std.mem.doNotOptimizeAway(sink);
 }
 
 fn benchTimingSafeEql() !void {
-    // QC-73: benchmark UUID.timingSafeEql() — constant-time comparison via
-    // std.crypto.timing_safe.eql. Measures the overhead vs eql() so callers
-    // can make informed decisions about where timing safety is needed.
+    // QC-73 / PERF-22: benchmark UUID.timingSafeEql() — constant-time comparison
+    // via std.crypto.timing_safe.eql.
+    // Uses fast_iters (100M) because 16-byte XOR+OR is sub-nanosecond at ReleaseFast.
     var gen = uuid.Generator.init();
-    const a = try gen.newV4();
-    const b = try gen.newV4();
+    const pool_size = 256;
+    var pool_a: [pool_size]uuid.UUID = undefined;
+    var pool_b: [pool_size]uuid.UUID = undefined;
+    for (&pool_a) |*u| u.* = try gen.newV4();
+    for (&pool_b) |*u| u.* = try gen.newV4();
+
     var sink: u8 = 0;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
-    while (i < iters) : (i += 1) {
-        const result = a.timingSafeEql(b);
-        sink ^= if (result) @as(u8, 1) else @as(u8, 0);
+    while (i < fast_iters) : (i += 1) {
+        var idx = i % pool_size;
+        std.mem.doNotOptimizeAway(&idx);
+        const result = pool_a[idx].timingSafeEql(pool_b[idx]);
+        sink ^= @intFromBool(result);
     }
-    report("timingSafeEql", start);
-    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+    reportN("timingSafeEql", start, fast_iters);
+    std.mem.doNotOptimizeAway(sink);
+}
+
+fn reportN(name: []const u8, start: i128, n: usize) void {
+    const elapsed = std.time.nanoTimestamp() - start;
+    const ns_per_op = @divTrunc(elapsed, @as(i128, n));
+    const ops_per_sec = if (ns_per_op > 0)
+        @divTrunc(1_000_000_000, ns_per_op)
+    else
+        0;
+    std.debug.print("{s:<12} {d:>6} ns/op  {d:>12} ops/s\n", .{
+        name,
+        ns_per_op,
+        ops_per_sec,
+    });
 }
 
 fn report(name: []const u8, start: i128) void {
