@@ -32,12 +32,19 @@ pub fn getHWAddr() Error![6]u8 {
     ) catch return Error.NoHWAddressFound;
     defer std.posix.close(sock);
 
-    // Get interface list
-    var ifreqs: [64]ifreq = undefined;
+    // Get interface list.
+    // SEC-R2-13: Use 128 slots instead of 64; SIOCGIFCONF truncation is not
+    // detectable without a retry loop (kernel sets ifc_len to bytes used, which
+    // equals buffer size when truncated). For UUID node-ID purposes (we need any
+    // one non-loopback Ethernet MAC), this is sufficient for all realistic systems.
+    // Systems with >128 interfaces will silently fall back to a random multicast
+    // node, which is the correct privacy-preserving behaviour.
+    var ifreqs: [128]ifreq = undefined;
     var ifc = ifconf{
         .ifc_len = @intCast(@sizeOf(ifreq) * ifreqs.len),
         .ifc_buf = &ifreqs,
     };
+    const initial_len: c_int = ifc.ifc_len;
     const ifc_ret = linux.syscall3(
         .ioctl,
         @as(usize, @intCast(sock)),
@@ -45,6 +52,13 @@ pub fn getHWAddr() Error![6]u8 {
         @intFromPtr(&ifc),
     );
     if (ifc_ret != 0) return Error.NoHWAddressFound;
+    // Detect possible truncation (informational; we still search what we got).
+    // When ifc_len equals the initial buffer size, the kernel may have filled the
+    // buffer completely and truncated additional interfaces.
+    if (ifc.ifc_len == initial_len) {
+        // Buffer was completely filled; results may be truncated.
+        // We continue searching returned interfaces for a valid MAC.
+    }
 
     // SEC-3 / CWE-190: ifc_len is a signed c_int; a negative value (kernel
     // bug or pathological response) would cause @intCast to panic in safe

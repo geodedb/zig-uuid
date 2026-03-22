@@ -85,4 +85,5 @@ test {
     _ = @import("versions.zig");
     _ = @import("null_uuid.zig");
     _ = @import("hwaddr/hwaddr.zig");
+    _ = @import("fuzz.zig"); // SEC-R2-11: fuzz tests for UUID parsing
 }

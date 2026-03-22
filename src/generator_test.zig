@@ -5,6 +5,7 @@
 // All test logic is here; generator.zig imports this file via `test { _ = @import("generator_test.zig"); }`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Generator = @import("generator.zig").Generator;
 const GeneratorInterface = @import("generator.zig").GeneratorInterface;
 const UUID = @import("uuid.zig").UUID;
@@ -352,11 +353,13 @@ test "RFC Appendix A.6 — V7 test vector (F-6)" {
 // --- F-9: saveState / loadState ---
 
 test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
-    const alloc = std.testing.allocator;
-    _ = alloc;
-
-    const path = "/tmp/uuid_generator_state_test.bin";
-    defer std.fs.deleteFileAbsolute(path) catch {};
+    // SEC-R3-02: use tmpDir for test isolation instead of a predictable /tmp path.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
 
     const mock_hw = struct {
         fn getHW() Error![6]u8 {
@@ -393,8 +396,13 @@ test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
 test "Generator.loadState: V7 fast-restart forces mono_seq overflow (PERF-04)" {
     // When the saved last_ms is in the future (or equal to now), the
     // conservative path activates: last_ms is kept, mono_seq = maxInt.
-    const path = "/tmp/uuid_v7_fast_restart_test.bin";
-    defer std.fs.deleteFileAbsolute(path) catch {};
+    // SEC-R3-02: use tmpDir for test isolation.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
 
     // Use a far-future last_ms so that current_ms <= saved_ms always holds.
     const far_future_ms: i64 = std.math.maxInt(i64);
@@ -420,9 +428,15 @@ test "Generator.loadState: V7 fast-restart forces mono_seq overflow (PERF-04)" {
 }
 
 test "Generator.saveState is atomic: no .tmp file lingers on success (SEC-9)" {
-    const path = "/tmp/uuid_state_atomic_test.bin";
-    const tmp_path = "/tmp/uuid_state_atomic_test.bin.tmp";
-    defer std.fs.deleteFileAbsolute(path) catch {};
+    // SEC-R3-02: use tmpDir for test isolation.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+    var tmp_path_buf: [std.fs.max_path_bytes + 20]u8 = undefined;
+    const tmp_path = try std.fmt.bufPrint(&tmp_path_buf, "{s}/state.bin.tmp", .{dir_path});
 
     var gen = Generator.init();
     gen.clock_seq = 0x0042;
@@ -440,7 +454,14 @@ test "Generator.saveState is atomic: no .tmp file lingers on success (SEC-9)" {
 }
 
 test "Generator.loadState: corrupt magic returns error (F-9)" {
-    const path = "/tmp/uuid_state_bad_magic_test.bin";
+    // SEC-R3-02: use tmpDir for test isolation.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
     var bad_buf = [_]u8{0} ** Generator.state_size;
     bad_buf[0] = 'X'; // corrupt magic
 
@@ -450,13 +471,17 @@ test "Generator.loadState: corrupt magic returns error (F-9)" {
 
     var gen = Generator.init();
     try std.testing.expectError(Error.InvalidFormat, gen.loadState(path));
-    std.fs.deleteFileAbsolute(path) catch {};
 }
 
 test "Generator.loadState: v1 format (22 bytes) accepted for backward compat (SEC-10)" {
     // Manually write a version-1 state blob and confirm it loads cleanly.
-    const path = "/tmp/uuid_state_v1_compat_test.bin";
-    defer std.fs.deleteFileAbsolute(path) catch {};
+    // SEC-R3-02: use tmpDir for test isolation.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
 
     var blob: [Generator.state_size_v1]u8 = undefined;
     @memcpy(blob[0..4], &Generator.state_magic);
@@ -476,6 +501,53 @@ test "Generator.loadState: v1 format (22 bytes) accepted for backward compat (SE
     try std.testing.expect(gen.clock_seq_initialized);
     // V7 state defaults to zero (no data in v1 blob).
     try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
+}
+
+test "Generator.saveState: symlink at .tmp path does not redirect write (SEC-R3-01)" {
+    // SEC-R3-01 (CWE-61): Verify that a pre-placed symlink at <path>.tmp is
+    // removed by saveState rather than followed.  saveState must unlink any
+    // existing .tmp file before creating the real one with O_EXCL, so the write
+    // always goes to a fresh, owned file — never to a symlink target.
+    //
+    // Skip on Windows: symlink creation requires elevated privileges.
+    if (builtin.os.tag == .windows) return;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+    var tmp_path_buf: [std.fs.max_path_bytes + 20]u8 = undefined;
+    const tmp_path = try std.fmt.bufPrint(&tmp_path_buf, "{s}/state.bin.tmp", .{dir_path});
+
+    // Pre-create a symlink at the .tmp location pointing to /dev/null.
+    // /dev/null is non-destructive: writes silently succeed but no data is stored.
+    // A real attack would point to a sensitive file; we use /dev/null for safety.
+    try std.posix.symlink("/dev/null", tmp_path);
+
+    // Verify the symlink is there before saveState runs.
+    // Use fstatat with AT.SYMLINK_NOFOLLOW (equivalent to lstat).
+    const stat_before = try std.posix.fstatat(std.posix.AT.FDCWD, tmp_path, std.posix.AT.SYMLINK_NOFOLLOW);
+    try std.testing.expect(std.posix.S.ISLNK(stat_before.mode));
+
+    var gen = Generator.init();
+    gen.clock_seq = 0x0099;
+    gen.clock_seq_initialized = true;
+
+    // saveState must succeed: it removes the symlink, creates a real file,
+    // writes the state, and renames it into place.
+    try gen.saveState(path);
+
+    // The .tmp file must no longer exist (renamed to path).
+    const access_err = std.fs.accessAbsolute(tmp_path, .{});
+    try std.testing.expectError(error.FileNotFound, access_err);
+
+    // The state must have been written correctly (round-trip load).
+    var gen2 = Generator.init();
+    try gen2.loadState(path);
+    try std.testing.expectEqual(gen.clock_seq, gen2.clock_seq);
+    try std.testing.expect(gen2.clock_seq_initialized);
 }
 
 // --- G-8: GeneratorInterface ---

@@ -44,6 +44,45 @@ This project implements:
 - **Dependency Scanning**: Automated security scanning in CI
 - **Secret Detection**: Gitleaks scanning for leaked credentials
 
+## Library Security Properties
+
+### UUID Version Security
+
+| Version | Algorithm | Collision Resistance | Notes |
+|---------|-----------|---------------------|-------|
+| V4 | CSPRNG | Strong (122 bits random) | Recommended for non-sorted use cases |
+| V7 | Timestamp + CSPRNG | Strong (62 bits random) | Recommended for sorted use cases |
+| V1/V6 | Gregorian + Node | Node-dependent | Default uses random multicast node (privacy-safe) |
+| V5 | SHA-1 | Weakened (SHAttered) | Use for interop only; prefer V8 for new systems |
+| V3 | MD5 | Broken | Avoid; exists for backward compat only |
+| V8 | Custom | Caller-defined | Can be strong with modern hash |
+
+### Known Design Trade-offs
+
+1. **V1/V6 MAC disclosure (opt-in):** `Generator.withHWAddr()` embeds the real hardware
+   MAC address in every V1/V6 UUID. This is an explicit opt-in; the default uses a random
+   node ID. Only enable MAC-based nodes when recipients are trusted and MAC embedding is
+   intentional.
+
+2. **V7 monotonic counter predictability:** The 12-bit `rand_a` counter is randomly seeded
+   each new millisecond and increments deterministically within the same millisecond. Within
+   a single millisecond, generated UUIDs are predictable in their counter field. The 62-bit
+   `rand_b` field remains fully random. This does not affect UUID uniqueness or collision
+   resistance.
+
+3. **HashDoS via HashContext:** `UUID.HashContext` uses a fixed Wyhash seed. Use
+   `UUID.SecureHashContext` for untrusted UUID keys. See README for details.
+
+4. **V3/V5 algorithm weakness:** MD5 (V3) and SHA-1 (V5) are cryptographically broken.
+   Do not use for collision-sensitive applications. See README for alternatives.
+
+### Dependency Security
+
+The external `json` dependency is pinned to a specific git commit SHA and verified by the
+Zig package manager's content hash (stored in `build.zig.zon`). The hash is verified at
+build time; a compromised upstream repository cannot substitute different content without
+changing the hash.
+
 ## Security Best Practices
 
 When using this library:

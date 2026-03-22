@@ -35,13 +35,32 @@ pub const Timestamp = struct {
     }
 
     /// Convert to Unix milliseconds (G-5).
+    ///
+    /// **Bounds:** The 60-bit Gregorian timestamp space maps to Unix ms values
+    /// in the range [-12.2T, +103T], which fits within i64. The @intCast below
+    /// cannot panic for any valid u60 Timestamp value. The saturating clamps are
+    /// defense-in-depth against future changes to the value field width (SEC-R2-15).
     pub fn toUnixMs(self: Timestamp) i64 {
-        return @intCast(@divTrunc(self.toUnixNano(), 1_000_000));
+        const ns = self.toUnixNano();
+        // Divide first (i128 → smaller i128) before casting to i64.
+        // For any u60 value, the result fits in i64 (see doc comment above).
+        const ms128 = @divTrunc(ns, 1_000_000);
+        if (ms128 > std.math.maxInt(i64)) return std.math.maxInt(i64);
+        if (ms128 < std.math.minInt(i64)) return std.math.minInt(i64);
+        return @intCast(ms128);
     }
 
     /// Convert to Unix seconds (G-5).
+    ///
+    /// **Bounds:** Same as toUnixMs — all valid Timestamp values fit in i64
+    /// after dividing by 1_000_000_000. The saturating clamps are
+    /// defense-in-depth against future changes to the value field width (SEC-R2-15).
     pub fn toUnixSec(self: Timestamp) i64 {
-        return @intCast(@divTrunc(self.toUnixNano(), 1_000_000_000));
+        const ns = self.toUnixNano();
+        const sec128 = @divTrunc(ns, 1_000_000_000);
+        if (sec128 > std.math.maxInt(i64)) return std.math.maxInt(i64);
+        if (sec128 < std.math.minInt(i64)) return std.math.minInt(i64);
+        return @intCast(sec128);
     }
 
     /// Create from Unix nanoseconds.
@@ -201,4 +220,18 @@ test "timestampFromV1: error on wrong version" {
     var u = UUID{ .bytes = [_]u8{0} ** 16 };
     u.setVersion(.v4);
     try std.testing.expectError(Error.InvalidVersion, timestampFromV1(u));
+}
+
+test "Timestamp.toUnixMs: i64 cast is safe at extreme u60 values (SEC-R2-15/#48)" {
+    // Max u60 value → far future (year ~5236): fits in i64
+    const ts_max = Timestamp{ .value = std.math.maxInt(u60) };
+    const ms_max = ts_max.toUnixMs();
+    try std.testing.expect(ms_max > 0);
+    try std.testing.expect(ms_max < std.math.maxInt(i64));
+
+    // value = 0 (before Gregorian epoch): negative ms, fits in i64
+    const ts_zero = Timestamp{ .value = 0 };
+    const ms_zero = ts_zero.toUnixMs();
+    try std.testing.expect(ms_zero < 0);
+    try std.testing.expect(ms_zero > std.math.minInt(i64));
 }

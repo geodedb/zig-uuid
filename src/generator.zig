@@ -136,31 +136,35 @@ pub const Generator = struct {
     /// PERF-02: Releases the mutex before the 8-byte rand_b CSPRNG call so
     ///   concurrent threads are not serialised on the getrandom syscall.
     ///   Only the lightweight state update (last_ms, mono_seq) is held.
+    ///
+    /// SEC-R2-14: The previous two-sequential-if design left seq=0 when another
+    ///   thread "stole" the new millisecond during the spin-wait (neither branch
+    ///   was entered). Fixed by using a single while-loop that exits when either
+    ///   (a) the clock advances, or (b) another thread reset mono_seq, followed
+    ///   by a single if/else that always assigns seq.
     fn newV7Locked(self: *Generator, ts: i64) Error!UUID {
         var ms = ts;
-        // seq is always assigned before use in every branch below.
-        var seq: u12 = 0;
 
-        if (ms == self.last_ms) {
-            // Same ms: advance the monotonic sequence counter.
-            if (self.mono_seq == std.math.maxInt(u12)) {
-                // Counter exhausted: yield until the clock advances to the next ms.
-                // PERF-01: Thread.yield() (~10–50 ns) vs Thread.sleep(100_000) (~100 µs+).
-                while (ms == self.last_ms) {
-                    self.mutex.unlock();
-                    std.Thread.yield() catch {}; // yield; ignore spurious errors
-                    self.mutex.lock();
-                    ms = @intCast(@divTrunc(self.clock(), 1_000_000));
-                }
-                // ms has advanced — fall through to random reset below.
-            } else {
-                self.mono_seq += 1;
-                seq = self.mono_seq;
-            }
+        // If the counter is exhausted in the current ms, spin-wait until either:
+        //   (a) the clock advances to a new ms, OR
+        //   (b) another thread resets mono_seq (exits the while, ms == last_ms,
+        //       counter not maxed — it is safe to increment immediately).
+        // PERF-01: Thread.yield() (~10–50 ns) vs Thread.sleep(100_000) (~100 µs+).
+        while (ms == self.last_ms and self.mono_seq == std.math.maxInt(u12)) {
+            self.mutex.unlock();
+            std.Thread.yield() catch {}; // yield; ignore spurious errors
+            self.mutex.lock();
+            ms = @intCast(@divTrunc(self.clock(), 1_000_000));
         }
 
-        if (ms != self.last_ms) {
-            // New ms: reset mono_seq to a random 12-bit seed for jitter.
+        // Single branch: same-ms increment OR new-ms reset. seq is always assigned.
+        var seq: u12 = undefined;
+        if (ms == self.last_ms) {
+            // Same ms: increment (the spin-wait above guarantees mono_seq < maxInt).
+            self.mono_seq += 1;
+            seq = self.mono_seq;
+        } else {
+            // New ms: seed mono_seq with random jitter (RFC-9562 §6.2).
             var rand_seq: [2]u8 = undefined;
             self.rand(&rand_seq) catch {
                 self.mutex.unlock();
@@ -495,11 +499,26 @@ pub const Generator = struct {
         // crash or signal between write and close never leaves a torn file.
         // SEC-1: mode 0o600 prevents other local users reading the state,
         // which may contain the node ID (hardware MAC when hwaddr_fn is set).
+        // SEC-R3-01 (CWE-61): Remove any stale or attacker-placed file/symlink at
+        // the .tmp path before creating, then use exclusive:true (O_EXCL|O_CREAT on
+        // POSIX) so the OS refuses to follow a symlink or overwrite any file that
+        // appears between delete and create.  This makes saveState symlink-safe:
+        //   - deleteFileAbsolute unlinks any pre-placed symlink (not the target).
+        //   - exclusive:true fails with EEXIST if a new symlink/file appears in the
+        //     TOCTOU window, preventing the write from reaching the symlink target.
         // The mutex is NOT held during I/O (see PERF note above).
-        var tmp_path_buf: [4100]u8 = undefined;
-        const tmp_path = try std.fmt.bufPrint(&tmp_path_buf, "{s}.tmp", .{path});
+        // SEC-R2-15: Use a named constant instead of the magic number 4100.
+        // 4096 = OS maximum path length (POSIX PATH_MAX); + 4 for ".tmp" suffix.
+        const tmp_suffix = ".tmp";
+        var tmp_path_buf: [4096 + tmp_suffix.len]u8 = undefined;
+        const tmp_path = try std.fmt.bufPrint(&tmp_path_buf, "{s}{s}", .{ path, tmp_suffix });
+        // Remove any stale .tmp (e.g., from a previous crashed run) or a pre-placed
+        // symlink.  Errors (FileNotFound etc.) are intentionally ignored.
+        std.fs.deleteFileAbsolute(tmp_path) catch {};
         {
-            const f = try std.fs.createFileAbsolute(tmp_path, .{ .mode = 0o600 });
+            // exclusive:true → O_EXCL on POSIX: fails if any file or symlink now
+            // exists at tmp_path, preventing symlink-following on creation.
+            const f = try std.fs.createFileAbsolute(tmp_path, .{ .mode = 0o600, .exclusive = true });
             errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
             defer f.close();
             try f.writeAll(&buf);

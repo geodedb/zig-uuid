@@ -45,20 +45,31 @@ const ERROR_BUFFER_OVERFLOW: windows.DWORD = 111;
 const NO_ERROR: windows.DWORD = 0;
 
 pub fn getHWAddr() Error![6]u8 {
-    // Use a stack buffer; 16KB is sufficient for most systems
-    var buf: [16384]u8 align(@alignOf(IP_ADAPTER_ADDRESSES)) = undefined;
-    var buf_size: windows.ULONG = buf.len;
+    // Phase 1: try with a stack buffer (sufficient for most systems).
+    var stack_buf: [16384]u8 align(@alignOf(IP_ADAPTER_ADDRESSES)) = undefined;
+    var buf_size: windows.ULONG = stack_buf.len;
 
-    const ret = GetAdaptersAddresses(
-        AF_UNSPEC,
-        GAA_FLAG_NONE,
-        null,
-        @ptrCast(&buf),
-        &buf_size,
-    );
+    var ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_NONE, null, @ptrCast(&stack_buf), &buf_size);
+    if (ret == NO_ERROR) {
+        return findMacInAdapters(@ptrCast(&stack_buf));
+    }
+    if (ret != ERROR_BUFFER_OVERFLOW) return Error.NoHWAddressFound;
+
+    // Phase 2: stack buffer was too small; allocate the required size on the heap.
+    // SEC-R2-12: Retry with a heap-allocated buffer of the size reported by the kernel.
+    // page_allocator is appropriate here — this is a one-time cold-path operation.
+    const heap_buf = std.heap.page_allocator.alignedAlloc(u8, @alignOf(IP_ADAPTER_ADDRESSES), buf_size) catch
+        return Error.NoHWAddressFound;
+    defer std.heap.page_allocator.free(heap_buf);
+
+    ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_NONE, null, @ptrCast(heap_buf.ptr), &buf_size);
     if (ret != NO_ERROR) return Error.NoHWAddressFound;
 
-    var it: ?*IP_ADAPTER_ADDRESSES = @ptrCast(&buf);
+    return findMacInAdapters(@ptrCast(heap_buf.ptr));
+}
+
+fn findMacInAdapters(head: *IP_ADAPTER_ADDRESSES) Error![6]u8 {
+    var it: ?*IP_ADAPTER_ADDRESSES = head;
     while (it) |adapter| : (it = adapter.Next) {
         // Skip loopback
         if (adapter.IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;

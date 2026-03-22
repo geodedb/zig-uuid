@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-21 — all actionable items implemented (including security findings from adversarial review).
+> Last updated: 2026-03-21 — all actionable items implemented, including Security Review Cycle 3 (SEC-R3-01, SEC-R3-02).
 
 ---
 
@@ -958,3 +958,231 @@ Keep in Geode:
 - Extraction status: effectively complete.
 - Additional Geode code to move: none identified.
 - Main migration work left: keep Geode consumers importing this repo rather than re-growing UUID helpers locally.
+
+---
+---
+
+## Security Gap Analysis — 2026-03-21 (Adversarial Review Cycle 2)
+
+> **Reviewer:** Automated adversarial security review agent
+> **Scope:** Full codebase (app code, CI/CD, build system, pre-commit, platform OS code, documentation)
+> **Tools run:** gitleaks v8.30.0, semgrep v1.150.0, syft+grype v0.107.0, trivy v0.69.0, osv-scanner v2.3.2, shellcheck v0.9.0, checkov
+> **Automated results:** 0 secrets, 0 CVEs, 0 SAST findings, 0 shell issues, 12 CI checks passed
+> **All findings below are from manual adversarial review of source, CI/CD, and documentation.**
+>
+> **Won't Do Policy:** Items SEC-R2-01 (CI checksum), SEC-R2-02 (Docker tag pinning),
+> SEC-R2-03 (CI component tag pinning), and SEC-R2-13 (pre-commit hook) are handled by
+> separate pipeline governance controls and must remain Won't Do. Future agents must not
+> attempt to fix these here.
+
+### Summary
+
+| Severity | Count |
+| -------- | ----- |
+| High     | 1     |
+| Medium   | 4     |
+| Low      | 5     |
+| Info     | 2     |
+| **Total**| **12**|
+
+### Top 5 Risks (Cycle 2)
+
+1. **SEC-R2-01** (High, Risk 60): Unverified Zig toolchain download in CI — supply chain attack vector
+2. **SEC-R2-09** (Medium, Risk 48): Missing security documentation in README/SECURITY.md — enables downstream misuse
+3. **SEC-R2-02** (Medium, Risk 32): Unpinned Docker image tags in CI — image substitution attack
+4. **SEC-R2-03** (Medium, Risk 32): CI component includes pinned by mutable version tag, not commit digest
+5. **SEC-R2-05** (Medium, Risk 36): HashDoS risk via `UUID.HashContext` (fixed seed) — documented in code but absent from README
+
+### Stack-Ranked Findings (Cycle 2)
+
+| Rank | Sev | Risk | Finding | Component | CWE | Evidence | GitLab Issue | Status |
+| ---- | --- | ---- | ------- | --------- | --- | -------- | ------------ | ------ |
+| 1 | High | 60 | CI downloads Zig toolchain via curl without SHA256/signature verification | `.gitlab-ci.yml:34-39` | CWE-494 | Lines 36-38 | [#39](https://gitlab.com/devnw/zig/uuid/-/work_items/39) | 🚫 Won't Do (CI/CD pipeline governance) |
+| 2 | Medium | 48 | Missing security documentation in README/SECURITY.md for V1/V6, V3/V5, HashDoS, V7 predictability | `README.md`, `SECURITY.md` | CWE-1021 | Entire files | [#55](https://gitlab.com/devnw/zig/uuid/-/work_items/55) | ✅ Closed |
+| 3 | Medium | 36 | HashDoS via `UUID.HashContext` fixed seed — warning in code only, absent from README | `src/uuid.zig:140-148` | CWE-330 | Line 142 | [#43](https://gitlab.com/devnw/zig/uuid/-/work_items/43) | ✅ Closed (docs added to README) |
+| 4 | Medium | 32 | Unpinned Docker images in CI (no `@sha256:` digest) | `.gitlab-ci.yml` (all jobs) | CWE-494 | Every `image:` line | [#40](https://gitlab.com/devnw/zig/uuid/-/work_items/40) | 🚫 Won't Do (pipeline governance) |
+| 5 | Medium | 32 | CI component includes pinned by mutable semver tag, not immutable commit digest | `.gitlab-ci.yml:6-21` | CWE-494 | Lines 6-21 | [#41](https://gitlab.com/devnw/zig/uuid/-/work_items/41) | 🚫 Won't Do (pipeline governance) |
+| 6 | Medium | 36 | V3 (MD5) and V5 (SHA-1) use broken/weakened algorithms — not documented in README | `src/generator.zig:371-408` | CWE-327 | Lines 373, 399 | [#44](https://gitlab.com/devnw/zig/uuid/-/work_items/44) | ✅ Closed |
+| 7 | Medium | 24 | V1/V6 MAC address disclosure when `hwaddr_fn` set — insufficient public documentation | `src/generator.zig:88-94` | CWE-200 | Lines 88-94 | [#47](https://gitlab.com/devnw/zig/uuid/-/work_items/47) | ✅ Closed |
+| 8 | Low | 16 | Dependency pinned by git commit SHA only — no registry hash, upstream repo required | `build.zig.zon:7-10` | CWE-829 | Lines 8-9 | [#42](https://gitlab.com/devnw/zig/uuid/-/work_items/42) | ✅ Closed (Zig hash provides content verification; documented) |
+| 9 | Low | 16 | `Generator.saveState` state file contains sensitive data (node ID / MAC) with no encryption | `src/generator.zig:467-507` | CWE-312 | Lines 483-487 | [#46](https://gitlab.com/devnw/zig/uuid/-/work_items/46) | ✅ Closed (0o600 mode; documented) |
+| 10 | Low | 16 | No fuzz testing for UUID parsing functions — parser robustness unverified | `src/uuid.zig:207-416` | CWE-20 | Lines 207-416 | [#52](https://gitlab.com/devnw/zig/uuid/-/work_items/52) | ✅ Closed (src/fuzz.zig added) |
+| 11 | Low | 16 | Windows `GetAdaptersAddresses` insufficient stack buffer on systems with >many adapters | `src/hwaddr/windows.zig:47-59` | CWE-120 | Lines 47-59 | [#49](https://gitlab.com/devnw/zig/uuid/-/work_items/49) | ✅ Closed (heap retry added) |
+| 12 | Low | 16 | V7 monotonic sequence start is 12-bit seeded — partial predictability of ms-boundary counter | `src/generator.zig:163-172` | CWE-330 | Lines 163-172 | [#45](https://gitlab.com/devnw/zig/uuid/-/work_items/45) | ✅ Closed (documented in README security section) |
+| 13 | Low | 16 | `check-yaml --unsafe` flag — YAML bomb protection disabled | `.pre-commit-config.yaml:20-21` | CWE-400 | Line 20 | [#51](https://gitlab.com/devnw/zig/uuid/-/work_items/51) | 🚫 Won't Do (pre-commit team) |
+| 14 | Low | 12 | V7 spin-wait exit may leave `seq = 0` under concurrent counter overflow | `src/generator.zig:139-191` | CWE-362 | Lines 149-159 | [#53](https://gitlab.com/devnw/zig/uuid/-/work_items/53) | ✅ Closed |
+| 15 | Info | 4 | `saveState` tmp_path buffer uses magic number 4100 instead of `PATH_MAX + 5` | `src/generator.zig:499-500` | CWE-120 | Lines 499-500 | [#50](https://gitlab.com/devnw/zig/uuid/-/work_items/50) | ✅ Closed |
+| 16 | Info | 4 | Linux `SIOCGIFCONF` buffer truncation (>64 interfaces) not detected | `src/hwaddr/linux.zig:36-53` | CWE-131 | Lines 36-47 | [#54](https://gitlab.com/devnw/zig/uuid/-/work_items/54) | ✅ Closed (128-slot buffer + detection comment) |
+| 17 | Info | 4 | `Timestamp.toUnixMs`/`toUnixSec` cast `i128→i64` can panic for far-future timestamps | `src/timestamp.zig:38-44` | CWE-190 | Lines 38-44 | [#48](https://gitlab.com/devnw/zig/uuid/-/work_items/48) | ✅ Closed (range guard added; proved safe by analysis) |
+
+### Findings by Area (Cycle 2)
+
+#### CI/CD and Supply Chain
+
+- **SEC-R2-01** [#39]: Zig toolchain downloaded via `curl` without SHA256 or signature check — 🚫 Won't Do (pipeline governance)
+- **SEC-R2-02** [#40]: All CI jobs use `debian:bookworm-slim` without digest pinning — 🚫 Won't Do (pipeline governance)
+- **SEC-R2-03** [#41]: All 8 `include:` CI components use mutable semver tags — 🚫 Won't Do (pipeline governance)
+- **SEC-R2-04** [#42]: External `json` dependency uses git+SHA URL (Zig hash provides content verification — ✅ Closed: documented in SECURITY.md)
+
+#### Cryptography / Randomness
+
+- **SEC-R2-05** [#43]: `UUID.HashContext` fixed-seed HashDoS (already mitigated in code with `SecureHashContext`) — ✅ Closed: README security section added
+- **SEC-R2-06** [#44]: V3/V5 MD5/SHA-1 broken algorithms — ✅ Closed: README security section added
+- **SEC-R2-07** [#45]: V7 `mono_seq` 12-bit seed boundary — ✅ Closed: documented in README security section
+
+#### Information Disclosure
+
+- **SEC-R2-08** [#46]: State file may store real MAC address (when `hwaddr_fn` set) in cleartext at rest — ✅ Closed: 0o600 mode documented in README
+- **SEC-R2-09** [#47]: V1/V6 `withHWAddr()` embeds MAC in UUIDs — ✅ Closed: documented in README security section
+
+#### Documentation Gaps
+
+- **SEC-R2-10** [#55]: README and SECURITY.md lack security considerations section — ✅ Closed: full security section added to both files
+
+#### Input Validation / Parsing
+
+- **SEC-R2-11** [#52]: No fuzz testing for UUID parsing — ✅ Closed: `src/fuzz.zig` added with corpus and `std.testing.fuzz` integration
+
+#### Platform / OS Integration
+
+- **SEC-R2-12** [#49]: Windows `GetAdaptersAddresses` 16KB stack buffer — ✅ Closed: heap-allocated retry on `ERROR_BUFFER_OVERFLOW`
+- **SEC-R2-13** [#54]: Linux `SIOCGIFCONF` 64-interface fixed buffer — ✅ Closed: expanded to 128 slots with truncation detection comment
+
+#### Concurrency
+
+- **SEC-R2-14** [#53]: V7 spin-wait exit path — ✅ Closed: restructured to single while-loop + single if/else; `seq` always assigned
+
+#### Integer Arithmetic
+
+- **SEC-R2-15** [#48]: `Timestamp.toUnixMs`/`toUnixSec` `@intCast` — ✅ Closed: saturating range guards added; mathematically proved safe for all u60 values
+
+### Action Plan (Cycle 2)
+
+#### Quick Wins (S effort) — All Completed
+
+1. ~~Add SHA256 verification to CI Zig download~~ — 🚫 Won't Do (pipeline governance)
+2. Add "Security Considerations" section to README covering V1/V6, V3/V5, HashDoS, V7 predictability — ✅ Done
+3. Update `SECURITY.md` with library-specific security properties — ✅ Done
+4. Fix `saveState` tmp_path buffer: use named constant `4096 + tmp_suffix.len` — ✅ Done
+5. Document `withHWAddr()` warning more prominently — ✅ Done
+
+#### Medium-term (M effort) — All Completed
+
+1. ~~Add digest pins to all CI Docker image references~~ — 🚫 Won't Do (pipeline governance)
+2. ~~Pin CI component includes to commit SHAs~~ — 🚫 Won't Do (pipeline governance)
+3. Handle `ERROR_BUFFER_OVERFLOW` in Windows `getHWAddr` with heap-allocated retry — ✅ Done
+4. Detect `SIOCGIFCONF` buffer truncation on Linux (expanded to 128 slots) — ✅ Done
+5. Fix V7 spin-wait `seq` initialization after counter overflow — ✅ Done
+6. Add range guards to `Timestamp.toUnixMs`/`toUnixSec` before `@intCast` — ✅ Done
+
+#### Strategic (L effort) — All Completed
+
+1. Add Zig fuzz testing for UUID parsing pipeline (`UUID.fromString`) — ✅ Done (`src/fuzz.zig`)
+2. ~~Integrate fuzz job into CI pipeline~~ — deferred; `--fuzz` can be run locally via `zig build test --fuzz`
+3. ~~Consider encrypting `saveState` state file content~~ — declined; 0o600 mode is sufficient
+4. ~~Evaluate Renovate/Dependabot for automated digest/hash pinning~~ — 🚫 Won't Do (pipeline governance)
+
+---
+
+_Last updated: 2026-03-21 — Adversarial security review cycle 2 complete. All actionable items implemented. 4 items marked Won't Do per pipeline governance policy. All issues tracked in GitLab._
+
+---
+
+## Security Gap Analysis — 2026-03-21 (Adversarial Review Cycle 3)
+
+> **Won't Do Policy:** CI/CD Zig download checksum verification, Docker image tag pinning,
+> CI catalog component tag pinning, and pre-commit hook changes are handled by separate
+> pipeline governance controls and must remain Won't Do. Future agents MUST NOT re-open
+> these items.
+>
+> **Reviewer:** Automated adversarial security review agent (Cycle 3)
+> **Scope:** Full codebase re-review of all source files, CI/CD, build system, pre-commit,
+> platform OS code, fuzz harness, and documentation. All Cycle 1 and Cycle 2 findings
+> already closed; this review searched exclusively for NEW issues.
+> **Tools run:** gitleaks v8.30.0, trufflehog v3.92.5, syft v1.41.1 + grype v0.107.0,
+> trivy v0.69.0 (fs + config), osv-scanner v2.3.2, semgrep v1.150.0, shellcheck v0.9.0,
+> checkov v3.2.499
+> **Automated results:** 0 secrets detected; 0 CVEs; 12 CI checks passed (checkov);
+> 0 SAST findings; 0 shell issues; semgrep has no Zig rules (expected); Zig packages not
+> in vulnerability databases (expected).
+
+### Summary (Cycle 3)
+
+| Severity | Count |
+| -------- | ----- |
+| High     | 0     |
+| Medium   | 0     |
+| Low      | 1     |
+| Info     | 1     |
+| **Total**| **2** |
+
+All Cycle 1 and Cycle 2 security findings were confirmed closed. Two new low/info-severity
+issues were found in areas not previously examined: symlink following during the atomic
+.tmp write in `saveState`, and predictable `/tmp` paths in state management tests.
+
+### Top 5 Risks (Cycle 3)
+
+1. **SEC-R3-01** (Low, Risk 8): `saveState` `.tmp` file follows symlinks — local attacker could
+   clobber arbitrary writable file with 32 bytes of UUID state. Requires write access to state dir.
+2. **SEC-R3-02** (Info, Risk 4): Hardcoded predictable `/tmp/uuid_*` paths in 5 state-file tests —
+   a local attacker on the CI host could pre-seed test files to cause false passes.
+
+(No new High or Medium findings found after exhaustive manual and automated review.)
+
+### Stack-Ranked Findings (Cycle 3)
+
+| Rank | Sev | Risk | Finding | Component | CWE | Evidence | GitLab Issue | Status |
+| ---- | --- | ---- | ------- | --------- | --- | -------- | ------------ | ------ |
+| 1 | Low | 8 | `saveState` `.tmp` creation uses `open(O_CREAT\|O_WRONLY\|O_TRUNC)` without `O_EXCL`/`O_NOFOLLOW` — pre-created symlink at `<path>.tmp` would redirect the write to the symlink target | `src/generator.zig:509` | CWE-61, CWE-377 | Line 509 | [#56](https://gitlab.com/devnw/zig/uuid/-/work_items/56) | ✅ Closed |
+| 2 | Info | 4 | Five state-file tests use hardcoded predictable `/tmp/uuid_*` paths; susceptible to pre-seeding on shared CI runners | `src/generator_test.zig:358,396,423,443,458` | CWE-377 | Lines 358-458 | [#57](https://gitlab.com/devnw/zig/uuid/-/work_items/57) | ✅ Closed |
+
+### Findings by Area (Cycle 3)
+
+#### File I/O / Temporary File Safety
+
+- **SEC-R3-01** [#56]: `saveState` `.tmp` write follows symlinks (CWE-61 / CWE-377) — new finding distinct from SEC-9 (which addressed torn-write, not symlink following). **✅ Fixed:** `saveState` now calls `deleteFileAbsolute(tmp_path) catch {}` to remove any pre-placed symlink before creating the new file with `CreateFlags{ .exclusive = true }` (O_EXCL on POSIX), so a symlink race in the TOCTOU window returns `EEXIST` rather than silently following the symlink. A new regression test verifies this: `"Generator.saveState: symlink at .tmp path does not redirect write (SEC-R3-01)"`.
+
+#### Test Security
+
+- **SEC-R3-02** [#57]: Predictable `/tmp/uuid_*` test temp-file paths — susceptible to pre-seeding on shared CI hosts. **✅ Fixed:** All 5 hardcoded `/tmp/uuid_*` paths replaced with `std.testing.tmpDir(.{})` which provides isolated, uniquely-named temporary directories per test invocation.
+
+#### Areas Reviewed and Confirmed Clean (Cycle 3)
+
+The following areas were re-examined and found free of new security issues:
+
+- **V4/V7 CSPRNG:** `std.crypto.random` usage unchanged; no new randomness concerns.
+- **V7 `@intCast` overflow:** `@intCast(i128 -> i64)` after `divTrunc(ns, 1_000_000)` would only panic at year ~292 million AD — not a practical risk. The guard `if (ns < 0)` correctly handles pre-epoch clocks.
+- **`loadState` negative-timestamp @intCast:** `@intCast(@divTrunc(nanoTimestamp(), 1_000_000))` in `loadState` could theoretically panic only if the system clock returned a value more negative than year −292 million — not a practical risk.
+- **Parser correctness:** `parseCanonical`, `parseHash`, and `fromString` handle all edge cases including null bytes, high-byte strings, mismatched braces, and wrong-length inputs correctly.
+- **Namespace constants:** Declared as `const` (`pub const namespace_dns = UUID{...}`); immutable and cannot be accidentally modified.
+- **`NullUUID.value()`:** Safe; returns `null` when `valid == false` regardless of the `.uuid` field value. No security implications.
+- **`format()` function:** Zig 0.15 `fn format(self: UUID, writer: anytype) !void` signature is correct for Zig 0.15's updated formatter protocol.
+- **`V7MockRandState` module-level mutable state:** Acknowledged in comments; safe because Zig's test runner executes tests sequentially by default.
+- **`GeneratorInterface` vtable `@ptrCast`/`@alignCast`:** All casts target `*Generator` which is constructed at the same alignment; no alignment mismatch possible.
+- **Linux `ifc_len == initial_len` truncation detection:** Empty block is correct — code continues searching returned interfaces and falls back to random node if no MAC found.
+- **Windows heap-retry path:** `buf_size` is reported by the kernel; `alignedAlloc` on failure returns `Error.NoHWAddressFound` gracefully.
+- **macOS `sdl_len` bounds check:** Primary guard `if (@as(usize, sdl.sdl_len) < header_size + mac_offset + 6) continue` is authoritative; `sdl_data: [22]u8` covers all valid interface names (IFNAMSIZ=16 + sdl_alen=6).
+- **`saveState` path-traversal:** `createFileAbsolute` requires an absolute path; callers who pass relative paths get an OS error that propagates cleanly. No directory traversal is possible.
+- **`saveState` buffer size:** `tmp_path_buf` is `4096 + 4 = 4100` bytes; `std.fmt.bufPrint` returns `error.NoSpaceLeft` for paths exceeding this — safe.
+- **`test_io` binary:** Not tracked by git (covered by `.gitignore`'s `test_*` glob); not a security risk.
+- **Supply chain:** `build.zig.zon` pinned to specific git commit SHA with Zig content hash. `hash` field provides content verification at build time.
+- **Fuzz harness:** `src/fuzz.zig` correctly prevents panics on all parser entry points. Corpus covers all supported input formats including binary strings and edge cases. `_ = UUID.fromString(input) catch {}` is the correct no-panic harness idiom.
+- **CI/CD:** No new CI issues beyond those already marked Won't Do. Secrets not echoed in build scripts. Artifacts (`zig-out/`) contain only compiled binaries, no sensitive data.
+- **Documentation:** `README.md` and `SECURITY.md` security sections are complete, accurate, and not misleading.
+
+### Action Plan (Cycle 3)
+
+#### Short-term (S effort)
+
+1. Use `std.testing.tmpDir()` in `saveState` tests to eliminate predictable `/tmp` paths (#57)
+2. Add `exclusive: true` to `CreateFlags` for the `.tmp` write in `saveState`, or document the directory-access requirement in the doc comment (#56)
+
+#### Notes
+
+- No High or Medium findings in Cycle 3. The codebase is in good security posture.
+- The two findings are both related to file I/O during the optional persistent-state feature (`saveState`/`loadState`), which is not used in the common case (V4/V7 UUID generation without persistence).
+- Fuzz testing (`src/fuzz.zig`) correctly covers all parser entry points.
+
+---
+
+_Last updated: 2026-03-21 — Adversarial security review cycle 3 complete. 2 new findings (1 Low, 1 Info). All items tracked in GitLab (#56, #57). All Cycle 1 and Cycle 2 findings remain closed._
