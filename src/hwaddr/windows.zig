@@ -58,14 +58,16 @@ pub fn getHWAddr() Error![6]u8 {
     // Phase 2: stack buffer was too small; allocate the required size on the heap.
     // SEC-R2-12: Retry with a heap-allocated buffer of the size reported by the kernel.
     // page_allocator is appropriate here — this is a one-time cold-path operation.
-    const heap_buf = std.heap.page_allocator.alignedAlloc(u8, @alignOf(IP_ADAPTER_ADDRESSES), buf_size) catch
+    // page_allocator guarantees page-aligned output (≥4096 bytes), which exceeds any
+    // struct alignment we need, so plain alloc() satisfies IP_ADAPTER_ADDRESSES alignment.
+    const heap_buf = std.heap.page_allocator.alloc(u8, buf_size) catch
         return Error.NoHWAddressFound;
     defer std.heap.page_allocator.free(heap_buf);
 
-    ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_NONE, null, @ptrCast(heap_buf.ptr), &buf_size);
+    ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_NONE, null, @ptrCast(@alignCast(heap_buf.ptr)), &buf_size);
     if (ret != NO_ERROR) return Error.NoHWAddressFound;
 
-    return findMacInAdapters(@ptrCast(heap_buf.ptr));
+    return findMacInAdapters(@ptrCast(@alignCast(heap_buf.ptr)));
 }
 
 fn findMacInAdapters(head: *IP_ADAPTER_ADDRESSES) Error![6]u8 {
