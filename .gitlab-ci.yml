@@ -140,10 +140,22 @@ test-cross-build:
     - build
 
 # Coverage-guided fuzz testing (QC-59).
-# Runs with a 60-second timeout so the job always terminates.  The `|| true`
-# ensures a timeout exit-code (124) is not treated as a failure — only an
-# actual crash (corpus file written to zig-out/fuzz/) would indicate a real
-# bug.  The job is restricted to scheduled pipelines and manual triggers to
+# Runs with a 60-second timeout so the job always terminates.
+#
+# SEC-R5-02: The previous `|| true` suppressed ALL non-zero exits, including
+# genuine fuzz crashes (non-zero, non-124 exit codes).  The corrected script
+# distinguishes timeout (rc=124, expected) from a real crash (any other
+# non-zero rc, which now fails the job so engineers are notified).
+#
+# Exit-code semantics:
+#   rc=0  : fuzzer stopped cleanly before timeout (no crash)
+#   rc=124: timeout reached (expected in CI) → pass
+#   other : fuzzer found a crash → fail the job
+#
+# The fuzz corpus artifact is uploaded on failure so the crashing input
+# is recoverable after the runner container exits.
+#
+# The job is restricted to scheduled pipelines and manual triggers to
 # avoid slowing down every MR pipeline.
 fuzz:
   stage: fuzz
@@ -151,7 +163,12 @@ fuzz:
   before_script:
     - *install-zig
   script:
-    - timeout 60 zig build test --fuzz || true
+    - timeout 60 zig build test --fuzz; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi
+  artifacts:
+    when: on_failure
+    paths:
+      - zig-out/fuzz/
+    expire_in: 1 week
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
     - if: '$CI_PIPELINE_SOURCE == "web"'

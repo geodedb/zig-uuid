@@ -197,7 +197,20 @@ pub const Generator = struct {
         //       counter not maxed — it is safe to increment immediately).
         // PERF-12: sleep precisely to the next ms boundary to avoid the
         // busy-wait that Thread.yield() produces when single-threaded.
+        //
+        // SEC-R5-03: Maximum spin iterations before giving up.  A frozen or
+        // maliciously-injected clock that never advances past last_ms while
+        // mono_seq == maxInt(u12) would otherwise cause newV7 to block
+        // indefinitely.  4096 iterations ≈ a few milliseconds at normal CPU
+        // speeds; exceeding this bound is treated as an invalid/frozen clock.
+        const max_spins: usize = 4096;
+        var spins: usize = 0;
         while (ms == self.last_ms and self.mono_seq == std.math.maxInt(u12)) {
+            spins += 1;
+            if (spins > max_spins) {
+                self.mutex.unlock();
+                return Error.InvalidTimestamp;
+            }
             // Compute nanoseconds remaining in the current millisecond.
             // @rem(ns_now, 1_000_000) gives the fraction within [0, 999_999];
             // subtracting from 1_000_000 gives the sleep duration [1, 1_000_000].
@@ -433,8 +446,7 @@ pub const Generator = struct {
     ///
     /// V3 exists for backward compatibility with systems that already use it.
     /// Prefer V5 for new deployments.  See RFC-9562 §6.4.
-    pub fn newV3(self: *Generator, ns: UUID, name: []const u8) UUID {
-        _ = self;
+    pub fn newV3(_: *Generator, ns: UUID, name: []const u8) UUID {
         var md5 = std.crypto.hash.Md5.init(.{});
         md5.update(&ns.bytes);
         md5.update(name);
@@ -459,8 +471,7 @@ pub const Generator = struct {
     ///
     /// V5 is substantially safer than V3 (MD5) and is the recommended
     /// name-based UUID version for interoperability.  See RFC-9562 §6.5.
-    pub fn newV5(self: *Generator, ns: UUID, name: []const u8) UUID {
-        _ = self;
+    pub fn newV5(_: *Generator, ns: UUID, name: []const u8) UUID {
         var sha1 = std.crypto.hash.Sha1.init(.{});
         sha1.update(&ns.bytes);
         sha1.update(name);
@@ -472,8 +483,7 @@ pub const Generator = struct {
         return u;
     }
 
-    pub fn newV8(self: *Generator, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
-        _ = self;
+    pub fn newV8(_: *Generator, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
         var u: UUID = undefined;
         // custom_a: bits 0-47 → bytes 0-5
         @memcpy(u.bytes[0..6], &a);
@@ -648,7 +658,12 @@ pub const Generator = struct {
             // a clean start with no spin-wait penalty.
             // Only force mono_seq overflow when saved_ms is still current
             // (extremely fast restart within the same millisecond).
-            const current_ms: i64 = @intCast(@divTrunc(std.time.nanoTimestamp(), 1_000_000));
+            // QC-29: use the injectable clock (self.clock) instead of the raw
+            // syscall so that the fast-restart branch is testable via clock injection,
+            // consistent with every other timestamp site in the generator.
+            // Errors (negative/overflow clock) fall back to 0, which activates the
+            // conservative overflow path — the safe default.
+            const current_ms: i64 = clockToMs(self.clock()) catch 0;
             if (current_ms > saved_ms) {
                 self.last_ms = 0;
                 self.mono_seq = 0;
@@ -749,63 +764,71 @@ pub const GeneratorInterface = struct {
 };
 
 // VTable implementation for the concrete Generator type.
+// Each entry casts the opaque pointer back to *Generator and delegates (QC-38).
+inline fn castGen(ptr: *anyopaque) *Generator {
+    return @ptrCast(@alignCast(ptr));
+}
+
 const generator_vtable = GeneratorInterface.VTable{
     .newV4 = struct {
-        fn f(ptr: *anyopaque) Error!UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV4();
+        fn f(p: *anyopaque) Error!UUID {
+            return castGen(p).newV4();
         }
     }.f,
     .newV7 = struct {
-        fn f(ptr: *anyopaque) Error!UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV7();
+        fn f(p: *anyopaque) Error!UUID {
+            return castGen(p).newV7();
         }
     }.f,
     .newV7AtTime = struct {
-        fn f(ptr: *anyopaque, ts: i64) Error!UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV7AtTime(ts);
+        fn f(p: *anyopaque, ts: i64) Error!UUID {
+            return castGen(p).newV7AtTime(ts);
         }
     }.f,
     .newV1 = struct {
-        fn f(ptr: *anyopaque) Error!UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV1();
+        fn f(p: *anyopaque) Error!UUID {
+            return castGen(p).newV1();
         }
     }.f,
     .newV1AtTime = struct {
-        fn f(ptr: *anyopaque, ts: Timestamp) Error!UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV1AtTime(ts);
+        fn f(p: *anyopaque, ts: Timestamp) Error!UUID {
+            return castGen(p).newV1AtTime(ts);
         }
     }.f,
     .newV3 = struct {
-        fn f(ptr: *anyopaque, ns: UUID, name: []const u8) UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV3(ns, name);
+        fn f(p: *anyopaque, ns: UUID, name: []const u8) UUID {
+            return castGen(p).newV3(ns, name);
         }
     }.f,
     .newV5 = struct {
-        fn f(ptr: *anyopaque, ns: UUID, name: []const u8) UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV5(ns, name);
+        fn f(p: *anyopaque, ns: UUID, name: []const u8) UUID {
+            return castGen(p).newV5(ns, name);
         }
     }.f,
     .newV6 = struct {
-        fn f(ptr: *anyopaque) Error!UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV6();
+        fn f(p: *anyopaque) Error!UUID {
+            return castGen(p).newV6();
         }
     }.f,
     .newV6AtTime = struct {
-        fn f(ptr: *anyopaque, ts: Timestamp) Error!UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV6AtTime(ts);
+        fn f(p: *anyopaque, ts: Timestamp) Error!UUID {
+            return castGen(p).newV6AtTime(ts);
         }
     }.f,
     .newV8 = struct {
-        fn f(ptr: *anyopaque, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
-            return @as(*Generator, @ptrCast(@alignCast(ptr))).newV8(a, b, c);
+        fn f(p: *anyopaque, a: [6]u8, b: [2]u8, c: [8]u8) Error!UUID {
+            return castGen(p).newV8(a, b, c);
         }
     }.f,
 };
 
 // =============================================================================
-// Tests — see src/generator_test.zig (QC-4: split to keep file under 800 lines)
+// Tests — split across two files to keep each under 800 lines (QC-4, QC-28)
+//   generator_test.zig       — core generation tests
+//   generator_state_test.zig — saveState / loadState tests
 // =============================================================================
 
 test {
     _ = @import("generator_test.zig");
+    _ = @import("generator_state_test.zig");
 }
