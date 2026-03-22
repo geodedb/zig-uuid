@@ -11,8 +11,6 @@ include:
 
   # Code quality
   - component: gitlab.com/devnw/ci-catalog/zig-format@v1.2.1
-    inputs:
-      zig-version: "0.15.2"
 
   # SBOM
   - component: gitlab.com/devnw/ci-catalog/sbom-generate@v1.7.1
@@ -73,6 +71,12 @@ stages:
     fi
   - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
   - zig version
+
+# Override zig-format component to use the project's ZIG_VERSION (0.15.2).
+# The v1.2.1 component defaults to 0.14.0 and does not accept a version input.
+zig-format:
+  before_script:
+    - *install-zig
 
 # Build job (QC-18: use `zig build check` so all source files are actually
 # type-checked.  `zig build` with no installArtifact in build.zig is a no-op
