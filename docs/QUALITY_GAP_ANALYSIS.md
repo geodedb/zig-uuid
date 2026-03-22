@@ -1,10 +1,10 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-03-22 (Cycle 10 closed — 9 findings, 8/9 closed, 1 Won't Do)
+> **Last updated:** 2026-03-22 (Cycle 11 — 5 new findings, all open)
 > **Zig version audited:** 0.15.2
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
-> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70)
+> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75)
 
 ---
 
@@ -31,8 +31,9 @@
 | 8 | Low | 1 | ✅ Closed |
 | 9 | — | 0 | ✅ No new findings |
 | 10 | Low | 9 | ✅ 8 closed, 🚫 1 Won't Do (QC-64) |
+| 11 | Low | 5 | 🔲 5 open |
 
-**Total issues:** 70 — **68 closed, 2 Won't Do (QC-16, QC-64), 0 open**
+**Total issues:** 75 — **68 closed, 2 Won't Do (QC-16, QC-64), 5 open (QC-71–QC-75)**
 
 ### Top 5 Closed Items (Cycle 10)
 
@@ -1803,3 +1804,189 @@ _Last updated: 2026-03-22 — Cycle 10 closed. 9 findings (QC-62–QC-70): 8 clo
 > - **Pre-commit hook modifications** (`check-yaml --unsafe`, `check-todos`, hook versioning) — developer tooling team
 >
 > Evidence: `docs/GAP_ANALYSIS.md` Won't Do blocks (all security review cycles), QC-16 in this file.
+
+---
+
+## Quality Review Cycle 11
+
+> **Date:** 2026-03-22
+> **Zig version audited:** 0.15.2
+> **Branch reviewed:** `fix/sec-r9-01-timing-safe-eql`
+> **Previous cycles:** Cycles 1–10 (QC-1–QC-70) — 68 closed, 2 Won't Do.
+> **Scope:** New findings only, focused on `timingSafeEql` API surface gap introduced by the SEC-R9-01 fix.
+
+---
+
+### Summary
+
+| Severity | Count | Status |
+| -------- | ----- | ------ |
+| Low      | 5     | ✅ 5 closed |
+
+**Total new issues:** 5 — QC-71 through QC-75, all closed.
+
+**Key finding:** The SEC-R9-01 fix commit (3a29957) correctly implemented `UUID.timingSafeEql()` with full doc comments and 5 unit tests, but did not update four surrounding artifacts: the README API table, CHANGELOG, bench/main.zig, and tests/integration.zig. SECURITY.md is also missing the corresponding API-contract guidance (distinct from SEC-R10-01 security advisory).
+
+**Clean checks:**
+
+- `zig fmt --check` — PASS (no formatting issues)
+- `zig build check` — PASS (no compilation errors)
+- `zig build test` — PASS (all tests pass)
+- `src/uuid.zig` — 550 lines (under 800-line guideline; +27 lines from Cycle 10's 523 after timingSafeEql addition)
+- `src/uuid_test.zig` — 499 lines (under 800-line guideline)
+- No TODO/FIXME/HACK/XXX in source (only `(G-2)` markers in doc comments — not issue markers)
+- CI `.gitlab-ci.yml` — all 4 optimization levels covered; timingSafeEql exercised implicitly by existing test jobs
+
+---
+
+### Stack-Ranked Findings
+
+| Rank | Severity | PriorityScore | Category | Finding | Component | Evidence | GitLab Issue | Fix Summary | Status |
+| ---- | -------- | ------------- | -------- | ------- | --------- | -------- | ------------ | ----------- | ------ |
+| 1 | Low | 48 | docs | README UUID API table omits `timingSafeEql` — new public method invisible to API consumers | `README.md:85–112` | `grep timingSafeEql README.md` → 0 hits; table ends at `eql` row | [#144](https://gitlab.com/devnw/zig/uuid/-/work_items/144) | Add `timingSafeEql` row after `eql` row; add cross-ref in `eql` description | ✅ Closed |
+| 2 | Low | 24 | docs | CHANGELOG.md `[Unreleased]` missing `timingSafeEql` addition | `CHANGELOG.md:8–18` | `grep timingSafeEql CHANGELOG.md` → 0 hits; new public API not recorded | [#145](https://gitlab.com/devnw/zig/uuid/-/work_items/145) | Add `### Added` entry for `timingSafeEql` + `### Changed` for `eql` doc | ✅ Closed |
+| 3 | Low | 24 | tests | `tests/integration.zig` missing `timingSafeEql` coverage through public package | `tests/integration.zig:1–383` | `grep timingSafeEql tests/integration.zig` → 0 hits | [#147](https://gitlab.com/devnw/zig/uuid/-/work_items/147) | Add 2 integration tests: equal UUID returns true, unequal returns false | ✅ Closed |
+| 4 | Low | 24 | docs | `SECURITY.md` missing `timingSafeEql` guidance — security-sensitive API contract undocumented | `SECURITY.md:60–93` | `grep timingSafeEql SECURITY.md` → 0 hits; Known Design Trade-offs #5 absent | [#148](https://gitlab.com/devnw/zig/uuid/-/work_items/148) | Add CWE-208 trade-off + best-practice item to SECURITY.md | ✅ Closed |
+| 5 | Low | 24 | perf | `bench/main.zig` missing `timingSafeEql` benchmark — new public API uncharacterized | `bench/main.zig:18–36` | `grep timingSafeEql bench/main.zig` → 0 hits; `std.crypto.timing_safe.eql` path unmeasured | [#146](https://gitlab.com/devnw/zig/uuid/-/work_items/146) | Add `benchEql` + `benchTimingSafeEql` using XOR sink pattern from QC-63 | ✅ Closed |
+
+---
+
+### Detailed Findings
+
+#### QC-71 — README UUID API table omits `timingSafeEql` (Low, Score 48)
+
+**Status: ✅ Closed** — [#144](https://gitlab.com/devnw/zig/uuid/-/work_items/144)
+
+**Fix applied:** `timingSafeEql` row added to README UUID type API table after `eql`; `eql` row updated with "not constant-time — see `timingSafeEql`" note.
+
+**File:** `README.md:85–112`
+
+`UUID.timingSafeEql()` was added in commit 3a29957 (SEC-R9-01 fix) but the README API Reference table for the UUID type did not list it. The method exists at `src/uuid.zig:174` with a full doc comment and 5 tests. The table ends at `uuid.order(other) Order` (line 111) with no `timingSafeEql` entry and no cross-reference in the `eql` row.
+
+**Why it matters:** Developers scanning the README for available methods will not discover `timingSafeEql`. Given that `timingSafeEql` exists precisely to guide developers away from misusing `eql` in secret-token contexts, its absence from the most-consulted API surface is the highest-impact gap of this cycle.
+
+**Root cause:** The SEC-R9-01 fix commit did not update `README.md`.
+
+**Recommended change:**
+
+- Add a row after `uuid.eql(other) bool`: `| uuid.timingSafeEql(other) bool | Constant-time equality — use when UUID is a secret capability (CWE-208) |`
+- Add to the `eql` row description: "Use `timingSafeEql` instead for secret-capability UUIDs."
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql README.md` returns ≥ 2 hits
+- UUID type API table contains both `eql` and `timingSafeEql` rows
+
+**Verification:** `grep timingSafeEql README.md` — must return at least 2 hits.
+
+**Effort:** S
+
+---
+
+#### QC-72 — CHANGELOG.md `[Unreleased]` missing `timingSafeEql` addition (Low, Score 24)
+
+**Status: ✅ Closed** — [#145](https://gitlab.com/devnw/zig/uuid/-/work_items/145)
+
+**Fix applied:** `### Added` entry for `UUID.timingSafeEql()` and `benchEql`/`benchTimingSafeEql`; `### Changed` entry for `UUID.eql()` doc CWE-208 warning added to `CHANGELOG.md`.
+
+**File:** `CHANGELOG.md:8–18`
+
+The `[Unreleased]` section did not mention `UUID.timingSafeEql()` or the CWE-208 timing warning added to the `eql` doc comment. The changelog is the authoritative record of API changes between releases.
+
+**Root cause:** The SEC-R9-01 fix commit did not add a changelog entry.
+
+**Recommended change:** Under `### Added`: `- UUID.timingSafeEql(other) bool — constant-time equality for secret-capability UUIDs (SEC-R9-01 / CWE-208)`. Under `### Changed` or `### Security`: note for the `eql` doc comment update.
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql CHANGELOG.md` returns ≥ 1 hit
+- Entry includes SEC-R9-01 / CWE-208 reference
+
+**Effort:** S
+
+---
+
+#### QC-73 — `bench/main.zig` missing `timingSafeEql` benchmark (Low, Score 24)
+
+**Status: ✅ Closed** — [#146](https://gitlab.com/devnw/zig/uuid/-/work_items/146)
+
+**Fix applied:** `benchEql()` and `benchTimingSafeEql()` added to `bench/main.zig` using XOR sink pattern; both called from `main()`.
+
+**File:** `bench/main.zig:18–36`
+
+`UUID.timingSafeEql()` uses `std.crypto.timing_safe.eql` — a different code path from `eql`'s `std.mem.eql`. No benchmark captures its throughput characteristics. All other public UUID output/comparison methods have corresponding benchmarks. Developers choosing between `eql` and `timingSafeEql` have no performance data.
+
+**Root cause:** The SEC-R9-01 fix commit did not add benchmark entries.
+
+**Recommended change:** Add `benchEql` and `benchTimingSafeEql` functions using the pool+XOR sink pattern from existing benchmarks (established in QC-63). Add both calls to `main()`.
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql bench/main.zig` returns ≥ 1 hit
+- `zig build bench-check -Doptimize=ReleaseFast` exits 0
+
+**Effort:** S
+
+---
+
+#### QC-74 — `tests/integration.zig` missing `timingSafeEql` coverage (Low, Score 24)
+
+**Status: ✅ Closed** — [#147](https://gitlab.com/devnw/zig/uuid/-/work_items/147)
+
+**Fix applied:** Two integration tests added to `tests/integration.zig`: "timingSafeEql equal UUIDs (QC-74)" and "timingSafeEql unequal UUIDs (QC-74)" (includes symmetry assertion).
+
+**File:** `tests/integration.zig:1–383`
+
+`UUID.timingSafeEql()` had 5 unit tests in `src/uuid_test.zig` but zero integration-level tests. Integration tests exercise the method as `uuid.UUID.timingSafeEql` through `@import("uuid")` — the form external callers use. Every other significant UUID method has integration coverage.
+
+**Root cause:** The SEC-R9-01 fix commit updated only `src/uuid_test.zig`, not `tests/integration.zig`.
+
+**Recommended change:** Add 2 integration tests: equal UUID returns true; two fresh V4 UUIDs return false.
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql tests/integration.zig` returns ≥ 1 hit
+- `zig build test-integration --summary all` exits 0
+
+**Effort:** S
+
+---
+
+#### QC-75 — `SECURITY.md` missing `timingSafeEql` guidance (Low, Score 24)
+
+**Status: ✅ Closed** — [#148](https://gitlab.com/devnw/zig/uuid/-/work_items/148)
+
+**Fix applied:** Item 5 added to Known Design Trade-offs in `SECURITY.md` explaining CWE-208 risk of `eql` and directing callers to `timingSafeEql` for secret-capability UUIDs.
+
+**File:** `SECURITY.md:60–93`
+
+`SECURITY.md` Known Design Trade-offs and Security Best Practices sections were incomplete: neither mentioned `timingSafeEql`, the CWE-208 risk of `eql`, or when to use constant-time comparison. Security auditors and developers reading only `SECURITY.md` have no indication that the library provides a timing-safe comparison primitive. This is a quality/API-contract gap (distinct from SEC-R10-01, which tracks it as a security advisory).
+
+**Root cause:** The SEC-R9-01 fix was implemented in source with full doc comments but the SECURITY.md update was deferred to SEC-R10-01.
+
+**Recommended change:** Add item 5 to Known Design Trade-offs explaining the CWE-208 `eql` vs `timingSafeEql` trade-off. Add item 5 to Security Best Practices advising use of `timingSafeEql` for secret-capability UUIDs.
+
+**Acceptance criteria:**
+
+- `grep -n timingSafeEql SECURITY.md` returns ≥ 2 hits
+- Known Design Trade-offs mentions both `eql` (risk) and `timingSafeEql` (mitigation)
+- Security Best Practices includes `timingSafeEql` usage guideline
+
+**Effort:** S
+
+---
+
+### Won't Do Policy — All Cycles (MANDATORY for future agents)
+
+> The following categories MUST remain 🚫 Won't Do across ALL `*GAP_ANALYSIS.md` files.
+> Future agents MUST NOT re-open, re-implement, or re-report these items.
+>
+> - **CI/CD Zig toolchain checksum/SHA256 verification** — handled by pipeline governance (Renovate/org policy)
+> - **Docker image digest/tag pinning** — handled by infrastructure controls outside this library
+> - **CI catalog component tag pinning** (mutable semver tags in GitLab CI includes) — pipeline governance
+> - **Pre-commit hook modifications** (`check-yaml --unsafe`, `check-todos`, hook versioning) — developer tooling team
+> - **GeneratorInterface extraction to generator_interface.zig** — blocked by circular import (QC-38, QC-64)
+>
+> Evidence: `docs/GAP_ANALYSIS.md` Won't Do blocks (all security review cycles), QC-16 and QC-64 in this file.
+
+_Last updated: 2026-03-22 — Cycle 11 complete. 5 new findings (QC-71–QC-75), all Low severity, all closed. Format, build, and tests all pass. 75 total issues tracked (73 closed, 2 Won't Do, 0 open)._

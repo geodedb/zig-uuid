@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `toHexAlloc` / `toHexUpperAlloc` — allocating hex-without-dashes variants completing the API surface (QC-42)
 - `benchFromStringHex` / `benchFromStringURN` benchmarks in `bench/main.zig` (QC-45)
+- `UUID.timingSafeEql(other) bool` — constant-time equality for UUIDs used as secret tokens; wraps `std.crypto.timing_safe.eql` (SEC-R9-01 / CWE-208)
+- `benchEql` / `benchTimingSafeEql` benchmarks in `bench/main.zig` (QC-73)
 
 ### Fixed
 
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Aligned minimum Zig version to 0.15.2 in `README.md` and `build.zig.zon` (QC-44)
+- `UUID.eql()` doc comment extended with CWE-208 timing-safety warning directing secret-token callers to `timingSafeEql` (SEC-R9-01)
 
 ### Documentation
 

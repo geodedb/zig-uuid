@@ -76,6 +76,16 @@ This project implements:
 4. **V3/V5 algorithm weakness:** MD5 (V3) and SHA-1 (V5) are cryptographically broken.
    Do not use for collision-sensitive applications. See README for alternatives.
 
+5. **UUID.eql() is not constant-time (CWE-208):** `UUID.eql()` uses `std.mem.eql`, a
+   short-circuit byte comparison that terminates at the first differing byte.  When a UUID
+   is used as a secret capability — for example a V4 session token, invite token, or bearer
+   credential — comparing it with `eql` leaks timing information that an attacker can use
+   to recover the secret byte-by-byte via a remote timing oracle.  Use
+   `UUID.timingSafeEql()` instead for any comparison where the UUID value is secret.
+   `UUID.timingSafeEql()` wraps `std.crypto.timing_safe.eql` and runs in constant time
+   regardless of where bytes first differ.  `UUID.eql()` remains correct and efficient for
+   the typical case where UUIDs are public identifiers.
+
 ### Dependency Security
 
 The external `json` dependency is pinned to a specific git commit SHA and verified by the

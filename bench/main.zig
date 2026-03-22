@@ -34,6 +34,8 @@ pub fn main() !void {
     try benchFromString();
     try benchFromStringHex();
     try benchFromStringURN();
+    try benchEql();
+    try benchTimingSafeEql();
 }
 
 fn benchV4() !void {
@@ -300,6 +302,40 @@ fn benchFromStringURN() !void {
         sink ^= parsed.bytes[0];
     }
     report("fromStr/urn", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchEql() !void {
+    // QC-73: benchmark UUID.eql() — non-constant-time byte comparison.
+    var gen = uuid.Generator.init();
+    const a = try gen.newV4();
+    const b = try gen.newV4();
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const result = a.eql(b);
+        sink ^= if (result) @as(u8, 1) else @as(u8, 0);
+    }
+    report("eql", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchTimingSafeEql() !void {
+    // QC-73: benchmark UUID.timingSafeEql() — constant-time comparison via
+    // std.crypto.timing_safe.eql. Measures the overhead vs eql() so callers
+    // can make informed decisions about where timing safety is needed.
+    var gen = uuid.Generator.init();
+    const a = try gen.newV4();
+    const b = try gen.newV4();
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const result = a.timingSafeEql(b);
+        sink ^= if (result) @as(u8, 1) else @as(u8, 0);
+    }
+    report("timingSafeEql", start);
     if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 

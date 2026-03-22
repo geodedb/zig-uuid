@@ -107,7 +107,8 @@ pub fn main() !void {
 | `uuid.isMax() bool` | True if all bytes are 0xFF |
 | `uuid.isValid() bool` | True if variant is RFC-9562 and version is 1–8 |
 | `uuid.validate() !void` | Returns error if not valid RFC-9562 UUID |
-| `uuid.eql(other) bool` | Byte-wise equality |
+| `uuid.eql(other) bool` | Byte-wise equality (not constant-time — see `timingSafeEql`) |
+| `uuid.timingSafeEql(other) bool` | Constant-time equality for secret UUIDs (CWE-208) |
 | `uuid.order(other) Order` | Lexicographic comparison |
 
 ### Timestamp extraction

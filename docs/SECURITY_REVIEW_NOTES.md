@@ -448,3 +448,89 @@ A correction note was added to issue [#128](https://gitlab.com/devnw/zig/uuid/-/
 - **fuzz job `allow_failure: true`:** Intentional design (documented in Cycle 8). The job
   fails correctly on crash (SEC-R5-02 fix); `allow_failure` prevents blocking MR pipelines
   for scheduled-only fuzz runs. Not a finding.
+
+---
+
+## Adversarial Review Cycle 10 — 2026-03-22
+
+### Tool Versions (Cycle 10)
+
+| Tool | Version | Status |
+| ---- | ------- | ------ |
+| gitleaks | 8.30.0 | Available |
+| trufflehog | 3.92.5 | Available (self-update error; gitleaks covers gap) |
+| osv-scanner | 2.3.2 | Available (no Zig package sources found — expected) |
+| trivy | 0.69.0 | Available |
+| syft | 1.41.1 | Available |
+| grype | 0.107.0 | Available |
+| semgrep | 1.150.0 | Available (p/ci ruleset; 0 findings) |
+| shellcheck | 0.9.0 | Available (no tracked .sh files) |
+| checkov | 3.2.499 | Available |
+
+### Automated Scan Results (Cycle 10)
+
+| Tool | Exit | Findings |
+| ---- | ---- | -------- |
+| gitleaks | 0 (clean) | 0 secrets |
+| trufflehog | N/A | Self-update error; gitleaks covers gap |
+| syft | 0 | SBOM generated (0 parseable Zig components) |
+| grype | 0 | 0 CVE matches |
+| osv-scanner | N/A | No Zig package sources found (expected) |
+| trivy fs | 0 | 0 vulns, 0 misconfigs, 0 secrets |
+| trivy config | 0 | 0 misconfigurations |
+| semgrep p/ci | 0 | 0 findings |
+| shellcheck | 0 | No tracked .sh files |
+| checkov | 0 | 13 passed, 0 failed |
+
+### Files Reviewed (Cycle 10)
+
+All files reviewed for changes since Cycle 9 (branch `fix/sec-r9-01-timing-safe-eql`):
+
+- `src/uuid.zig` — timingSafeEql implementation reviewed; HashContext.eql/SecureHashContext.eql analysed
+- `src/uuid_test.zig` — 5 new SEC-R9-01 tests verified
+- `src/generator.zig` — spin-wait @rem/@intCast re-verified; saveState/loadState reviewed
+- `src/timestamp.zig` — bounds guards confirmed present (SEC-R8-01)
+- `src/fuzz.zig` — all 6 fuzz targets confirmed present (SEC-R8-02)
+- `src/null_uuid.zig` — jsonUnmarshal reviewed; no injection risk
+- `src/root.zig` — confirmed no default_generator re-export (SEC-R5-01)
+- `src/versions.zig` — delegation pattern confirmed correct
+- `src/namespace.zig` — compile-time constants; no runtime concerns
+- `src/hwaddr/*.zig` — broadcast MAC skip (SEC-R6-03) and ifc_len guard confirmed
+- `bench/main.zig` — no security concerns (sink pattern, no secrets)
+- `examples/basic.zig` — safe patterns demonstrated; no hardcoded secrets
+- `.gitlab-ci.yml` — no new CI secrets exposure; fuzz artifacts reviewed
+- `build.zig`, `build.zig.zon` — dependency hash verified; grype clean
+- `Makefile` — no security concerns
+- `SECURITY.md` — reviewed; missing timingSafeEql (new finding SEC-R10-01)
+- `README.md` — reviewed; missing timingSafeEql in API table and Security section
+
+### New Findings (Cycle 10)
+
+**1. SEC-R10-01** (Info, CWE-208, Risk 8): `README.md` and `SECURITY.md` missing
+`timingSafeEql` guidance. SEC-R9-01 fix (commit `3a29957`) added `timingSafeEql` to
+`src/uuid.zig` but did not update the two public-facing documentation files listed
+in issue #141 acceptance criteria. Users consulting README/SECURITY.md will not discover
+`timingSafeEql` exists.
+GitLab: [#143](https://gitlab.com/devnw/zig/uuid/-/work_items/143)
+
+### False Positive Notes (Cycle 10)
+
+- **`HashContext.eql` / `SecureHashContext.eql` non-constant-time:** HashMap collision
+  resolution only; `SecureHashContext` random seed makes collision engineering infeasible.
+  Not a meaningful timing oracle. Not a finding.
+- **`@rem(ns_now, 1_000_000)` spin-wait cast:** Guarded by `ns_now > 0`; result in
+  `[0, 999_999]` — safe `@intCast` to u64. Not a finding.
+- **Fuzz job artifacts:** Contain only malformed UUID parser inputs; no secrets. Not a finding.
+- **Fuzz job runs in Debug mode:** Correct for safety-checked fuzz testing. Not a finding.
+- **`build.zig.zon` json dependency:** Pinned by commit SHA + content hash; grype clean.
+  Not a finding.
+
+### Won't Do Reconfirmation (Cycle 10)
+
+| Item | Reason |
+|------|--------|
+| CI/CD component semver→SHA pinning | Pipeline governance |
+| Docker image digest pinning | Infrastructure controls |
+| Pre-commit `check-yaml --unsafe` | Required by CI YAML anchors |
+| SEC-R2-01: Unverified Zig download | Pipeline governance |
+| SEC-R9-02: CI hash TOFU | Pipeline governance — same policy as SEC-R2-01. Future agents MUST NOT re-open. |
