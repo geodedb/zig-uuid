@@ -17,11 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `fromString("urn:")` now returns `Error.InvalidURNPrefix` instead of `Error.InvalidLength` (QC-47)
+- `Timestamp.now()` now returns `Error.InvalidTimestamp` for far-future clocks (year >60,424) instead of panicking; adds upper-bound guard matching `fromUnixNano` (SEC-R11-01 / CWE-190)
+- `Generator.loadState()` now opens the state file with `O_NOFOLLOW` on POSIX, preventing symlink redirect attacks (SEC-R11-04 / CWE-61)
 
 ### Changed
 
 - Aligned minimum Zig version to 0.15.2 in `README.md` and `build.zig.zon` (QC-44)
 - `UUID.eql()` doc comment extended with CWE-208 timing-safety warning directing secret-token callers to `timingSafeEql` (SEC-R9-01)
+- `UUID.isNil()` and `UUID.isMax()` doc comments extended with CWE-208 timing notes directing secret-comparison callers to `timingSafeEql(UUID.nil)` / `timingSafeEql(UUID.max)` (SEC-R11-03)
 
 ### Documentation
 

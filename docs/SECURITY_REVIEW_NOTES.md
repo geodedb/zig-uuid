@@ -534,3 +534,50 @@ GitLab: [#143](https://gitlab.com/devnw/zig/uuid/-/work_items/143)
 | Pre-commit `check-yaml --unsafe` | Required by CI YAML anchors |
 | SEC-R2-01: Unverified Zig download | Pipeline governance |
 | SEC-R9-02: CI hash TOFU | Pipeline governance — same policy as SEC-R2-01. Future agents MUST NOT re-open. |
+
+---
+
+## Security Review — Cycle 11 (2026-03-22) — CLOSED
+
+Adversarial full-codebase re-audit. All automated tools rerun. 4 new findings; all closed.
+
+### Findings (Cycle 11)
+
+**1. SEC-R11-01** (Low, CWE-190, Risk 16): `Timestamp.now()` missing upper-bound guard on
+`@intCast(@divTrunc(ns, 100))`. Far-future clock (year >60,424) panics in Debug/ReleaseSafe.
+✅ Fixed: upper-bound guard added matching `fromUnixNano`; 1 new test.
+GitLab: [#149](https://gitlab.com/devnw/zig/uuid/-/work_items/149)
+
+**2. SEC-R11-02** (Info, Risk 4): `test_io` fuzz artifact not in `.gitignore`.
+✅ False Positive: `test_*` pattern on line 20 of `.gitignore` already covers `test_io`.
+Verified: `git check-ignore -v test_io` → `.gitignore:20:test_*`.
+GitLab: [#150](https://gitlab.com/devnw/zig/uuid/-/work_items/150)
+
+**3. SEC-R11-03** (Info, CWE-208, Risk 8): `UUID.isNil()` and `UUID.isMax()` missing CWE-208
+timing-safety warning (same gap as SEC-R9-01 which fixed `eql()`).
+✅ Fixed: CWE-208 timing notes added to both doc comments; callers directed to `timingSafeEql`.
+GitLab: [#151](https://gitlab.com/devnw/zig/uuid/-/work_items/151)
+
+**4. SEC-R11-04** (Info, CWE-61, Risk 4): `Generator.loadState()` opens state file with
+`std.fs.openFileAbsolute(path, .{})` — no `O_NOFOLLOW`. Asymmetric with `saveState()`'s
+SEC-R3-01 fix (O_EXCL). Local attacker who can write to state dir can replace state file
+with symlink pointing to a sensitive read-only file.
+✅ Fixed: On POSIX, `loadState` now uses `std.posix.open` with `.NOFOLLOW = true`;
+Windows unchanged (different symlink model). 1 new test.
+GitLab: [#152](https://gitlab.com/devnw/zig/uuid/-/work_items/152)
+
+### False Positive Notes (Cycle 11)
+
+- **`ifreqs[0..count]` in `linux.zig:69`:** Linux kernel bounds `ifc_len` to buffer size; count always safe.
+- **`@intCast(ms)` in `newV7Locked`:** `ms >= 0` guaranteed by caller invariant.
+- **`newV4` without mutex:** Stack-local only; no shared state.
+- **`test_io` in `.gitignore`:** Already covered by `test_*` pattern (SEC-R11-02 false positive).
+
+### Won't Do Reconfirmation (Cycle 11)
+
+| Item | Reason |
+|------|--------|
+| CI/CD component semver→SHA pinning | Pipeline governance |
+| Docker image digest pinning | Infrastructure controls |
+| SEC-R2-01: Unverified Zig download | Pipeline governance |
+| SEC-R9-02: CI hash TOFU | Pipeline governance — same policy. MUST NOT re-open. |

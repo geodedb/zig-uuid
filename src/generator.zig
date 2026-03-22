@@ -2,6 +2,7 @@
 // Copyright (c) 2024-2025 CodePros
 
 const std = @import("std");
+const builtin = @import("builtin");
 const UUID = @import("uuid.zig").UUID;
 const Version = @import("uuid.zig").Version;
 const Variant = @import("uuid.zig").Variant;
@@ -625,7 +626,19 @@ pub const Generator = struct {
     /// current (extremely fast restart within the same millisecond) is mono_seq
     /// set to maxInt(u12) to force a spin-wait and prevent collisions.
     pub fn loadState(self: *Generator, path: []const u8) !void {
-        const f = try std.fs.openFileAbsolute(path, .{});
+        // SEC-R11-04 (CWE-61): Open the state file without following symlinks
+        // on POSIX targets.  An attacker who can place a symlink at the state-file
+        // path before loadState runs could redirect the read to any world-readable
+        // file, leaking its contents.  O_NOFOLLOW causes open(2) to fail with
+        // ELOOP if the path is a symlink, closing the redirect.  On Windows,
+        // symlink handling is enforced differently by the OS; openFileAbsolute
+        // is used unchanged.
+        const f = if (builtin.os.tag == .windows)
+            try std.fs.openFileAbsolute(path, .{})
+        else blk: {
+            const fd = try std.posix.open(path, .{ .NOFOLLOW = true }, 0);
+            break :blk std.fs.File{ .handle = fd };
+        };
         defer f.close();
 
         var buf: [state_size]u8 = undefined;

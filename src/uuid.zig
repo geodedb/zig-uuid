@@ -75,11 +75,21 @@ pub const UUID = struct {
     ///
     /// Equivalent to `uuid.eql(UUID.nil)`. Use `UUID.nil` as a sentinel value
     /// for "not yet assigned" UUID fields.
+    ///
+    /// **SEC-R11-03 / CWE-208 — Timing note:** This function uses `std.mem.eql`,
+    /// which is not constant-time.  For the typical use case (nil sentinel check
+    /// on a public identifier) this is correct and efficient.  If the nil check
+    /// is part of a secret-token comparison, use `timingSafeEql(UUID.nil)` instead.
     pub fn isNil(self: UUID) bool {
         return std.mem.eql(u8, &self.bytes, &nil.bytes);
     }
 
     /// Returns true when all 16 bytes are 0xFF (the max UUID per RFC-9562 §5.10).
+    ///
+    /// **SEC-R11-03 / CWE-208 — Timing note:** This function uses `std.mem.eql`,
+    /// which is not constant-time.  For the typical use case (max sentinel check
+    /// on a public identifier) this is correct and efficient.  If the max check
+    /// is part of a secret-token comparison, use `timingSafeEql(UUID.max)` instead.
     pub fn isMax(self: UUID) bool {
         return std.mem.eql(u8, &self.bytes, &UUID.max.bytes);
     }

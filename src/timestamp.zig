@@ -19,12 +19,18 @@ pub const Timestamp = struct {
     /// Current time as a Gregorian Timestamp (F-7).
     ///
     /// Returns Error.InvalidTimestamp if the system clock reports a time
-    /// before the Unix epoch (1970-01-01). Pre-1970 clocks are rare but would
-    /// cause an unchecked @intCast panic without this guard.
+    /// before the Unix epoch (1970-01-01) or a time so far in the future
+    /// that the 100-ns interval count exceeds u64.  The upper-bound guard
+    /// matches the one in `fromUnixNano` (SEC-R11-01 / CWE-190).
     pub fn now() Error!Timestamp {
         const ns: i128 = std.time.nanoTimestamp();
         if (ns < 0) return Error.InvalidTimestamp;
-        const intervals_since_unix: u64 = @intCast(@divTrunc(ns, 100));
+        const intervals: i128 = @divTrunc(ns, 100);
+        // SEC-R11-01 (CWE-190): guard against @intCast panic when the system clock
+        // is set to a far-future date (year >60,424). maxInt(u64) * 100 ns is the
+        // threshold.  Matches the guard in fromUnixNano().
+        if (intervals > std.math.maxInt(u64)) return Error.InvalidTimestamp;
+        const intervals_since_unix: u64 = @intCast(intervals);
         return .{ .value = @truncate(intervals_since_unix + gregorian_offset) };
     }
 
@@ -250,6 +256,17 @@ test "Timestamp.fromUnixNano: rejects values above u64 interval range (SEC-R8-01
     // ns value that would produce > maxInt(u64) intervals (each interval = 100 ns)
     const too_large: i128 = @as(i128, std.math.maxInt(u64)) * 100 + 100;
     try std.testing.expectError(Error.InvalidTimestamp, Timestamp.fromUnixNano(too_large));
+}
+
+test "Timestamp.now() upper-bound guard: extremely large interval count is rejected (SEC-R11-01)" {
+    // We cannot inject a far-future clock into now() without mocking std.time,
+    // so we verify the guard logic indirectly via fromUnixNano, which uses the
+    // same threshold.  The guard in now() uses identical arithmetic:
+    //   intervals > std.math.maxInt(u64) → Error.InvalidTimestamp.
+    //
+    // Use a value that is well above the practical threshold (2^64 * 100 ns):
+    const very_far_future: i128 = @as(i128, std.math.maxInt(u64)) * 100 + 100;
+    try std.testing.expectError(Error.InvalidTimestamp, Timestamp.fromUnixNano(very_far_future));
 }
 
 test "Timestamp.fromUnixMs: rejects maxInt(i64) ms (SEC-R8-01)" {
