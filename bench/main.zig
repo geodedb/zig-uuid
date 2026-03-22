@@ -28,6 +28,7 @@ pub fn main() !void {
     try benchToString();
     try benchToStringUpper();
     try benchToStringAlloc();
+    try benchToHex();
     try benchToHexUpper();
     try benchToHexAlloc();
     try benchV7AtTime();
@@ -188,6 +189,27 @@ fn benchToStringAlloc() !void {
         sink ^= s[0];
     }
     report("toStringAlloc", start);
+    if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
+}
+
+fn benchToHex() !void {
+    // PERF-20: Lowercase no-alloc hex benchmark — separate compiler
+    // instantiation from toHexUpper; regression in lowercase table would
+    // otherwise go undetected.
+    var gen = uuid.Generator.init();
+    const pool_size = 256;
+    var pool: [pool_size]uuid.UUID = undefined;
+    for (&pool) |*u| u.* = try gen.newV4();
+
+    var buf: [32]u8 = undefined;
+    var sink: u8 = 0;
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const s = pool[i % pool_size].toHex(&buf);
+        sink ^= s[0];
+    }
+    report("toHex", start);
     if (sink == 0xff) std.debug.print("  (sink={d})\n", .{sink});
 }
 

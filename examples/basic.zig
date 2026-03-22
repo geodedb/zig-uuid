@@ -101,8 +101,8 @@ pub fn main() !void {
     // NullUUID
     const nu_valid = uuid.NullUUID.from(v4);
     const nu_null = uuid.NullUUID{};
-    try w.print("\nNullUUID valid: {any}\n", .{nu_valid.value()});
-    try w.print("NullUUID null:  {any}\n", .{nu_null.value()});
+    try w.print("\nNullUUID valid: {f}\n", .{nu_valid});
+    try w.print("NullUUID null:  {f}\n", .{nu_null});
 
     try w.print("\nAll examples completed successfully!\n", .{});
 }

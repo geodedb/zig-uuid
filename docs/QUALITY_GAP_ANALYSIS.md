@@ -32,20 +32,22 @@
 | 9 | — | 0 | ✅ No new findings |
 | 10 | Low | 9 | ✅ 8 closed, 🚫 1 Won't Do (QC-64) |
 | 11 | Low | 5 | ✅ All closed |
-| 12 | High | 1 | 🔲 Open |
-| 12 | Medium | 1 | 🔲 Open |
-| 12 | Low | 12 | 🔲 12 open |
-| 12 | Info | 2 | 🔲 2 open |
+| 12 | High | 1 | ✅ Closed |
+| 12 | Medium | 1 | ✅ Closed |
+| 12 | Low | 12 | ✅ All closed |
+| 12 | Info | 2 | ✅ All closed |
 
-**Total issues:** 91 — **68 closed, 2 Won't Do (QC-16, QC-64), 5 closed (QC-71–QC-75), 16 open (QC-76–QC-92, QC-89 merged into QC-80)**
+**Total issues:** 91 — **89 closed, 2 Won't Do (QC-16, QC-64), 0 open**
 
-### Top 5 Open Risks (Cycle 12)
+### Top 5 Closed Items (Cycle 12)
 
-1. **README installation hash is a literal placeholder** (QC-80, High) — `README.md:26` has `"..."` as the package hash; any new adopter following the install instructions will get a broken `build.zig.zon`.
-2. **root.zig doc comment references internal @import path** (QC-90, Medium) — `@import("generator.zig")` is unreachable for external consumers; a misleading example in the module doc.
-3. **newV8 infallible body behind Error!UUID return type** (QC-81, Low) — callers forced to handle an error that can never occur; creates unnecessary `try` noise at every call site.
-4. **Double export of nil/max constants** (QC-82, Low) — two canonical paths (`uuid.nil` and `uuid.UUID.nil`) for the same constant; README inconsistently documents only one.
-5. **GeneratorInterface dispatch methods undocumented** (QC-79, Low) — all 10 vtable trampolines have no `///` doc comments; the primary polymorphism seam is invisible to `zig doc`.
+All Cycle 12 findings were closed on 2026-03-22:
+
+- ✅ QC-80 — Replaced placeholder hash with `zig fetch` instructions in README
+- ✅ QC-90 — Fixed root.zig doc: removed internal @import("generator.zig") reference
+- ✅ QC-81 — Changed newV8 return type from Error!UUID to UUID
+- ✅ QC-82 — Documented both access paths in README
+- ✅ QC-79 — Added doc comments to all 10 GeneratorInterface dispatch methods
 
 ### Top 5 Closed Items (Cycle 10)
 
@@ -2024,15 +2026,15 @@ _Last updated: 2026-03-22 — Cycle 11 complete. 5 new findings (QC-71–QC-75),
 | Low      | 12    |
 | Info     | 2     |
 
-**Total new issues:** 16 — all open, status::triage
+**Total new issues:** 16 — all closed
 
-### Top 5 Risks
+### Top 5 Closed Items
 
-1. **README installation hash is a literal `"..."` placeholder** (QC-80) — blocks all new library adopters from installing the package via `zig build`.
-2. **root.zig doc instructs callers to `@import("generator.zig")`** (QC-90) — impossible for external consumers; active documentation error.
-3. **newV8 is infallible but returns `Error!UUID`** (QC-81) — forces unnecessary `try` at every call site; misleads callers about error conditions.
-4. **Double export of nil/max — README inconsistent** (QC-82) — two canonical access paths; README documents only one.
-5. **Generator.init/withClock/withRand and newV4 have no doc comments** (QC-76, QC-78) — primary constructor and V4 entry point are undocumented in `zig doc`.
+1. ✅ **QC-80** — Replaced placeholder hash with `zig fetch` instructions in README.
+2. ✅ **QC-90** — Fixed root.zig doc: removed internal @import("generator.zig") reference.
+3. ✅ **QC-81** — Changed newV8 return type from Error!UUID to UUID.
+4. ✅ **QC-82** — Documented both access paths in README.
+5. ✅ **QC-76, QC-78** — Added doc comments to Generator.init, withClock, withRand, and newV4.
 
 ---
 
@@ -2040,22 +2042,22 @@ _Last updated: 2026-03-22 — Cycle 11 complete. 5 new findings (QC-71–QC-75),
 
 | Rank | Severity | PriorityScore | Category | Finding | Component | Evidence | GitLab Issue | Status |
 | ---- | -------- | ------------- | -------- | ------- | --------- | -------- | ------------ | ------ |
-| 1 | High | 80 | docs | README installation hash is literal `"..."` placeholder — blocks package installation | `README.md:26` | `grep '\.hash' README.md` returns `"..."` | [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166) | 🔲 Open |
-| 2 | Medium | 36 | docs | `root.zig` doc comment instructs `@import("generator.zig")` — unreachable for external consumers | `src/root.zig:67` | `@import("generator.zig")` in module doc | [#176](https://gitlab.com/devnw/zig/uuid/-/work_items/176) | 🔲 Open |
-| 3 | Low | 24 | docs | `Generator.init`, `withClock`, `withRand` have no doc comments | `src/generator.zig:105–118` | Zero `///` on three constructor-pattern entry points | [#160](https://gitlab.com/devnw/zig/uuid/-/work_items/160) | 🔲 Open |
-| 4 | Low | 24 | docs | `Variant` enum has no doc comment | `src/uuid.zig:38–43` | Zero `///` on enum and all 4 members | [#162](https://gitlab.com/devnw/zig/uuid/-/work_items/162) | 🔲 Open |
-| 5 | Low | 24 | docs | `Generator.newV4` has no doc comment | `src/generator.zig:142` | Zero `///` on most-used generation method | [#163](https://gitlab.com/devnw/zig/uuid/-/work_items/163) | 🔲 Open |
-| 6 | Low | 24 | docs | `GeneratorInterface` dispatch methods have no doc comments | `src/generator.zig:755–784` | Zero `///` on all 10 vtable trampolines | [#165](https://gitlab.com/devnw/zig/uuid/-/work_items/165) | 🔲 Open |
-| 7 | Low | 20 | api-contract | `newV8` returns `Error!UUID` but body is infallible | `src/versions.zig:63` | No `try`, no `return error.*` in body | [#168](https://gitlab.com/devnw/zig/uuid/-/work_items/168) | 🔲 Open |
-| 8 | Low | 16 | api-contract | Double export of `nil`/`max` via `uuid.nil` and `uuid.UUID.nil`; README inconsistent | `src/root.zig:42–43` | Two canonical access paths; README documents only one | [#169](https://gitlab.com/devnw/zig/uuid/-/work_items/169) | 🔲 Open |
-| 9 | Low | 16 | docs | `Timestamp.toUnixNano` public but absent from README Timestamp section | `src/timestamp.zig:38` | `grep toUnixNano README.md` returns 0 hits | [#170](https://gitlab.com/devnw/zig/uuid/-/work_items/170) | 🔲 Open |
-| 10 | Low | 16 | docs | `Timestamp.fromUnixNano`/`fromUnixMs` public but absent from README | `src/timestamp.zig:78,92` | `grep fromUnixNano README.md` returns 0 hits | [#171](https://gitlab.com/devnw/zig/uuid/-/work_items/171) | 🔲 Open |
-| 11 | Low | 16 | tests | No test exercises `newV8` error-never path | `src/generator.zig:494` | No boundary-input tests with infallibility note | [#172](https://gitlab.com/devnw/zig/uuid/-/work_items/172) | 🔲 Open |
-| 12 | Low | 16 | docs | `newV7AtTime` doc comment omits `RandomError` from error set | `src/generator.zig:172–176` | Doc mentions only `InvalidTimestamp` | [#173](https://gitlab.com/devnw/zig/uuid/-/work_items/173) | 🔲 Open |
-| 13 | Low | 16 | docs | `examples/basic.zig` uses `{any}` for `NullUUID` instead of `{f}` | `examples/basic.zig:104–105` | `{any}` prints struct internals, not canonical UUID string | [#177](https://gitlab.com/devnw/zig/uuid/-/work_items/177) | 🔲 Open |
-| 14 | Low | 12 | docs | README "See docs/ for detailed documentation" links to internal review notes | `README.md:180` | `docs/` contains only gap analysis and security review files | [#178](https://gitlab.com/devnw/zig/uuid/-/work_items/178) | 🔲 Open |
-| 15 | Info | 8 | docs | `Timestamp.now()` doc does not note it bypasses the injectable clock | `src/timestamp.zig:25` | No reference to `Generator.withClock` in doc comment | [#174](https://gitlab.com/devnw/zig/uuid/-/work_items/174) | 🔲 Open |
-| 16 | Info | 8 | tests | No test verifying `Generator.newV1`/`newV6` do NOT use injected clock | `src/generator_test.zig` | Injected-clock boundary for V1/V6 untested | [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175) | 🔲 Open |
+| 1 | High | 80 | docs | README installation hash is literal `"..."` placeholder — blocks package installation | `README.md:26` | `grep '\.hash' README.md` returns `"..."` | [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166) | ✅ Closed |
+| 2 | Medium | 36 | docs | `root.zig` doc comment instructs `@import("generator.zig")` — unreachable for external consumers | `src/root.zig:67` | `@import("generator.zig")` in module doc | [#176](https://gitlab.com/devnw/zig/uuid/-/work_items/176) | ✅ Closed |
+| 3 | Low | 24 | docs | `Generator.init`, `withClock`, `withRand` have no doc comments | `src/generator.zig:105–118` | Zero `///` on three constructor-pattern entry points | [#160](https://gitlab.com/devnw/zig/uuid/-/work_items/160) | ✅ Closed |
+| 4 | Low | 24 | docs | `Variant` enum has no doc comment | `src/uuid.zig:38–43` | Zero `///` on enum and all 4 members | [#162](https://gitlab.com/devnw/zig/uuid/-/work_items/162) | ✅ Closed |
+| 5 | Low | 24 | docs | `Generator.newV4` has no doc comment | `src/generator.zig:142` | Zero `///` on most-used generation method | [#163](https://gitlab.com/devnw/zig/uuid/-/work_items/163) | ✅ Closed |
+| 6 | Low | 24 | docs | `GeneratorInterface` dispatch methods have no doc comments | `src/generator.zig:755–784` | Zero `///` on all 10 vtable trampolines | [#165](https://gitlab.com/devnw/zig/uuid/-/work_items/165) | ✅ Closed |
+| 7 | Low | 20 | api-contract | `newV8` returns `Error!UUID` but body is infallible | `src/versions.zig:63` | No `try`, no `return error.*` in body | [#168](https://gitlab.com/devnw/zig/uuid/-/work_items/168) | ✅ Closed |
+| 8 | Low | 16 | api-contract | Double export of `nil`/`max` via `uuid.nil` and `uuid.UUID.nil`; README inconsistent | `src/root.zig:42–43` | Two canonical access paths; README documents only one | [#169](https://gitlab.com/devnw/zig/uuid/-/work_items/169) | ✅ Closed |
+| 9 | Low | 16 | docs | `Timestamp.toUnixNano` public but absent from README Timestamp section | `src/timestamp.zig:38` | `grep toUnixNano README.md` returns 0 hits | [#170](https://gitlab.com/devnw/zig/uuid/-/work_items/170) | ✅ Closed |
+| 10 | Low | 16 | docs | `Timestamp.fromUnixNano`/`fromUnixMs` public but absent from README | `src/timestamp.zig:78,92` | `grep fromUnixNano README.md` returns 0 hits | [#171](https://gitlab.com/devnw/zig/uuid/-/work_items/171) | ✅ Closed |
+| 11 | Low | 16 | tests | No test exercises `newV8` error-never path | `src/generator.zig:494` | No boundary-input tests with infallibility note | [#172](https://gitlab.com/devnw/zig/uuid/-/work_items/172) | ✅ Closed |
+| 12 | Low | 16 | docs | `newV7AtTime` doc comment omits `RandomError` from error set | `src/generator.zig:172–176` | Doc mentions only `InvalidTimestamp` | [#173](https://gitlab.com/devnw/zig/uuid/-/work_items/173) | ✅ Closed |
+| 13 | Low | 16 | docs | `examples/basic.zig` uses `{any}` for `NullUUID` instead of `{f}` | `examples/basic.zig:104–105` | `{any}` prints struct internals, not canonical UUID string | [#177](https://gitlab.com/devnw/zig/uuid/-/work_items/177) | ✅ Closed |
+| 14 | Low | 12 | docs | README "See docs/ for detailed documentation" links to internal review notes | `README.md:180` | `docs/` contains only gap analysis and security review files | [#178](https://gitlab.com/devnw/zig/uuid/-/work_items/178) | ✅ Closed |
+| 15 | Info | 8 | docs | `Timestamp.now()` doc does not note it bypasses the injectable clock | `src/timestamp.zig:25` | No reference to `Generator.withClock` in doc comment | [#174](https://gitlab.com/devnw/zig/uuid/-/work_items/174) | ✅ Closed |
+| 16 | Info | 8 | tests | No test verifying `Generator.newV1`/`newV6` do NOT use injected clock | `src/generator_test.zig` | Injected-clock boundary for V1/V6 untested | [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175) | ✅ Closed |
 
 ---
 
@@ -2065,7 +2067,7 @@ _Last updated: 2026-03-22 — Cycle 11 complete. 5 new findings (QC-71–QC-75),
 
 ##### QC-76 — Generator.init, withClock, withRand have no doc comments (Low, Score 24)
 
-**Status: 🔲 Open** — [#160](https://gitlab.com/devnw/zig/uuid/-/work_items/160)
+**Status: ✅ Closed — Implemented.** Added doc comments to Generator.init, withClock, withRand. — [#160](https://gitlab.com/devnw/zig/uuid/-/work_items/160)
 
 **File:** `src/generator.zig:105–118`
 
@@ -2083,7 +2085,7 @@ _Last updated: 2026-03-22 — Cycle 11 complete. 5 new findings (QC-71–QC-75),
 
 ##### QC-77 — Variant enum has no doc comment (Low, Score 24)
 
-**Status: 🔲 Open** — [#162](https://gitlab.com/devnw/zig/uuid/-/work_items/162)
+**Status: ✅ Closed — Implemented.** Added doc comment to Variant enum and all members. — [#162](https://gitlab.com/devnw/zig/uuid/-/work_items/162)
 
 **File:** `src/uuid.zig:38–43`
 
@@ -2097,7 +2099,7 @@ The `Variant` enum and all four of its members (`ncs`, `rfc9562`, `microsoft`, `
 
 ##### QC-78 — Generator.newV4 has no doc comment (Low, Score 24)
 
-**Status: 🔲 Open** — [#163](https://gitlab.com/devnw/zig/uuid/-/work_items/163)
+**Status: ✅ Closed — Implemented.** Added doc comment to Generator.newV4. — [#163](https://gitlab.com/devnw/zig/uuid/-/work_items/163)
 
 **File:** `src/generator.zig:142`
 
@@ -2111,7 +2113,7 @@ The `Variant` enum and all four of its members (`ncs`, `rfc9562`, `microsoft`, `
 
 ##### QC-79 — GeneratorInterface dispatch methods have no doc comments (Low, Score 24)
 
-**Status: 🔲 Open** — [#165](https://gitlab.com/devnw/zig/uuid/-/work_items/165)
+**Status: ✅ Closed — Implemented.** Added doc comments to all 10 GeneratorInterface dispatch methods. — [#165](https://gitlab.com/devnw/zig/uuid/-/work_items/165)
 
 **File:** `src/generator.zig:755–784`
 
@@ -2125,7 +2127,7 @@ All 10 `GeneratorInterface` vtable dispatch trampolines have no `///` doc commen
 
 ##### QC-80 — README installation hash is a literal "..." placeholder (High, Score 80)
 
-**Status: 🔲 Open** — [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166)
+**Status: ✅ Closed — Implemented.** Replaced placeholder hash with `zig fetch` instructions. — [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166)
 
 **File:** `README.md:26`
 
@@ -2147,7 +2149,7 @@ The Zig package manager requires a valid SHA-256 hash. A literal `"..."` causes 
 
 ##### QC-83 — Timestamp.toUnixNano is public but absent from README Timestamp section (Low, Score 16)
 
-**Status: 🔲 Open** — [#170](https://gitlab.com/devnw/zig/uuid/-/work_items/170)
+**Status: ✅ Closed — Implemented.** Added Timestamp.toUnixNano to README Timestamp table. — [#170](https://gitlab.com/devnw/zig/uuid/-/work_items/170)
 
 **File:** `src/timestamp.zig:38`
 
@@ -2159,7 +2161,7 @@ The Zig package manager requires a valid SHA-256 hash. A literal `"..."` causes 
 
 ##### QC-84 — Timestamp.fromUnixNano and fromUnixMs are public but absent from README (Low, Score 16)
 
-**Status: 🔲 Open** — [#171](https://gitlab.com/devnw/zig/uuid/-/work_items/171)
+**Status: ✅ Closed — Implemented.** Added Timestamp.fromUnixNano/fromUnixMs to README Timestamp table. — [#171](https://gitlab.com/devnw/zig/uuid/-/work_items/171)
 
 **File:** `src/timestamp.zig:78,92`
 
@@ -2171,7 +2173,7 @@ The Zig package manager requires a valid SHA-256 hash. A literal `"..."` causes 
 
 ##### QC-86 — newV7AtTime doc comment only documents negative-ts guard, not full error set (Low, Score 16)
 
-**Status: 🔲 Open** — [#173](https://gitlab.com/devnw/zig/uuid/-/work_items/173)
+**Status: ✅ Closed — Implemented.** Expanded newV7AtTime doc comment to list full error set. — [#173](https://gitlab.com/devnw/zig/uuid/-/work_items/173)
 
 **File:** `src/generator.zig:172–176`
 
@@ -2183,7 +2185,7 @@ The doc comment for `newV7AtTime` lists only `InvalidTimestamp` but the full err
 
 ##### QC-87 — Timestamp.now() doc does not note it bypasses the injectable clock (Info, Score 8)
 
-**Status: 🔲 Open** — [#174](https://gitlab.com/devnw/zig/uuid/-/work_items/174)
+**Status: ✅ Closed — Implemented.** Added clock-bypass note to Timestamp.now() doc. — [#174](https://gitlab.com/devnw/zig/uuid/-/work_items/174)
 
 **File:** `src/timestamp.zig:25`
 

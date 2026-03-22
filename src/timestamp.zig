@@ -18,6 +18,11 @@ pub const Timestamp = struct {
 
     /// Current time as a Gregorian Timestamp (F-7).
     ///
+    /// **Note:** This function reads `std.time.nanoTimestamp()` directly and
+    /// is NOT affected by `Generator.withClock()`.  Tests that inject a custom
+    /// clock via `withClock` should use `Timestamp.fromUnixNano()` or
+    /// `Timestamp.fromUnixMs()` instead of `Timestamp.now()`.
+    ///
     /// Returns Error.InvalidTimestamp if the system clock reports a time
     /// before the Unix epoch (1970-01-01) or a time so far in the future
     /// that the 100-ns interval count exceeds u64.  The upper-bound guard
@@ -81,6 +86,12 @@ pub const Timestamp = struct {
         // Guard: intervals_since_unix must fit in u64 before @intCast.
         if (intervals_since_unix > std.math.maxInt(u64)) return Error.InvalidTimestamp;
         const intervals_u64: u64 = @intCast(intervals_since_unix);
+        // SEC-R12-02 (CWE-190): Guard against secondary u64 overflow in the
+        // addition.  For intervals_u64 > maxInt(u64) - gregorian_offset (years
+        // ~60,037–60,424 AD), `intervals_u64 + gregorian_offset` overflows u64,
+        // causing a panic in Debug/ReleaseSafe or silent wraparound in ReleaseFast.
+        const max_safe: u64 = std.math.maxInt(u64) - gregorian_offset;
+        if (intervals_u64 > max_safe) return Error.InvalidTimestamp;
         return .{ .value = @truncate(intervals_u64 + gregorian_offset) };
     }
 
@@ -267,6 +278,20 @@ test "Timestamp.now() upper-bound guard: extremely large interval count is rejec
     // Use a value that is well above the practical threshold (2^64 * 100 ns):
     const very_far_future: i128 = @as(i128, std.math.maxInt(u64)) * 100 + 100;
     try std.testing.expectError(Error.InvalidTimestamp, Timestamp.fromUnixNano(very_far_future));
+}
+
+test "Timestamp.fromUnixNano: rejects secondary addition overflow boundary (SEC-R12-02)" {
+    // The secondary overflow occurs when intervals_u64 > maxInt(u64) - gregorian_offset.
+    // This corresponds to ns values in the range year ~60,037–60,424 AD.
+    const max_safe: u64 = std.math.maxInt(u64) - Timestamp.gregorian_offset;
+    // One interval past the safe boundary (× 100 ns/interval)
+    const overflow_ns: i128 = (@as(i128, max_safe) + 1) * 100;
+    try std.testing.expectError(Error.InvalidTimestamp, Timestamp.fromUnixNano(overflow_ns));
+
+    // Verify value at the boundary itself is accepted
+    const boundary_ns: i128 = @as(i128, max_safe) * 100;
+    const ts = try Timestamp.fromUnixNano(boundary_ns);
+    _ = ts;
 }
 
 test "Timestamp.fromUnixMs: rejects maxInt(i64) ms (SEC-R8-01)" {

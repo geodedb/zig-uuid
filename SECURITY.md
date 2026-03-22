@@ -12,6 +12,10 @@
 
 Instead, please report them via email to: <security@codepros.dev>
 
+**Encrypted reporting:** If you need to encrypt your report, contact us at the
+email above to request our PGP public key. We will provide the key and
+fingerprint for verification.
+
 Please include:
 
 1. **Description** of the vulnerability
@@ -34,6 +38,28 @@ Please include:
 - We follow responsible disclosure practices
 - Security advisories will be published after fixes are available
 - Credit will be given to reporters (unless anonymity is requested)
+
+## Severity Classification (CVSS v3.1)
+
+We assess reported vulnerabilities using [CVSS v3.1](https://www.first.org/cvss/v3-1/):
+
+| Severity | CVSS Score | Response SLA |
+|----------|-----------|--------------|
+| Critical | 9.0–10.0  | 24–72 hours  |
+| High     | 7.0–8.9   | 1–2 weeks    |
+| Medium   | 4.0–6.9   | 2–4 weeks    |
+| Low      | 0.1–3.9   | Next release |
+| Info     | 0.0       | Backlog      |
+
+## Version Support Policy
+
+| Version | Status             | Security Fixes Until |
+|---------|--------------------|---------------------|
+| 0.1.x   | :white_check_mark: Active | Current              |
+
+Only the latest minor release receives security patches. When a new minor version
+is released, the previous minor version reaches end-of-life 90 days after the new
+release. Users should upgrade within that window to continue receiving fixes.
 
 ## Security Measures
 

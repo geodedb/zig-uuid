@@ -257,7 +257,7 @@ test "integration: V8 round-trip" {
     const a = [6]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
     const b = [2]u8{ 0x07, 0x08 };
     const c = [8]u8{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
-    const u = try uuid.newV8(a, b, c);
+    const u = uuid.newV8(a, b, c);
     var buf: [36]u8 = undefined;
     const s = u.toString(&buf);
     const parsed = try uuid.UUID.fromString(s);

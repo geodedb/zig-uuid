@@ -260,15 +260,58 @@ test "Generator.newV6: sequential calls produce distinct UUIDs" {
     try std.testing.expectEqual(std.math.Order.lt, a.order(b));
 }
 
+test "Generator.newV1/newV6 use system clock, not injected clock (QC-88)" {
+    // V1/V6 call Timestamp.now() which reads std.time.nanoTimestamp() directly.
+    // The injectable clock (set via withClock) is only used by V7.  Verify
+    // this boundary by creating a generator with a frozen clock and confirming
+    // that V1/V6 timestamps still reflect real (advancing) wall-clock time,
+    // not the frozen value.
+    const frozen_clock = struct {
+        fn clock() i128 {
+            // Return a fixed time: Jan 1, 2000 in nanoseconds
+            return 946_684_800_000_000_000;
+        }
+    };
+    var gen = Generator.withClock(frozen_clock.clock);
+    // V1 should use Timestamp.now(), not the frozen clock
+    const u1a = try gen.newV1();
+    const ts1 = try @import("timestamp.zig").timestampFromV1(u1a);
+    // The V1 timestamp should be recent (after 2024), not at year-2000.
+    // Frozen clock → year 2000 → Gregorian intervals ≈ 1.25e17.
+    // Real clock → year 2025+ → Gregorian intervals ≈ 1.40e17+.
+    // Use gregorian_offset + year-2020 intervals as a threshold.
+    const threshold: u60 = @truncate(Timestamp.gregorian_offset + 15_778_800_000_000_000); // ~2020
+    try std.testing.expect(ts1.value > threshold);
+
+    // V6 should also use Timestamp.now(), not the frozen clock
+    const u6a = try gen.newV6();
+    const ts6 = try @import("timestamp.zig").timestampFromV6(u6a);
+    try std.testing.expect(ts6.value > threshold);
+}
+
 test "Generator.newV8: version=8, variant=rfc9562" {
     var gen = Generator.init();
     const a: [6]u8 = .{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
     const b_data: [2]u8 = .{ 0x07, 0x08 };
     const c_data: [8]u8 = .{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
-    const u = try gen.newV8(a, b_data, c_data);
+    const u = gen.newV8(a, b_data, c_data);
     try std.testing.expectEqual(Version.v8, u.version());
     try std.testing.expectEqual(Variant.rfc9562, u.variant());
     try std.testing.expectEqualSlices(u8, &a, u.bytes[0..6]);
+}
+
+// --- QC-85: newV8 infallible path ---
+
+test "Generator.newV8 is infallible with all-zero and all-one inputs (QC-85)" {
+    var gen = Generator.init();
+    // All-zero input
+    const zero = gen.newV8([_]u8{0} ** 6, [_]u8{0} ** 2, [_]u8{0} ** 8);
+    try std.testing.expectEqual(Version.v8, zero.version());
+    try std.testing.expectEqual(Variant.rfc9562, zero.variant());
+    // All-one input
+    const ones = gen.newV8([_]u8{0xFF} ** 6, [_]u8{0xFF} ** 2, [_]u8{0xFF} ** 8);
+    try std.testing.expectEqual(Version.v8, ones.version());
+    try std.testing.expectEqual(Variant.rfc9562, ones.variant());
 }
 
 // --- F-3: CSPRNG failure propagation ---

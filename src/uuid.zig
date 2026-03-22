@@ -35,10 +35,18 @@ pub const Version = enum(u8) {
     _, // non-exhaustive: allows @enumFromInt on unknown nibbles without panic
 };
 
+/// UUID variant field (RFC 9562 §4.1).  Determines which UUID specification
+/// the UUID conforms to, encoded in the high bits of byte 8 (clock_seq_hi).
+///
+/// Most modern UUIDs use `rfc9562` (variant bits `10x`).
 pub const Variant = enum(u8) {
+    /// NCS backward compatibility (variant bits `0xx`).
     ncs,
+    /// RFC 9562 / RFC 4122 (variant bits `10x`) — the standard variant.
     rfc9562,
+    /// Microsoft backward compatibility (variant bits `110`).
     microsoft,
+    /// Reserved for future definition (variant bits `111`).
     future,
 };
 
