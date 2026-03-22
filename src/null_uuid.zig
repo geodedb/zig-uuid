@@ -22,6 +22,16 @@ pub const NullUUID = struct {
         return if (self.valid) self.uuid else null;
     }
 
+    /// Format for use with `{f}` in std.fmt.
+    /// Emits "null" when invalid, or the canonical UUID string when valid.
+    pub fn format(self: NullUUID, w: *std.io.Writer) std.io.Writer.Error!void {
+        if (!self.valid) {
+            try w.writeAll("null");
+        } else {
+            try self.uuid.format(w);
+        }
+    }
+
     /// json library custom marshaler.
     /// Emits JSON null (invalid) or "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" (valid).
     pub fn jsonMarshal(self: NullUUID, allocator: std.mem.Allocator) !json.Value {
@@ -91,4 +101,19 @@ test "NullUUID.jsonUnmarshal: string input → valid NullUUID" {
         "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
         nu.uuid.toString(&buf),
     );
+}
+
+test "NullUUID.format valid UUID produces canonical output (QC-55)" {
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const nu = NullUUID.from(u);
+    const s = try std.fmt.allocPrint(std.testing.allocator, "{f}", .{nu});
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("6ba7b810-9dad-11d1-80b4-00c04fd430c8", s);
+}
+
+test "NullUUID.format null produces 'null' (QC-55)" {
+    const nu = NullUUID{};
+    const s = try std.fmt.allocPrint(std.testing.allocator, "{f}", .{nu});
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("null", s);
 }

@@ -54,15 +54,105 @@ pub fn main() !void {
     const v4 = try uuid.newV4();
     std.debug.print("V4: {s}\n", .{v4.toString(&buf)});
 
+    // Zero-alloc: no buffer needed (Zig 0.15+ {f} specifier)
+    std.debug.print("{f}\n", .{v7});
+
     // Parse any supported format (canonical, braced, hash, URN)
     const parsed = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
     std.debug.print("parsed: {s}\n", .{parsed.toString(&buf)});
 }
 ```
 
+## API Reference
+
+### Generation
+
+| Function | Description |
+|----------|-------------|
+| `newV1() !UUID` | Time-based + random node (RFC-9562 §5.1) |
+| `newV1AtTime(ts: Timestamp) !UUID` | V1 at a specific Gregorian timestamp |
+| `newV3(ns: UUID, name: []const u8) UUID` | MD5 name-based (deterministic) |
+| `newV4() !UUID` | Cryptographically random |
+| `newV5(ns: UUID, name: []const u8) UUID` | SHA-1 name-based (deterministic) |
+| `newV6() !UUID` | k-sortable time + random node |
+| `newV6AtTime(ts: Timestamp) !UUID` | V6 at a specific Gregorian timestamp |
+| `newV7() !UUID` | Unix-ms timestamp + random (recommended) |
+| `newV7AtTime(ms: i64) !UUID` | V7 at a specific Unix-ms timestamp |
+| `newV8(a, b, c) !UUID` | Custom 128-bit payload with V8 markers |
+
+### UUID type
+
+| Method | Description |
+|--------|-------------|
+| `UUID.fromString(s) !UUID` | Parse canonical, braced, hash, URN (6 formats) |
+| `UUID.fromBytes(b) !UUID` | Parse 16-byte raw slice |
+| `UUID.fromStringOrNil(s) UUID` | Parse or return nil UUID on error |
+| `UUID.fromBytesOrNil(b) UUID` | Parse bytes or return nil UUID on error |
+| `uuid.toString(buf: *[36]u8) []u8` | Lowercase with dashes |
+| `uuid.toStringUpper(buf: *[36]u8) []u8` | Uppercase with dashes |
+| `uuid.toHex(buf: *[32]u8) []u8` | Lowercase hex, no dashes |
+| `uuid.toHexUpper(buf: *[32]u8) []u8` | Uppercase hex, no dashes |
+| `uuid.toURN(buf: *[45]u8) []u8` | `urn:uuid:...` format |
+| `uuid.toStringAlloc(alloc) ![]u8` | Heap-allocated lowercase with dashes; caller frees |
+| `uuid.toStringUpperAlloc(alloc) ![]u8` | Heap-allocated uppercase with dashes; caller frees |
+| `uuid.toHexAlloc(alloc) ![]u8` | Heap-allocated lowercase hex; caller frees |
+| `uuid.toHexUpperAlloc(alloc) ![]u8` | Heap-allocated uppercase hex; caller frees |
+| `uuid.toURNAlloc(alloc) ![]u8` | Heap-allocated URN string; caller frees |
+| `uuid.format(w)` | `{f}` specifier support — no buffer needed |
+| `uuid.toBytes() [16]u8` | Raw 16-byte representation |
+| `uuid.version() Version` | Extract version nibble |
+| `uuid.variant() Variant` | Extract variant bits |
+| `uuid.isNil() bool` | True if all bytes are zero |
+| `uuid.isZero() bool` | Alias for `isNil` |
+| `uuid.isMax() bool` | True if all bytes are 0xFF |
+| `uuid.isValid() bool` | True if variant is RFC-9562 and version is 1–8 |
+| `uuid.validate() !void` | Returns error if not valid RFC-9562 UUID |
+| `uuid.eql(other) bool` | Byte-wise equality |
+| `uuid.order(other) Order` | Lexicographic comparison |
+
+### Timestamp extraction
+
+| Function | Description |
+|----------|-------------|
+| `timestampFromV1(u) !Timestamp` | Extract Gregorian timestamp from V1 UUID |
+| `timestampFromV6(u) !Timestamp` | Extract Gregorian timestamp from V6 UUID |
+| `timestampFromV7(u) !Timestamp` | Extract Unix-ms timestamp from V7 UUID |
+| `ts.toUnixMs() i64` | Convert Timestamp to Unix milliseconds |
+| `ts.toUnixSec() i64` | Convert Timestamp to Unix seconds |
+
+### NullUUID
+
+| Method | Description |
+|--------|-------------|
+| `NullUUID.from(u) NullUUID` | Wrap a UUID value (valid = true) |
+| `nu.value() ?UUID` | Returns `?UUID` — null if not valid |
+
+### Generator
+
+| Method | Description |
+|--------|-------------|
+| `Generator.init() Generator` | Default generator (CSPRNG, random node) |
+| `Generator.withClock(f) Generator` | Inject a custom clock function |
+| `Generator.withHWAddr(f) Generator` | Opt in to real MAC address embedding |
+| `gen.clearNodeCache()` | Force re-sample of node ID |
+| `gen.saveState(path) !void` | Persist clock state to file (mode 0o600) |
+| `gen.loadState(path) !void` | Restore clock state from file |
+| `GeneratorInterface.fromGenerator(&gen)` | Obtain a type-erased generator interface |
+
+### HashMap contexts
+
+| Type | Description |
+|------|-------------|
+| `UUID.HashContext` | Wyhash with fixed seed — use for trusted UUID keys only |
+| `UUID.SecureHashContext` | CSPRNG-seeded hash — use when UUID keys are untrusted |
+
+### Namespace constants
+
+`namespace_dns`, `namespace_url`, `namespace_oid`, `namespace_x500`, `UUID.nil`, `UUID.max`
+
 ## Requirements
 
-- Zig 0.15.1 or later
+- Zig 0.15.2 or later
 
 ## Building
 

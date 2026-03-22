@@ -20,8 +20,7 @@
 //! const u4 = try uuid.newV4();         // random UUID
 //! const v3 = uuid.newV3(uuid.namespace_dns, "example.com");
 //!
-//! var buf: [36]u8 = undefined;
-//! std.debug.print("{s}\n", .{u.toString(&buf)});
+//! std.debug.print("{f}\n", .{u});          // {f} specifier — no stack buffer needed
 //! ```
 
 const builtin = @import("builtin");
@@ -50,7 +49,7 @@ pub const namespace_x500 = @import("namespace.zig").namespace_x500;
 // Generator
 pub const Generator = @import("generator.zig").Generator;
 pub const GeneratorInterface = @import("generator.zig").GeneratorInterface;
-pub const default_generator = @import("generator.zig").default_generator;
+pub var default_generator = @import("generator.zig").default_generator;
 
 // Package-level convenience functions
 pub const newV1 = @import("versions.zig").newV1;

@@ -6,15 +6,18 @@
 .PHONY: test-release-safe test-release-fast test-release-small test-all-optimizations
 .PHONY: pre-commit-install pre-commit pre-commit-run
 .PHONY: cross-compile-required cross-compile
+.PHONY: bench fuzz
 
 # Default target: build and run tests
 all: build test-unit
 	@echo "✅ All builds and tests completed successfully!"
 
-# Build the library
+# Build the library (check + examples ensure all source compiles; the library is
+# module-only and has no installable artifact separate from tests)
 build:
 	@echo "🔨 Building uuid..."
-	@zig build
+	@zig build check
+	@zig build examples
 
 # Run all tests
 test: test-unit test-integration
@@ -69,18 +72,27 @@ test-release-small:
 test-all-optimizations: test-unit test-release-safe test-release-fast test-release-small
 	@echo "✅ All optimization levels passed"
 
-# Cross-compilation (zig build check for required targets)
-CROSS_TARGETS = x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows
-
+# Cross-compilation: build.zig check-cross step hardcodes all 5 required targets
+# (x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows) and
+# ignores -Dtarget, so a single invocation checks all of them.  (QC-33: the old
+# per-target loop ran 5×5=25 compilations instead of 5.)
 cross-compile-required:
 	@echo "🔀 Cross-compile check for required targets..."
-	@for target in $(CROSS_TARGETS); do \
-		echo "  Checking $$target..."; \
-		zig build check-cross -Dtarget=$$target || exit 1; \
-	done
+	@zig build check-cross
 	@echo "✅ All cross-compile targets pass"
 
 cross-compile: cross-compile-required
+
+# Run benchmarks in ReleaseFast mode (QC-61)
+bench:
+	@echo "Running benchmarks..."
+	@zig build bench -Doptimize=ReleaseFast
+
+# Run coverage-guided fuzz tests locally (QC-59, QC-61).
+# Press Ctrl+C to stop; crashes are written to zig-out/fuzz/.
+fuzz:
+	@echo "Running fuzz tests (Ctrl+C to stop)..."
+	@zig build test --fuzz
 
 # Pre-commit hook management
 pre-commit-install:
@@ -115,6 +127,8 @@ help:
 	@echo "  test-release-fast    Test with ReleaseFast"
 	@echo "  test-release-small   Test with ReleaseSmall"
 	@echo "  test-all-optimizations  Test all optimization levels"
+	@echo "  bench                Run benchmarks (ReleaseFast)"
+	@echo "  fuzz                 Run coverage-guided fuzz tests (Ctrl+C to stop)"
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  fmt                  Format source code"

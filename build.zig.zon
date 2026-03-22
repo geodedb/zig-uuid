@@ -2,7 +2,7 @@
     .name = .uuid,
     .version = "0.1.0",
     .fingerprint = 0xd17f50a6ae62bdb4,
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .json = .{
             .url = "git+https://gitlab.com/devnw/zig/json.git#4c2032be31443f4504427c205419fced275d4263",
@@ -13,9 +13,12 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "tests",
+        "bench",
         "examples",
         "docs",
         "LICENSE",
         "README.md",
+        "CHANGELOG.md",
     },
 }

@@ -13,7 +13,6 @@ pub const Error = error{
     IncorrectByteLength,
     NoHWAddressFound,
     InvalidVersion,
-    V8FieldLength,
     RandomError,
     /// Returned by Timestamp.now() when the system clock is before the Unix epoch.
     InvalidTimestamp,
@@ -69,6 +68,11 @@ pub const UUID = struct {
 
     pub fn isNil(self: UUID) bool {
         return std.mem.eql(u8, &self.bytes, &nil.bytes);
+    }
+
+    /// Returns true when all 16 bytes are 0xFF (the max UUID per RFC-9562 §5.10).
+    pub fn isMax(self: UUID) bool {
+        return std.mem.eql(u8, &self.bytes, &UUID.max.bytes);
     }
 
     /// Returns true when this UUID has a known RFC-9562 version nibble (1–8)
@@ -204,12 +208,40 @@ pub const UUID = struct {
         return UUID.fromBytes(b) catch UUID.nil;
     }
 
+    /// Parse a UUID from any of the six supported string formats.
+    ///
+    /// **Accepted formats:**
+    /// - Canonical (lowercase or uppercase, with dashes):
+    ///   `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (36 chars)
+    /// - Braced canonical:
+    ///   `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}` (38 chars)
+    /// - 32-char hex (no dashes):
+    ///   `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (32 chars)
+    /// - Braced hex:
+    ///   `{xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx}` (34 chars)
+    /// - URN canonical:
+    ///   `urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (45 chars)
+    /// - URN hex:
+    ///   `urn:uuid:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (41 chars)
+    ///
+    /// **Errors:**
+    /// - `Error.InvalidURNPrefix` — starts with `urn:` but not `urn:uuid:`
+    /// - `Error.InvalidBraces`   — opening `{` without closing `}`
+    /// - `Error.InvalidLength`   — stripped string is not 36 or 32 chars
+    /// - `Error.InvalidDashes`   — 36-char form has wrong dash positions
+    /// - `Error.InvalidFormat`   — non-hex character encountered
+    ///
+    /// **Example:**
+    /// ```zig
+    /// const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    /// const u2 = try UUID.fromString("urn:uuid:6ba7b8109dad11d180b400c04fd430c8");
+    /// ```
     pub fn fromString(s: []const u8) Error!UUID {
         // Detect and strip URN prefix
         var rest = s;
         if (std.mem.startsWith(u8, rest, "urn:uuid:")) {
             rest = rest[9..];
-        } else if (rest.len > 4 and std.mem.startsWith(u8, rest, "urn:")) {
+        } else if (rest.len >= 4 and std.mem.startsWith(u8, rest, "urn:")) {
             return Error.InvalidURNPrefix;
         }
 
@@ -266,6 +298,8 @@ pub const UUID = struct {
         return alloc.dupe(u8, self.toURN(&buf));
     }
 
+    /// Allocating canonical lowercase with dashes: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`.
+    /// Returns a heap-allocated 36-byte string; caller must free with the same allocator.
     pub fn toStringAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
         var buf: [36]u8 = undefined;
         return alloc.dupe(u8, self.toString(&buf));
@@ -277,9 +311,23 @@ pub const UUID = struct {
         return alloc.dupe(u8, self.toStringUpper(&buf));
     }
 
-    pub fn format(self: UUID, writer: anytype) !void {
+    /// Allocating lowercase hex without dashes (QC-42).
+    pub fn toHexAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
+        var buf: [32]u8 = undefined;
+        return alloc.dupe(u8, self.toHex(&buf));
+    }
+
+    /// Allocating uppercase hex without dashes (QC-42).
+    pub fn toHexUpperAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
+        var buf: [32]u8 = undefined;
+        return alloc.dupe(u8, self.toHexUpper(&buf));
+    }
+
+    /// Format UUID as a canonical lowercase hyphenated string for use with
+    /// `{f}` in std.fmt (Zig 0.15+). Example: `std.debug.print("{f}\n", .{u})`.
+    pub fn format(self: UUID, w: *std.io.Writer) std.io.Writer.Error!void {
         var buf: [36]u8 = undefined;
-        try writer.writeAll(self.toString(&buf));
+        try w.writeAll(self.toString(&buf));
     }
 
     pub fn jsonMarshal(self: UUID, allocator: std.mem.Allocator) !json.Value {
@@ -469,6 +517,38 @@ test "UUID setVariant and variant()" {
     try std.testing.expectEqual(Variant.rfc9562, u.variant());
 }
 
+test "setVariant round-trip for all four variants (QC-41)" {
+    // .rfc9562 — already tested above; include for completeness.
+    {
+        var u = UUID{ .bytes = [_]u8{0xFF} ** 16 };
+        u.setVariant(.rfc9562);
+        try std.testing.expectEqual(Variant.rfc9562, u.variant());
+        // byte[8] bit 7 = 1, bit 6 = 0  → (b & 0x80==0x80) and (b & 0xC0==0x80)
+        try std.testing.expect(u.bytes[8] & 0xC0 == 0x80);
+    }
+    // .ncs — MSB of byte[8] must be 0.
+    {
+        var u = UUID{ .bytes = [_]u8{0xFF} ** 16 };
+        u.setVariant(.ncs);
+        try std.testing.expectEqual(Variant.ncs, u.variant());
+        try std.testing.expect(u.bytes[8] & 0x80 == 0x00);
+    }
+    // .microsoft — byte[8] bits [7:5] = 0b110.
+    {
+        var u = UUID{ .bytes = [_]u8{0} ** 16 };
+        u.setVariant(.microsoft);
+        try std.testing.expectEqual(Variant.microsoft, u.variant());
+        try std.testing.expect(u.bytes[8] & 0xE0 == 0xC0);
+    }
+    // .future — byte[8] bits [7:5] = 0b111.
+    {
+        var u = UUID{ .bytes = [_]u8{0} ** 16 };
+        u.setVariant(.future);
+        try std.testing.expectEqual(Variant.future, u.variant());
+        try std.testing.expect(u.bytes[8] & 0xE0 == 0xE0);
+    }
+}
+
 test "UUID eql and order" {
     const a = UUID.nil;
     const b = UUID.max;
@@ -562,6 +642,26 @@ test "fromString: error on bad format" {
     try std.testing.expectError(Error.InvalidURNPrefix, UUID.fromString("urn:bad:6ba7b8109dad11d180b400c04fd430c8"));
 }
 
+test "fromString: URN off-by-one regression — 'urn:' returns InvalidURNPrefix not InvalidLength (QC-47)" {
+    // Before fix, rest.len > 4 was false for len==4, so "urn:" fell through to
+    // InvalidLength.  With rest.len >= 4 it correctly returns InvalidURNPrefix.
+    try std.testing.expectError(Error.InvalidURNPrefix, UUID.fromString("urn:"));
+    // Slightly longer bad URN prefixes must also return InvalidURNPrefix.
+    try std.testing.expectError(Error.InvalidURNPrefix, UUID.fromString("urn:foo"));
+    try std.testing.expectError(Error.InvalidURNPrefix, UUID.fromString("urn:uui:6ba7b8109dad11d180b400c04fd430c8"));
+}
+
+test "parseCanonical: InvalidDashes for wrong dash position (QC-40)" {
+    // Position 8 should be '-' but 'X' is substituted — must return InvalidDashes.
+    try std.testing.expectError(Error.InvalidDashes, UUID.fromString("6ba7b810X9dad-11d1-80b4-00c04fd430c8"));
+    // Position 13 wrong.
+    try std.testing.expectError(Error.InvalidDashes, UUID.fromString("6ba7b810-9dadX11d1-80b4-00c04fd430c8"));
+    // Position 18 wrong.
+    try std.testing.expectError(Error.InvalidDashes, UUID.fromString("6ba7b810-9dad-11d1X80b4-00c04fd430c8"));
+    // Position 23 wrong.
+    try std.testing.expectError(Error.InvalidDashes, UUID.fromString("6ba7b810-9dad-11d1-80b4X00c04fd430c8"));
+}
+
 test "fromBytes: 16-byte slice" {
     const b = [_]u8{ 0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
     const u = try UUID.fromBytes(&b);
@@ -636,6 +736,22 @@ test "toHexUpper produces uppercase without dashes (G-2)" {
     try std.testing.expectEqualStrings("6BA7B8109DAD11D180B400C04FD430C8", s);
 }
 
+test "toHexAlloc produces lowercase hex without dashes (QC-42)" {
+    const alloc = std.testing.allocator;
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const s = try u.toHexAlloc(alloc);
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("6ba7b8109dad11d180b400c04fd430c8", s);
+}
+
+test "toHexUpperAlloc produces uppercase hex without dashes (QC-42)" {
+    const alloc = std.testing.allocator;
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const s = try u.toHexUpperAlloc(alloc);
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("6BA7B8109DAD11D180B400C04FD430C8", s);
+}
+
 test "toStringUpperAlloc (G-2)" {
     const alloc = std.testing.allocator;
     const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
@@ -694,6 +810,13 @@ test "isZero alias for isNil (G-9)" {
     try std.testing.expect(!UUID.max.isZero());
     const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
     try std.testing.expect(!u.isZero());
+}
+
+test "UUID.isMax returns true for max UUID (QC-56)" {
+    try std.testing.expect(UUID.max.isMax());
+    try std.testing.expect(!UUID.nil.isMax());
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expect(!u.isMax());
 }
 
 // =============================================================================
