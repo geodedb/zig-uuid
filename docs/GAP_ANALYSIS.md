@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Security Review Cycle 10: SEC-R10-01 closed (Info) — timingSafeEql added to README API table and SECURITY.md Known Design Trade-offs. All automated scans clean. 34 total findings across Cycles 1–10; 33 closed, 1 Won't Do, 0 open.
+> Last updated: 2026-03-22 — Security Review Cycle 11: 4 new findings (SEC-R11-01 Low, SEC-R11-02/03/04 Info). All Cycles 1–10 findings remain closed. 38 total findings across Cycles 1–11; 33 closed, 1 Won't Do, 4 open.
 
 ---
 
@@ -2738,5 +2738,198 @@ by any public-facing documentation.
 ---
 
 _Last updated: 2026-03-22 — Cycle 10 complete. SEC-R10-01 closed: timingSafeEql added to README API table and SECURITY.md Known Design Trade-offs. All automated scans clean. 34 total findings across all cycles; 33 closed, 1 Won't Do, 0 open._
+
+---
+
+## Security Review Cycle 11
+
+> **Date:** 2026-03-22
+> **Zig version audited:** 0.15.2
+> **Branch reviewed:** `fix/sec-r9-01-timing-safe-eql` (74a0181)
+> **Previous cycles:** Cycles 1–10 (SEC-R1-xx through SEC-R10-01) — 33 closed, 1 Won't Do, 0 open.
+> **Scope:** Exhaustive full-codebase re-audit. All source files, CI, dependencies, runtime assumptions.
+
+---
+
+### Tool Versions (Cycle 11)
+
+| Tool | Version | Status |
+| ---- | ------- | ------ |
+| gitleaks | 8.30.0 | Clean (0 secrets) |
+| trufflehog | 3.92.5 | Clean (0 findings) |
+| syft | 1.41.1 | SBOM generated |
+| grype | 0.107.0 | 0 CVE matches |
+| osv-scanner | 2.3.2 | 0 findings (no Zig pkg sources) |
+| trivy | 0.69.0 | 0 vulns, 0 misconfigs |
+| semgrep | 1.150.0 | 0 findings (p/ci ruleset) |
+| shellcheck | 0.9.0 | No tracked .sh files |
+| checkov | 3.2.499 | 13 passed, 0 failed |
+| hadolint | 2.14.0 | No Dockerfiles |
+
+### Automated Scan Summary (Cycle 11)
+
+All tools clean. No new CVEs, no secrets detected, no misconfiguration findings.
+
+---
+
+### New Findings (Cycle 11)
+
+#### SEC-R11-01: `Timestamp.now()` missing upper-bound guard on `@intCast` — panic for far-future clocks (CWE-190)
+
+**Severity:** Low | **Risk Score:** 16 (Impact 2 × Likelihood 2 × 4) | **Confidence:** confirmed
+
+**Status: Open** — [#149](https://gitlab.com/devnw/zig/uuid/-/work_items/149)
+
+`Timestamp.now()` at `src/timestamp.zig:27` performs `@intCast(@divTrunc(ns, 100))` without an upper-bound guard. On 64-bit Linux, `std.time.nanoTimestamp()` returns values up to `maxInt(i64) * 1_000_000_000 ≈ 9.22e27 ns`. Dividing by 100 gives ≈ `9.22e25`, which exceeds `maxInt(u64) = 1.845e19`. The `@intCast` panics in Debug/ReleaseSafe builds and silently wraps (UB) in ReleaseFast.
+
+**Inconsistency:** `Timestamp.fromUnixNano()` (`src/timestamp.zig:74`) has the correct guard:
+
+```zig
+if (intervals_since_unix > std.math.maxInt(u64)) return Error.InvalidTimestamp;
+```
+
+`Timestamp.now()` lacks this guard entirely.
+
+**Attack scenario:** Root user sets system clock to year > 60,436 → any caller of `Timestamp.now()` → process panic (DoS).
+
+**Fix:**
+
+```zig
+pub fn now() Error!Timestamp {
+    const ns: i128 = std.time.nanoTimestamp();
+    if (ns < 0) return Error.InvalidTimestamp;
+    const intervals: i128 = @divTrunc(ns, 100);
+    if (intervals > std.math.maxInt(u64)) return Error.InvalidTimestamp;
+    const intervals_u64: u64 = @intCast(intervals);
+    return .{ .value = @truncate(intervals_u64 + gregorian_offset) };
+}
+```
+
+**GitLab:** [#149](https://gitlab.com/devnw/zig/uuid/-/work_items/149)
+
+---
+
+#### SEC-R11-02: `test_io` fuzz artifact not in `.gitignore` — world-writable binary in project root (Info)
+
+**Severity:** Info | **Risk Score:** 4 (Impact 1 × Likelihood 1 × 4) | **Confidence:** confirmed
+
+**Status: Open** — [#150](https://gitlab.com/devnw/zig/uuid/-/work_items/150)
+
+`test_io` (created by `zig build test --fuzz` as a fuzzer IPC pipe) is a 4.2 MB, world-writable (`rwxrwxr-x` / 775) all-zero binary in the project root. It is not tracked in git but is also not in `.gitignore`, risking accidental inclusion via `git add .`.
+
+**Evidence:** `ls -la test_io` → `.rwxrwxr-x 4.2M`. `.gitignore` contains `.zig-cache/` and `zig-out/` but not `test_io`.
+
+**Fix:** Add `test_io` to `.gitignore`:
+
+```text
+# Zig fuzzer IPC pipe
+test_io
+```
+
+**GitLab:** [#150](https://gitlab.com/devnw/zig/uuid/-/work_items/150)
+
+---
+
+#### SEC-R11-03: `UUID.isNil()` and `UUID.isMax()` use non-constant-time comparison — missing CWE-208 doc warning (Info)
+
+**Severity:** Info | **Risk Score:** 8 (Impact 2 × Likelihood 1 × 4) | **Confidence:** confirmed
+
+**Status: Open** — [#151](https://gitlab.com/devnw/zig/uuid/-/work_items/151)
+
+`UUID.isNil()` and `UUID.isMax()` both use `std.mem.eql` (a short-circuit non-constant-time comparison), exactly like `UUID.eql()`, but without the CWE-208 timing-safety warning added to `eql()` in SEC-R9-01. If a caller uses `isNil()` as an auth gate (e.g., "reject if nil UUID"), a timing oracle exists against the nil sentinel.
+
+**Evidence:** `src/uuid.zig` — `isNil()` calls `std.mem.eql(u8, &self.bytes, &nil.bytes)`, `isMax()` calls `std.mem.eql(u8, &self.bytes, &UUID.max.bytes)`. Neither has a CWE-208 note.
+
+**Fix:** Add brief timing notes to both doc comments pointing callers to `timingSafeEql(UUID.nil)` / `timingSafeEql(UUID.max)` for security contexts.
+
+**GitLab:** [#151](https://gitlab.com/devnw/zig/uuid/-/work_items/151)
+
+---
+
+#### SEC-R11-04: `Generator.loadState()` follows symlinks — no `O_NOFOLLOW` equivalent (CWE-61)
+
+**Severity:** Info | **Risk Score:** 4 (Impact 1 × Likelihood 1 × 4) | **Confidence:** confirmed
+
+**Status: Open** — [#152](https://gitlab.com/devnw/zig/uuid/-/work_items/152)
+
+`Generator.loadState()` opens the state file with `std.fs.openFileAbsolute(path, .{})` which does not set `O_NOFOLLOW`. A local attacker with write access to the state file's parent directory can replace the state file with a symlink to a sensitive file; `loadState` follows the symlink. Since `loadState` only reads (never writes) and validates the magic bytes first, actual data disclosure is prevented by validation, but the unguarded symlink following is asymmetric with `saveState()`'s SEC-R3-01 fix.
+
+**Evidence:** `src/generator.zig:628` — `std.fs.openFileAbsolute(path, .{})` with no O_NOFOLLOW flag. By contrast, `saveState` uses `O_EXCL | deleteFileAbsolute` to prevent symlink following on the write side.
+
+**Fix:** Use `std.posix.open` with `.NOFOLLOW = true` on POSIX platforms for the read path. Document the gap until fixed.
+
+**GitLab:** [#152](https://gitlab.com/devnw/zig/uuid/-/work_items/152)
+
+---
+
+### Stack-Ranked Findings (Cycle 11)
+
+| Rank | Sev | Risk | Finding | Component | CWE | Evidence (file:line) | Issue URL | Fix | Status |
+| ---- | --- | ---- | ------- | --------- | --- | -------------------- | --------- | --- | ------ |
+| 1 | Low | 16 | `Timestamp.now()` missing upper-bound guard — @intCast panic for far-future clocks | `src/timestamp.zig` | CWE-190 | `timestamp.zig:27` | [#149](https://gitlab.com/devnw/zig/uuid/-/work_items/149) | Add guard matching `fromUnixNano`; return `Error.InvalidTimestamp` | Open |
+| 2 | Info | 8 | `isNil()`/`isMax()` non-constant-time comparison missing CWE-208 doc warning | `src/uuid.zig` | CWE-208 | `uuid.zig:isNil,isMax` | [#151](https://gitlab.com/devnw/zig/uuid/-/work_items/151) | Add CWE-208 timing note to both doc comments | Open |
+| 3 | Info | 4 | `loadState()` follows symlinks — no O_NOFOLLOW equivalent | `src/generator.zig` | CWE-61 | `generator.zig:628` | [#152](https://gitlab.com/devnw/zig/uuid/-/work_items/152) | Use `std.posix.open` with `.NOFOLLOW=true` on POSIX | Open |
+| 4 | Info | 4 | `test_io` fuzz artifact not in `.gitignore` — world-writable binary in project root | `.gitignore` | — | `.gitignore` | [#150](https://gitlab.com/devnw/zig/uuid/-/work_items/150) | Add `test_io` to `.gitignore` | Open |
+
+### False Positives Noted (Cycle 11)
+
+- **`ifreqs[0..count]` in `src/hwaddr/linux.zig:69`:** On Linux, SIOCGIFCONF sets `ifc_len` to the number of bytes actually written (bounded by the buffer), guaranteeing `count <= ifreqs.len`. The slice `ifreqs[0..count]` is always in bounds. Not a finding.
+- **`@intCast(ms)` in `newV7Locked` (`generator.zig:266`):** `ms` is guaranteed `>= 0` by `clockToMs` and `newV7AtTime`'s pre-check. The i64→u64 cast is safe. Not a finding.
+- **`newV4` without mutex:** `newV4` accesses no shared mutable state — `u` is stack-local, `defaultRand` is thread-safe. Not a race condition.
+- **CI component semver tags (`@v1.7.1`):** Already documented as Won't Do (pipeline governance). Not reopened.
+- **`debian:bookworm-slim` image not digest-pinned:** Won't Do (infrastructure controls). Not reopened.
+- **Zig download SHA-256 TOFU (SEC-R2-01/SEC-R9-02):** Won't Do (pipeline governance). Not reopened.
+
+### Won't Do Reconfirmation (Cycle 11)
+
+| Item | Reason |
+|------|--------|
+| CI/CD component semver→SHA pinning | Pipeline governance |
+| Docker image digest pinning | Infrastructure controls |
+| Pre-commit hook modifications | Developer tooling team |
+| SEC-R2-01: Unverified Zig download | Pipeline governance (SHA check exists) |
+| SEC-R9-02: CI hash TOFU | Pipeline governance — same policy as SEC-R2-01. Future agents MUST NOT re-open. |
+
+### Confirmed Clean Areas (Cycle 11)
+
+- **`src/uuid.zig`:** `timingSafeEql` verified correct (SEC-R9-01); `HashContext`/`SecureHashContext` doc warnings present. `fromString` parser — no injection, all error paths return typed errors.
+- **`src/generator.zig`:** `clockToMs` guard present (SEC-R4-01); `max_spins` DoS guard present (SEC-R5-03); `clearNodeCache` mutex-protected (SEC-R6-01); `saveState` atomic+O_EXCL (SEC-R3-01/SEC-R9); `loadState` magic/version/overflow/trailing-byte guards present.
+- **`src/hwaddr/linux.zig`:** `ifc_len < 0` guard present; `ifreqs[0..count]` bounds safe (Linux kernel guarantee); broadcast MAC skip present.
+- **`src/hwaddr/macos.zig`:** `sdl_len` primary guard; `sdl_data.len` secondary guard; broadcast MAC skip present.
+- **`src/hwaddr/windows.zig`:** Two-phase buffer allocation; broadcast MAC skip present.
+- **`src/fuzz.zig`:** All 6 fuzz targets present; corpus covers boundary conditions.
+- **`src/timestamp.zig`:** `fromUnixNano`/`fromUnixMs` bounds guards present (SEC-R8-01). `now()` has lower-bound guard but is missing upper-bound guard (SEC-R11-01).
+- **`.gitlab-ci.yml`:** All 4 optimization levels tested; fuzz job exit-code guard correct (SEC-R5-02); no secret injection vectors identified.
+- **`gitleaks`:** 0 secrets detected (52 commits scanned).
+- **`trufflehog`:** 0 verified findings.
+- **`grype`/`syft`:** 0 CVE matches; SBOM clean.
+- **`semgrep p/ci`:** 0 findings.
+- **`checkov`:** 13 passed, 0 failed.
+
+---
+
+**Summary Table (Cycle 11):**
+
+| Severity | New Findings | Status |
+|----------|-------------|--------|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 0 | — |
+| Low | 1 | Open (SEC-R11-01) |
+| Info | 3 | Open (SEC-R11-02, SEC-R11-03, SEC-R11-04) |
+| **Total** | **4** | |
+
+**Running totals across all cycles:**
+
+| Metric | Count |
+|--------|-------|
+| Total findings (Cycles 1–11) | 38 |
+| Closed / implemented | 33 |
+| Won't Do | 1 (SEC-R9-02) |
+| Open | 4 (SEC-R11-01/02/03/04) |
+
+---
+
+_Last updated: 2026-03-22 — Cycle 11 complete. 4 new findings: SEC-R11-01 (Low, CWE-190, Timestamp.now() @intCast overflow), SEC-R11-02 (Info, test_io .gitignore), SEC-R11-03 (Info, CWE-208, isNil/isMax doc gap), SEC-R11-04 (Info, CWE-61, loadState O_NOFOLLOW). All automated scans clean. 38 total findings across all cycles._
 
 ---
