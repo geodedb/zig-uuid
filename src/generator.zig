@@ -283,7 +283,7 @@ pub const Generator = struct {
                 break :blk 1_000_000 - ns_frac;
             } else 500_000;
             self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
-            std.Thread.sleep(sleep_ns);
+            std.time.sleep(sleep_ns);
             self.v7_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
         }
 
