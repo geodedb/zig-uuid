@@ -250,7 +250,7 @@ pub const UUID = struct {
 
         /// Create a new SecureHashContext with a cryptographically random seed.
         pub fn init() SecureHashContext {
-            return .{ .seed = std.crypto.random.int(u64) };
+            return .{ .seed = blk: { var seed_buf: [8]u8 = undefined; std.posix.getrandom(&seed_buf) catch unreachable; break :blk std.mem.readInt(u64, &seed_buf, .little); } };
         }
 
         pub fn hash(self: SecureHashContext, key: UUID) u64 {

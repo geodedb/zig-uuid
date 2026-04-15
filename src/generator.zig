@@ -15,11 +15,13 @@ pub const RandFn = *const fn (buf: []u8) anyerror!void;
 pub const HWAddrFn = *const fn () Error![6]u8;
 
 fn defaultClock() i128 {
-    return std.time.nanoTimestamp();
+    var ts: std.posix.timespec = undefined;
+    std.posix.clock_gettime(.REALTIME, &ts) catch return 0;
+    return @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
 }
 
 fn defaultRand(buf: []u8) anyerror!void {
-    std.crypto.random.bytes(buf);
+    std.posix.getrandom(buf) catch unreachable;
 }
 
 /// Convert a raw nanosecond timestamp (i128) to a Unix millisecond value
@@ -91,12 +93,12 @@ pub const Generator = struct {
     // (v7_mutex first, then v1v6_mutex) to prevent deadlock.
 
     // V7 monotonicity state (protected by v7_mutex)
-    v7_mutex: std.Thread.Mutex = .{},
+    v7_mutex: std.Io.Mutex = .{},
     last_ms: i64 = 0,
     mono_seq: u12 = 0,
 
     // V1/V6 shared clock state (protected by v1v6_mutex; F-8: documented above)
-    v1v6_mutex: std.Thread.Mutex = .{},
+    v1v6_mutex: std.Io.Mutex = .{},
     clock_seq: u14 = 0,
     clock_seq_initialized: bool = false,
     last_v1_ts: u60 = 0,
