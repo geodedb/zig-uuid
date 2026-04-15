@@ -30,8 +30,9 @@ pub const Timestamp = struct {
     /// match those in `fromUnixNano` (SEC-R11-01, SEC-R12-02 / CWE-190).
     pub fn now() Error!Timestamp {
         const ns: i128 = blk: {
-            var ts: std.posix.timespec = undefined;
-            std.posix.clock_gettime(.REALTIME, &ts) catch return Error.InvalidTimestamp;
+            var ts: std.os.linux.timespec = undefined;
+            const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
+            if (rc != 0) return Error.InvalidTimestamp;
             break :blk @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
         };
         if (ns < 0) return Error.InvalidTimestamp;

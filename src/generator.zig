@@ -15,13 +15,15 @@ pub const RandFn = *const fn (buf: []u8) anyerror!void;
 pub const HWAddrFn = *const fn () Error![6]u8;
 
 fn defaultClock() i128 {
-    var ts: std.posix.timespec = undefined;
-    std.posix.clock_gettime(.REALTIME, &ts) catch return 0;
+    var ts: std.os.linux.timespec = undefined;
+    const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
+    if (rc != 0) return 0;
     return @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
 }
 
 fn defaultRand(buf: []u8) anyerror!void {
-    std.posix.getrandom(buf) catch unreachable;
+    const rc = std.os.linux.getrandom(buf.ptr, buf.len, 0);
+    if (rc != 0) unreachable;
 }
 
 /// Convert a raw nanosecond timestamp (i128) to a Unix millisecond value
@@ -93,12 +95,12 @@ pub const Generator = struct {
     // (v7_mutex first, then v1v6_mutex) to prevent deadlock.
 
     // V7 monotonicity state (protected by v7_mutex)
-    v7_mutex: std.Io.Mutex = .{},
+    v7_mutex: std.Io.Mutex = std.Io.Mutex.init,
     last_ms: i64 = 0,
     mono_seq: u12 = 0,
 
     // V1/V6 shared clock state (protected by v1v6_mutex; F-8: documented above)
-    v1v6_mutex: std.Io.Mutex = .{},
+    v1v6_mutex: std.Io.Mutex = std.Io.Mutex.init,
     clock_seq: u14 = 0,
     clock_seq_initialized: bool = false,
     last_v1_ts: u60 = 0,
@@ -150,8 +152,8 @@ pub const Generator = struct {
     /// writes node_cache under the same mutex).  Without this lock, a race
     /// exists between clearNodeCache and any in-flight V1/V6 generation.
     pub fn clearNodeCache(self: *Generator) void {
-        self.v1v6_mutex.lock();
-        defer self.v1v6_mutex.unlock();
+        self.v1v6_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
+        defer self.v1v6_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
         self.node_cache = null;
     }
 
@@ -181,9 +183,9 @@ pub const Generator = struct {
     pub fn newV7(self: *Generator) Error!UUID {
         // PERF-07: Read clock inside the mutex to use the freshest possible
         // timestamp and avoid stale-timestamp collisions under high contention.
-        self.v7_mutex.lock();
+        self.v7_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
         var ms = clockToMs(self.clock()) catch |err| {
-            self.v7_mutex.unlock();
+            self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
             return err;
         };
         // SEC-R14-02 (CWE-1284): If the system clock jumped backward (NTP
@@ -204,7 +206,7 @@ pub const Generator = struct {
     /// - `Error.RandomError` — the CSPRNG source failed.
     pub fn newV7AtTime(self: *Generator, ts: i64) Error!UUID {
         if (ts < 0) return Error.InvalidTimestamp; // QC-2: same error as newV7 for same condition
-        self.v7_mutex.lock();
+        self.v7_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
         return self.newV7Locked(ts);
     }
 
@@ -249,7 +251,7 @@ pub const Generator = struct {
         while (ms == self.last_ms and self.mono_seq == std.math.maxInt(u12)) {
             spins += 1;
             if (spins > max_spins) {
-                self.v7_mutex.unlock();
+                self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
                 return Error.InvalidTimestamp;
             }
             // SEC-R13-01: Cache one clock reading per spin iteration. Both
@@ -261,7 +263,7 @@ pub const Generator = struct {
             // SEC-R4-01: derive ms from the cached clock reading; propagate
             // InvalidTimestamp if the value is out of range.
             ms = clockToMs(ns_now) catch |err| {
-                self.v7_mutex.unlock();
+                self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
                 return err;
             };
             // SEC-R14-02: clamp backward clock to preserve monotonicity
@@ -280,9 +282,9 @@ pub const Generator = struct {
                 const ns_frac: u64 = @intCast(@rem(ns_now, 1_000_000));
                 break :blk 1_000_000 - ns_frac;
             } else 500_000;
-            self.v7_mutex.unlock();
+            self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
             std.Thread.sleep(sleep_ns);
-            self.v7_mutex.lock();
+            self.v7_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
         }
 
         // Single branch: same-ms increment OR new-ms reset. seq is always assigned.
@@ -298,7 +300,7 @@ pub const Generator = struct {
             // New ms: seed mono_seq with random jitter (RFC-9562 §6.2).
             var rand_seq: [2]u8 = undefined;
             self.rand(&rand_seq) catch {
-                self.v7_mutex.unlock();
+                self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
                 return Error.RandomError;
             };
             self.mono_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
@@ -309,7 +311,7 @@ pub const Generator = struct {
         // PERF-02: Release v7_mutex before the 8-byte rand_b CSPRNG call.
         // All shared state (last_ms, mono_seq) is committed above; UUID
         // construction uses only stack-local variables.
-        self.v7_mutex.unlock();
+        self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
 
         var u: UUID = undefined;
         // unix_ts_ms: 48 bits big-endian in bytes 0-5
@@ -399,8 +401,8 @@ pub const Generator = struct {
         ts: Timestamp,
         prefetched: ?[6]u8,
     ) Error!struct { t: u60, node: [6]u8, clock_seq: u14 } {
-        self.v1v6_mutex.lock();
-        defer self.v1v6_mutex.unlock();
+        self.v1v6_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
+        defer self.v1v6_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
         try self.initClockSeq(); // F-3: propagate CSPRNG failure
         // Increment clock_seq on clock regression OR same-timestamp call (RFC-9562 §6.1).
         // Using <= (not <) ensures concurrent/repeated calls at identical timestamps
@@ -626,10 +628,10 @@ pub const Generator = struct {
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
         var buf: [state_size]u8 = undefined;
         {
-            self.v7_mutex.lock();
-            defer self.v7_mutex.unlock();
-            self.v1v6_mutex.lock();
-            defer self.v1v6_mutex.unlock();
+            self.v7_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
+            defer self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
+            self.v1v6_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
+            defer self.v1v6_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
 
             @memcpy(buf[0..4], &state_magic);
             buf[4] = state_format_version; // = 2
@@ -745,10 +747,10 @@ pub const Generator = struct {
         const current_ms: i64 = clockToMs(self.clock()) catch 0;
 
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
-        self.v7_mutex.lock();
-        defer self.v7_mutex.unlock();
-        self.v1v6_mutex.lock();
-        defer self.v1v6_mutex.unlock();
+        self.v7_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
+        defer self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
+        self.v1v6_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
+        defer self.v1v6_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
 
         const flags = buf[5];
         self.clock_seq = @truncate(std.mem.readInt(u16, buf[6..8], .little) & 0x3FFF);
