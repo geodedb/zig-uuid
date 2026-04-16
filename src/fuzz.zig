@@ -208,6 +208,7 @@ const nano_corpus: []const []const u8 = &.{
 /// Writes the fuzz input bytes to a temporary file, then calls loadState.
 /// Accepts any return value (success or error) — only panics and UB are forbidden.
 fn fuzzGeneratorLoadState(_: void, smith: *std.testing.Smith) anyerror!void {
+    const linux = if (comptime @import("builtin").os.tag == .linux) std.os.linux else return;
     var input_buf: [256]u8 = undefined;
     const input_len = smith.slice(&input_buf);
     const input = input_buf[0..input_len];
@@ -219,11 +220,12 @@ fn fuzzGeneratorLoadState(_: void, smith: *std.testing.Smith) anyerror!void {
     try f.writePositionalAll(io, input, 0);
     f.close(io);
     // Build an absolute path to the state file via /proc/self/fd.
+    const fd: linux.fd_t = tmp.dir.handle;
     var link_buf: [64:0]u8 = undefined;
-    _ = try std.fmt.bufPrintZ(&link_buf, "/proc/self/fd/{d}", .{tmp.dir.handle});
+    _ = try std.fmt.bufPrintZ(&link_buf, "/proc/self/fd/{d}", .{fd});
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const rc = std.os.linux.readlink(&link_buf, &dir_buf, dir_buf.len);
-    const err = std.os.linux.errno(rc);
+    const rc = linux.readlink(&link_buf, &dir_buf, dir_buf.len);
+    const err = linux.errno(rc);
     if (err != .SUCCESS) return;
     const dir_path = dir_buf[0..rc];
     var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;

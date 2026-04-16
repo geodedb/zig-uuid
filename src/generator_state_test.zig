@@ -10,12 +10,15 @@ const builtin = @import("builtin");
 const Generator = @import("generator.zig").Generator;
 const Error = @import("uuid.zig").Error;
 
-/// Resolve the absolute path of a Dir handle via /proc/self/fd/<fd>.
-fn dirAbsPath(dir: std.Io.Dir, buf: []u8) ![]const u8 {
+/// Resolve the absolute path of a Dir handle via /proc/self/fd/<fd> (Linux only).
+/// On non-Linux platforms, returns an error (caller should skip the test).
+fn dirAbsPath(dir: std.Io.Dir, buf: []u8) error{ Unsupported, FileNotFound, NoSpaceLeft }![]const u8 {
+    const linux = if (comptime builtin.os.tag == .linux) std.os.linux else return error.Unsupported;
+    const fd: linux.fd_t = dir.handle;
     var link_buf: [64:0]u8 = undefined;
-    _ = try std.fmt.bufPrintZ(&link_buf, "/proc/self/fd/{d}", .{dir.handle});
-    const rc = std.os.linux.readlink(&link_buf, buf.ptr, buf.len);
-    const err = std.os.linux.errno(rc);
+    _ = std.fmt.bufPrintZ(&link_buf, "/proc/self/fd/{d}", .{fd}) catch return error.NoSpaceLeft;
+    const rc = linux.readlink(&link_buf, buf.ptr, buf.len);
+    const err = linux.errno(rc);
     if (err != .SUCCESS) return error.FileNotFound;
     return buf[0..rc];
 }
