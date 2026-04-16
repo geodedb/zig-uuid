@@ -282,9 +282,10 @@ pub const Generator = struct {
                 const ns_frac: u64 = @intCast(@rem(ns_now, 1_000_000));
                 break :blk 1_000_000 - ns_frac;
             } else 500_000;
-            self.v7_mutex.unlock(std.Io.Threaded.global_single_threaded.io());
-            std.time.sleep(sleep_ns);
-            self.v7_mutex.lockUncancelable(std.Io.Threaded.global_single_threaded.io());
+            const gio = std.Io.Threaded.global_single_threaded.io();
+            self.v7_mutex.unlock(gio);
+            gio.sleep(.fromNanoseconds(@intCast(sleep_ns)), .real) catch {};
+            self.v7_mutex.lockUncancelable(gio);
         }
 
         // Single branch: same-ms increment OR new-ms reset. seq is always assigned.
