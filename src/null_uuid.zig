@@ -24,7 +24,7 @@ pub const NullUUID = struct {
 
     /// Format for use with `{f}` in std.fmt.
     /// Emits "null" when invalid, or the canonical UUID string when valid.
-    pub fn format(self: NullUUID, w: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: NullUUID, w: *std.Io.Writer) std.Io.Writer.Error!void {
         if (!self.valid) {
             try w.writeAll("null");
         } else {

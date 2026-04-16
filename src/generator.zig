@@ -22,8 +22,7 @@ fn defaultClock() i128 {
 }
 
 fn defaultRand(buf: []u8) anyerror!void {
-    const rc = std.os.linux.getrandom(buf.ptr, buf.len, 0);
-    if (rc != 0) unreachable;
+    std.Io.Threaded.global_single_threaded.io().random(buf);
 }
 
 /// Convert a raw nanosecond timestamp (i128) to a Unix millisecond value
@@ -673,16 +672,17 @@ pub const Generator = struct {
         const tmp_path = try std.fmt.bufPrint(&tmp_path_buf, "{s}{s}", .{ path, tmp_suffix });
         // Remove any stale .tmp (e.g., from a previous crashed run) or a pre-placed
         // symlink.  Errors (FileNotFound etc.) are intentionally ignored.
-        std.fs.deleteFileAbsolute(tmp_path) catch {};
+        const io = std.Io.Threaded.global_single_threaded.io();
+        std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
         {
             // exclusive:true → O_EXCL on POSIX: fails if any file or symlink now
             // exists at tmp_path, preventing symlink-following on creation.
-            const f = try std.fs.createFileAbsolute(tmp_path, .{ .mode = 0o600, .exclusive = true });
-            errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
-            defer f.close();
-            try f.writeAll(&buf);
+            const f = try std.Io.Dir.createFileAbsolute(io, tmp_path, .{ .exclusive = true });
+            errdefer std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
+            defer f.close(io);
+            try f.writePositionalAll(io, &buf, 0);
         }
-        try std.fs.renameAbsolute(tmp_path, path);
+        try std.Io.Dir.renameAbsolute(tmp_path, path, io);
     }
 
     /// Load generator state from stable storage (F-9, SEC-10, PERF-04).
@@ -709,20 +709,21 @@ pub const Generator = struct {
         // ELOOP if the path is a symlink, closing the redirect.  On Windows,
         // symlink handling is enforced differently by the OS; openFileAbsolute
         // is used unchanged.
+        const io = std.Io.Threaded.global_single_threaded.io();
         const f = if (builtin.os.tag == .windows)
-            try std.fs.openFileAbsolute(path, .{})
+            try std.Io.Dir.openFileAbsolute(io, path, .{})
         else blk: {
-            const fd = try std.posix.open(path, .{ .NOFOLLOW = true }, 0);
-            break :blk std.fs.File{ .handle = fd };
+            const fd = try std.posix.openat(std.posix.AT.FDCWD, path, .{ .NOFOLLOW = true }, 0);
+            break :blk std.Io.File{ .handle = fd, .flags = .{ .nonblocking = false } };
         };
-        defer f.close();
+        defer f.close(io);
 
         // SEC-R13-04 (CWE-908): Zero-initialize to prevent uninitialized reads.
         // For v1 state files (22 bytes), bytes 22–31 are never written by readAll.
         // The version-2 guard prevents consumption, but zeroing eliminates the
         // latent risk if that guard is weakened in a future refactor.
         var buf: [state_size]u8 = std.mem.zeroes([state_size]u8);
-        const n = try f.readAll(&buf);
+        const n = try f.readPositionalAll(io, &buf, 0);
 
         // Accept both v1 (22 bytes) and v2 (32 bytes).
         if (n != state_size_v1 and n != state_size) return Error.InvalidFormat;
@@ -731,7 +732,7 @@ pub const Generator = struct {
         // to buf.len even when the file is larger, so n alone cannot detect
         // oversized files.  A one-byte probe read must return 0 (EOF).
         var probe: [1]u8 = undefined;
-        const extra = try f.read(&probe);
+        const extra = try f.readPositionalAll(io, &probe, n);
         if (extra != 0) return Error.InvalidFormat;
         if (!std.mem.eql(u8, buf[0..4], &state_magic)) return Error.InvalidFormat;
         if (buf[4] != state_format_version_v1 and buf[4] != state_format_version) return Error.InvalidFormat;

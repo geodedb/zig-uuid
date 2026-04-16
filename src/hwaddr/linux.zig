@@ -25,12 +25,12 @@ const ifconf = extern struct {
 };
 
 pub fn getHWAddr() Error![6]u8 {
-    const sock = std.posix.socket(
-        std.posix.AF.INET,
-        std.posix.SOCK.DGRAM,
-        0,
-    ) catch return Error.NoHWAddressFound;
-    defer std.posix.close(sock);
+    const sock_ret = linux.socket(linux.AF.INET, linux.SOCK.DGRAM, 0);
+    // Raw syscall: error codes are encoded as large usize values (>= maxInt(isize)).
+    const sock_err = linux.errno(sock_ret);
+    if (sock_err != .SUCCESS) return Error.NoHWAddressFound;
+    const sock: linux.fd_t = @intCast(sock_ret);
+    defer _ = linux.close(sock);
 
     // Get interface list.
     // SEC-R2-13: Use 128 slots instead of 64; SIOCGIFCONF truncation is not

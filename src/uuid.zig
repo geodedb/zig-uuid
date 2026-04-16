@@ -250,7 +250,11 @@ pub const UUID = struct {
 
         /// Create a new SecureHashContext with a cryptographically random seed.
         pub fn init() SecureHashContext {
-            return .{ .seed = blk: { var seed_buf: [8]u8 = undefined; std.posix.getrandom(&seed_buf) catch unreachable; break :blk std.mem.readInt(u64, &seed_buf, .little); } };
+            return .{ .seed = blk: {
+                var seed_buf: [8]u8 = undefined;
+                std.Io.Threaded.global_single_threaded.io().random(&seed_buf);
+                break :blk std.mem.readInt(u64, &seed_buf, .little);
+            } };
         }
 
         pub fn hash(self: SecureHashContext, key: UUID) u64 {
@@ -411,7 +415,7 @@ pub const UUID = struct {
 
     /// Format UUID as a canonical lowercase hyphenated string for use with
     /// `{f}` in std.fmt (Zig 0.15+). Example: `std.debug.print("{f}\n", .{u})`.
-    pub fn format(self: UUID, w: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: UUID, w: *std.Io.Writer) std.Io.Writer.Error!void {
         var buf: [36]u8 = undefined;
         try w.writeAll(self.toString(&buf));
     }
