@@ -8,7 +8,8 @@ const uuid = @import("uuid");
 
 pub fn main() !void {
     var out_buf: [4096]u8 = undefined;
-    var out = std.fs.File.writer(std.fs.File.stdout(), &out_buf);
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var out = std.Io.File.stdout().writer(io, &out_buf);
     defer out.interface.flush() catch {};
     const w = &out.interface;
 
