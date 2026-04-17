@@ -17,6 +17,14 @@ const iters: usize = 1_000_000;
 // Sub-nanosecond operations need more iterations to get measurable results.
 const fast_iters: usize = 100_000_000;
 
+
+// std.time.nanoTimestamp was removed in Zig 0.16. Use the Io.Clock primitive
+// directly with the library's default single-threaded Io.
+fn nanoTimestamp() i128 {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    return std.Io.Clock.Timestamp.now(io, .real).raw.nanoseconds;
+}
+
 pub fn main() !void {
     std.debug.print("UUID benchmark — {d}M iterations each\n", .{iters / 1_000_000});
     std.debug.print("(Use -Doptimize=ReleaseFast for meaningful numbers)\n\n", .{});
@@ -44,7 +52,7 @@ pub fn main() !void {
 fn benchV4() !void {
     var gen = uuid.Generator.init();
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const u = try gen.newV4();
@@ -57,7 +65,7 @@ fn benchV4() !void {
 fn benchV7() !void {
     var gen = uuid.Generator.init();
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const u = try gen.newV7();
@@ -70,7 +78,7 @@ fn benchV7() !void {
 fn benchV1() !void {
     var gen = uuid.Generator.init();
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const u = try gen.newV1();
@@ -83,7 +91,7 @@ fn benchV1() !void {
 fn benchV6() !void {
     var gen = uuid.Generator.init();
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const u = try gen.newV6();
@@ -103,7 +111,7 @@ fn benchV3() !void {
         std.mem.writeInt(u64, n, @as(u64, i), .little);
     }
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const u = gen.newV3(uuid.namespace_dns, &names[i % pool_size]);
@@ -122,7 +130,7 @@ fn benchV5() !void {
         std.mem.writeInt(u64, n, @as(u64, i), .little);
     }
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const u = gen.newV5(uuid.namespace_dns, &names[i % pool_size]);
@@ -144,7 +152,7 @@ fn benchToString() !void {
 
     var buf: [36]u8 = undefined;
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const s = pool[i % pool_size].toString(&buf);
@@ -163,7 +171,7 @@ fn benchToStringUpper() !void {
 
     var buf: [36]u8 = undefined;
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const s = pool[i % pool_size].toStringUpper(&buf);
@@ -184,7 +192,7 @@ fn benchToStringAlloc() !void {
     for (&pool) |*u| u.* = try gen.newV4();
 
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const s = try pool[i % pool_size].toStringAlloc(alloc);
@@ -206,7 +214,7 @@ fn benchToHex() !void {
 
     var buf: [32]u8 = undefined;
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const s = pool[i % pool_size].toHex(&buf);
@@ -225,7 +233,7 @@ fn benchToHexUpper() !void {
 
     var buf: [32]u8 = undefined;
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const s = pool[i % pool_size].toHexUpper(&buf);
@@ -246,7 +254,7 @@ fn benchToHexAlloc() !void {
     for (&pool) |*u| u.* = try gen.newV4();
 
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const s = try pool[i % pool_size].toHexAlloc(alloc);
@@ -264,7 +272,7 @@ fn benchV7AtTime() !void {
     var gen = uuid.Generator.init();
     var ms: i64 = 1_700_000_000_000;
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const u = try gen.newV7AtTime(ms);
@@ -289,7 +297,7 @@ fn benchFromString() !void {
     }
 
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const parsed = try uuid.UUID.fromString(slices[i % pool_size]);
@@ -313,7 +321,7 @@ fn benchFromStringHex() !void {
     }
 
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const parsed = try uuid.UUID.fromString(slices[i % pool_size]);
@@ -337,7 +345,7 @@ fn benchFromStringURN() !void {
     }
 
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < iters) : (i += 1) {
         const parsed = try uuid.UUID.fromString(slices[i % pool_size]);
@@ -360,7 +368,7 @@ fn benchEql() !void {
     std.mem.doNotOptimizeAway(&pool_b);
 
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < fast_iters) : (i += 1) {
         var idx = i % pool_size;
@@ -384,7 +392,7 @@ fn benchTimingSafeEql() !void {
     for (&pool_b) |*u| u.* = try gen.newV4();
 
     var sink: u8 = 0;
-    const start = std.time.nanoTimestamp();
+    const start = nanoTimestamp();
     var i: usize = 0;
     while (i < fast_iters) : (i += 1) {
         var idx = i % pool_size;
@@ -397,7 +405,7 @@ fn benchTimingSafeEql() !void {
 }
 
 fn reportN(name: []const u8, start: i128, n: usize) void {
-    const elapsed = std.time.nanoTimestamp() - start;
+    const elapsed = nanoTimestamp() - start;
     const ns_per_op = @divTrunc(elapsed, @as(i128, n));
     const ops_per_sec = if (ns_per_op > 0)
         @divTrunc(1_000_000_000, ns_per_op)
@@ -411,7 +419,7 @@ fn reportN(name: []const u8, start: i128, n: usize) void {
 }
 
 fn report(name: []const u8, start: i128) void {
-    const elapsed = std.time.nanoTimestamp() - start;
+    const elapsed = nanoTimestamp() - start;
     const ns_per_op = @divTrunc(elapsed, @as(i128, iters));
     const ops_per_sec = if (ns_per_op > 0)
         @divTrunc(1_000_000_000, ns_per_op)
