@@ -273,10 +273,17 @@ test "integration: V8 round-trip" {
 test "integration: saveState + loadState round-trip preserves V1/V7 state" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const dir_path = try tmp.dir.realpath(".", &dir_buf);
-    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
-    const path = try std.fmt.bufPrint(&path_buf, "{s}/uuid.state", .{dir_path});
+    // Zig 0.16 removed tmp.dir.realpath; reconstruct the tmp path via cwd +
+    // the well-known .zig-cache/tmp/<sub_path> layout produced by tmpDir().
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try std.process.currentPath(io, &cwd_buf);
+    var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buf,
+        "{s}/.zig-cache/tmp/{s}/uuid.state",
+        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
+    );
 
     // Generate a V1 UUID to populate generator state, then save it.
     var gen = uuid.Generator.init();
