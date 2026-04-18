@@ -70,7 +70,7 @@ repos:
     language: system
     files: \.zig$
     pass_filenames: false
-    args: [src/, tests/, examples/, build.zig]
+    args: [src/, tests/, examples/, benchmarks/, build.zig]
     exclude: ^(zig-out/|\.zig-cache/)
 
   - id: check-todos

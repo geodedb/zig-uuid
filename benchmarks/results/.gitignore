@@ -1,0 +1,6 @@
+# Transient benchmark runs — baselines are committed, everything else is
+# local-only so contributors don't trip each other with noisy result files.
+latest.json
+latest_contention.json
+latest_state.json
+latest_micro_*.json
