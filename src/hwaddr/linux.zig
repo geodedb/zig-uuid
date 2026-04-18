@@ -4,6 +4,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Error = @import("../uuid.zig").Error;
+const hwaddr = @import("hwaddr.zig");
 
 const linux = std.os.linux;
 
@@ -98,10 +99,9 @@ pub fn getHWAddr() Error![6]u8 {
         if (family != ARPHRD_ETHER) continue;
 
         const mac = hw_req.ifr_data[2..8];
-        // Skip zero MAC
-        if (std.mem.allEqual(u8, mac, 0)) continue;
-        // SEC-R6-03: Skip broadcast MAC (FF:FF:FF:FF:FF:FF) per RFC 4122 §4.1.6.
-        if (std.mem.allEqual(u8, mac, 0xFF)) continue;
+        // QC-98 / SEC-R6-03: skip all-zero and broadcast MACs via the shared
+        // predicate in hwaddr.zig (RFC 4122 §4.1.6).
+        if (!hwaddr.isUsableMac(mac)) continue;
 
         var result: [6]u8 = undefined;
         @memcpy(&result, mac);

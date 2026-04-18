@@ -4,6 +4,7 @@
 const std = @import("std");
 const Error = @import("../uuid.zig").Error;
 const UUID = @import("../uuid.zig").UUID;
+const hwaddr = @import("hwaddr.zig");
 
 const windows = std.os.windows;
 
@@ -78,9 +79,9 @@ fn findMacInAdapters(head: *IP_ADAPTER_ADDRESSES) Error![6]u8 {
         const mac_len = adapter.PhysicalAddressLength;
         if (mac_len != 6) continue;
         const mac = adapter.PhysicalAddress[0..6];
-        if (std.mem.allEqual(u8, mac, 0)) continue;
-        // SEC-R6-03: Skip broadcast MAC (FF:FF:FF:FF:FF:FF) per RFC 4122 §4.1.6.
-        if (std.mem.allEqual(u8, mac, 0xFF)) continue;
+        // QC-98 / SEC-R6-03: skip all-zero and broadcast MACs via the shared
+        // predicate in hwaddr.zig (RFC 4122 §4.1.6).
+        if (!hwaddr.isUsableMac(mac)) continue;
         var result: [6]u8 = undefined;
         @memcpy(&result, mac);
         return result;

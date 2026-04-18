@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const Error = @import("../uuid.zig").Error;
+const hwaddr = @import("hwaddr.zig");
 
 const c = struct {
     pub extern "c" fn getifaddrs(ifap: **ifaddrs) c_int;
@@ -79,9 +80,9 @@ pub fn getHWAddr() Error![6]u8 {
         // Secondary guard against our declared array size (defensive):
         if (mac_offset + 6 > sdl.sdl_data.len) continue;
         const mac = sdl.sdl_data[mac_offset .. mac_offset + 6];
-        if (std.mem.allEqual(u8, mac, 0)) continue;
-        // SEC-R6-03: Skip broadcast MAC (FF:FF:FF:FF:FF:FF) per RFC 4122 §4.1.6.
-        if (std.mem.allEqual(u8, mac, 0xFF)) continue;
+        // QC-98 / SEC-R6-03: skip all-zero and broadcast MACs via the shared
+        // predicate in hwaddr.zig (RFC 4122 §4.1.6).
+        if (!hwaddr.isUsableMac(mac[0..6])) continue;
 
         var result: [6]u8 = undefined;
         @memcpy(&result, mac);
