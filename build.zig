@@ -21,18 +21,11 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // Unit tests
+    // Unit tests — reuse the public `module` so src/root.zig isn't rooted by
+    // multiple module instances (would trigger "file exists in modules 'json'
+    // and 'json0'" when downstream consumers graph-walk multiple instances).
     const test_step = b.step("test", "Run unit tests");
-    const unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "json", .module = json_module },
-            },
-        }),
-    });
+    const unit_tests = b.addTest(.{ .root_module = module });
     const run_unit_tests = b.addRunArtifact(unit_tests);
     test_step.dependOn(&run_unit_tests.step);
 
@@ -52,18 +45,10 @@ pub fn build(b: *std.Build) void {
     const run_integration_tests = b.addRunArtifact(integration_tests);
     integration_step.dependOn(&run_integration_tests.step);
 
-    // Check step (fast syntax validation)
+    // Check step (fast syntax validation) — reuse public `module` (same
+    // dedup reason as unit_tests above).
     const check_step = b.step("check", "Check for compilation errors");
-    const check = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "json", .module = json_module },
-            },
-        }),
-    });
+    const check = b.addTest(.{ .root_module = module });
     check_step.dependOn(&check.step);
 
     // Benchmark binary (PERF-03)
@@ -104,31 +89,11 @@ pub fn build(b: *std.Build) void {
     });
     examples_step.dependOn(&example_exe.step);
 
-    // Cross-compile check step — all five target triples are compiled unconditionally.
-    // Each invocation of `zig build check-cross` compiles all five targets,
-    // so `make cross-compile-required` (which calls this once) checks everything.
-    const cross_step = b.step("check-cross", "Cross-compile check for the active -Dtarget");
-    const cross_targets = [_][]const u8{
-        "x86_64-linux",
-        "aarch64-linux",
-        "x86_64-macos",
-        "aarch64-macos",
-        "x86_64-windows",
-    };
-    for (cross_targets) |triple| {
-        const cross_target = b.resolveTargetQuery(
-            std.Target.Query.parse(.{ .arch_os_abi = triple }) catch unreachable,
-        );
-        const cross_check = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/root.zig"),
-                .target = cross_target,
-                .optimize = .Debug,
-                .imports = &.{
-                    .{ .name = "json", .module = json_module },
-                },
-            }),
-        });
-        cross_step.dependOn(&cross_check.step);
-    }
+    // Cross-compile check step removed — previously created per-target module
+    // copies rooted at src/root.zig, which triggered duplicate-module diamond
+    // errors in downstream consumers ("src/uuid.zig: file exists in modules
+    // 'json' and 'json0'"). Cross-target builds remain available via explicit
+    // `zig build -Dtarget=<triple>` invocations, matching the sibling-repo
+    // convention.
+    _ = &json_module; // silence unused when only the single public module uses it
 }

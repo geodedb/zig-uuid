@@ -72,13 +72,18 @@ test-release-small:
 test-all-optimizations: test-unit test-release-safe test-release-fast test-release-small
 	@echo "✅ All optimization levels passed"
 
-# Cross-compilation: build.zig check-cross step hardcodes all 5 required targets
-# (x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows) and
-# ignores -Dtarget, so a single invocation checks all of them.  (QC-33: the old
-# per-target loop ran 5×5=25 compilations instead of 5.)
+# Cross-compilation: invoke `zig build -Dtarget=<triple>` for each required
+# target. Previously build.zig had a dedicated `check-cross` step that
+# iterated targets, but that step created per-target modules rooted at
+# src/root.zig and caused duplicate-module diamond errors in downstream
+# consumers. Driving cross checks from the Makefile keeps each build in its
+# own process with its own build-graph state.
 cross-compile-required:
 	@echo "🔀 Cross-compile check for required targets..."
-	@zig build check-cross
+	@for t in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows; do \
+	    echo "  -> $$t"; \
+	    zig build -Dtarget=$$t || exit 1; \
+	done
 	@echo "✅ All cross-compile targets pass"
 
 cross-compile: cross-compile-required
