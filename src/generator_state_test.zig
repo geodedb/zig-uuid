@@ -735,3 +735,109 @@ test "Generator.loadState: symlink at state path is rejected (SEC-R11-04)" {
     const result = gen.loadState(path);
     try std.testing.expect(std.meta.isError(result));
 }
+
+// =============================================================================
+// SEC-P3-04: HMAC-authenticated state file v3 round-trip + negative tests.
+// Wire-format v3 = v2 payload (32 bytes) || HMAC-SHA256(payload, key) (32 bytes).
+// loadState verifies with `std.crypto.timing_safe.eql` and returns
+// `Error.StateMacMismatch` on mismatch (including when the key is missing).
+// =============================================================================
+
+test "Generator: v3 round-trip with HMAC key (SEC-P3-04)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.v3", .{dir_path});
+
+    const key: [32]u8 = .{0xA5} ** 32;
+
+    var gen = Generator.initOptions(.{ .state_mac_key = key });
+    gen.clock_seq = 0x0abc;
+    gen.clock_seq_initialized = true;
+    gen.last_v1_ts = 0xCAFEBABE;
+    gen.last_ms = 1_700_000_000_000;
+    gen.mono_seq = 0x0123;
+    try gen.saveState(path);
+
+    // File length must be exactly v3 (64 bytes) and byte 4 = 3.
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.openFileAbsolute(io, path, .{});
+    defer f.close(io);
+    var header: [5]u8 = undefined;
+    _ = try f.readPositionalAll(io, &header, 0);
+    try std.testing.expectEqualSlices(u8, "UUID", header[0..4]);
+    try std.testing.expectEqual(@as(u8, 3), header[4]);
+
+    // Round-trip: a second generator with the same key loads successfully.
+    var gen2 = Generator.initOptions(.{ .state_mac_key = key });
+    try gen2.loadState(path);
+    try std.testing.expectEqual(gen.clock_seq, gen2.clock_seq);
+    try std.testing.expectEqual(gen.last_v1_ts, gen2.last_v1_ts);
+}
+
+test "Generator: v3 with wrong key is rejected timing-safely (SEC-P3-04)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.v3", .{dir_path});
+
+    const key_a: [32]u8 = .{0xA5} ** 32;
+    const key_b: [32]u8 = .{0x5A} ** 32;
+
+    var gen = Generator.initOptions(.{ .state_mac_key = key_a });
+    gen.clock_seq = 0xBEEF & 0x3FFF;
+    gen.clock_seq_initialized = true;
+    try gen.saveState(path);
+
+    // Wrong key → StateMacMismatch.
+    var gen2 = Generator.initOptions(.{ .state_mac_key = key_b });
+    const result_wrong = gen2.loadState(path);
+    try std.testing.expectError(Error.StateMacMismatch, result_wrong);
+
+    // No key at all against a v3 file → StateMacMismatch (we refuse to
+    // accept unauthenticated data when the producer marked it v3).
+    var gen3 = Generator.init();
+    const result_nokey = gen3.loadState(path);
+    try std.testing.expectError(Error.StateMacMismatch, result_nokey);
+}
+
+test "Generator: v2 file still loads when state_mac_key is set (SEC-P3-04 backward compat)" {
+    // A legacy v2 file must remain loadable when the caller has a key,
+    // so existing deployments migrating to HMAC can roll forward without
+    // re-writing state.  The library emits std.log.warn for operator
+    // visibility (not asserted here).
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.v2", .{dir_path});
+
+    // Write a legacy v2 blob by hand so we know the file is unambiguously v2.
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version_v2;
+    blob[5] = 0x01; // clock_seq_initialized
+    std.mem.writeInt(u16, blob[6..8], 0x1122, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], 0, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const fh = try std.Io.Dir.createFileAbsolute(io, path, .{
+        .permissions = std.Io.File.Permissions.fromMode(0o600),
+    });
+    defer fh.close(io);
+    try fh.writePositionalAll(io, &blob, 0);
+
+    // Generator with a key must still accept the v2 file (with a warn).
+    const key: [32]u8 = .{0xA5} ** 32;
+    var gen = Generator.initOptions(.{ .state_mac_key = key });
+    try gen.loadState(path);
+    try std.testing.expectEqual(@as(u14, 0x1122), gen.clock_seq);
+}

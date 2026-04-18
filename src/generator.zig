@@ -56,6 +56,7 @@ fn mapStateError(err: anyerror) Error {
         Error.RandomError => Error.RandomError,
         Error.InvalidTimestamp => Error.InvalidTimestamp,
         Error.StateIoFailure => Error.StateIoFailure,
+        Error.StateMacMismatch => Error.StateMacMismatch,
         // Anything else (OS/IO errors) → StateIoFailure.
         else => Error.StateIoFailure,
     };
@@ -141,6 +142,21 @@ pub const Generator = struct {
     /// RFC-9562 §8.  Set this field (or use withHWAddr) to opt in to
     /// MAC-based node IDs.
     hwaddr_fn: ?HWAddrFn = null,
+
+    /// SEC-P3-04: optional 32-byte key for HMAC-SHA256 authentication of
+    /// the persisted state file.  When set, `saveState` writes the new
+    /// wire-format version 3 (v2 payload || 32-byte HMAC-SHA256(payload,
+    /// key)), and `loadState` refuses to accept any v3 file whose trailer
+    /// does not verify under this key.  A null key keeps saveState on the
+    /// legacy v2 format, which loadState continues to accept unchanged.
+    ///
+    /// **Key management is the caller's responsibility.** Rotate keys by
+    /// loading under the old key, re-saving under the new key, and
+    /// destroying the old key afterwards.  Store the key in the same
+    /// security tier as the state file itself (e.g. Linux kernel keyring,
+    /// systemd-credentials, Vault Transit, AWS KMS data-key).  Do NOT
+    /// hard-code the key in source.
+    state_mac_key: ?[32]u8 = null,
 
     // PERF-19: Two independent mutexes for V7 and V1/V6 clock domains.
     // V7 generation only acquires v7_mutex; V1/V6 generation only acquires
@@ -292,6 +308,12 @@ pub const Generator = struct {
         /// derive V1 / V6 node IDs.  Matches the same field on
         /// `withHWAddr`.
         hwaddr_fn: ?HWAddrFn = null,
+
+        /// SEC-P3-04: 32-byte key for HMAC-SHA256 authentication of the
+        /// state file.  See `Generator.state_mac_key` for semantics.  The
+        /// key is copied into the returned `Generator`; the caller may
+        /// zero the source buffer immediately after `initOptions` returns.
+        state_mac_key: ?[32]u8 = null,
     };
 
     /// Create a new generator with default clock (std.time.nanoTimestamp),
@@ -311,6 +333,7 @@ pub const Generator = struct {
             .clock = options.clock,
             .rand_impl = options.random,
             .hwaddr_fn = options.hwaddr_fn,
+            .state_mac_key = options.state_mac_key,
         };
     }
 
@@ -949,7 +972,8 @@ pub const Generator = struct {
     /// [8..16]  last_v1_ts as u64 LE
     /// [16..22] node_cache [6]u8
     ///
-    /// **Version 2 (32 bytes, current):**
+    /// **Version 2 (32 bytes, backward-compatible default when no
+    /// `state_mac_key` is configured):**
     /// [0..4]   magic "UUID"
     /// [4]      format version = 2
     /// [5]      flags: bit0=clock_seq_initialized, bit1=has_node_cache
@@ -959,12 +983,27 @@ pub const Generator = struct {
     /// [22..30] last_ms as i64 LE  (SEC-10: V7 last-used timestamp)
     /// [30..32] mono_seq as u16 LE (SEC-10: V7 counter; see loadState for clock-based handling)
     ///
-    /// saveState() always writes version 2.  loadState() accepts both versions.
+    /// **Version 3 (64 bytes, HMAC-authenticated — SEC-P3-04):**
+    /// [0..32]  identical to version 2 payload, except byte [4] = 3
+    /// [32..64] HMAC-SHA256(bytes [0..32], state_mac_key)
+    ///
+    /// Version 3 is written when `state_mac_key` is non-null; otherwise
+    /// saveState emits version 2.  loadState accepts all three versions:
+    /// v1/v2 load unchanged (a warning is emitted if `state_mac_key` is
+    /// set — the file is unauthenticated), v3 requires `state_mac_key` to
+    /// be set and the HMAC to verify with `std.crypto.timing_safe.eql`.
     pub const state_magic: [4]u8 = "UUID".*;
     pub const state_format_version_v1: u8 = 1;
-    pub const state_format_version: u8 = 2; // current write version
+    pub const state_format_version_v2: u8 = 2;
+    pub const state_format_version_v3: u8 = 3; // SEC-P3-04
+    /// Default write version when no `state_mac_key` is configured.
+    /// Retained under the historical name for ABI/source compatibility.
+    pub const state_format_version: u8 = state_format_version_v2;
     pub const state_size_v1: usize = 22;
     pub const state_size: usize = 32;
+    /// SEC-P3-04: v3 adds a 32-byte HMAC-SHA256 trailer to the v2 payload.
+    pub const state_mac_size: usize = 32;
+    pub const state_size_v3: usize = state_size + state_mac_size;
 
     /// SEC-P3-02: NTP-skew tolerance used by `loadState` when comparing the
     /// persisted last_v1_ts / last_ms against the current wall clock. Saved
@@ -1000,7 +1039,15 @@ pub const Generator = struct {
     fn saveStateImpl(self: *Generator, path: []const u8) !void {
         // Snapshot state under both mutexes; release before I/O.
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
-        var buf: [state_size]u8 = undefined;
+        // SEC-P3-04: use a single buffer sized for v3 (payload + HMAC trailer).
+        // When `state_mac_key` is null the trailer bytes are never written, so
+        // the file length stays at `state_size`. When non-null we append the
+        // HMAC and write `state_size_v3` bytes.
+        var buf: [state_size_v3]u8 = undefined;
+        const write_version: u8 = if (self.state_mac_key != null)
+            state_format_version_v3
+        else
+            state_format_version_v2;
         {
             self.v7_mutex.lockUncancelable(gio());
             defer self.v7_mutex.unlock(gio());
@@ -1008,7 +1055,7 @@ pub const Generator = struct {
             defer self.v1v6_mutex.unlock(gio());
 
             @memcpy(buf[0..4], &state_magic);
-            buf[4] = state_format_version; // = 2
+            buf[4] = write_version; // 2 or 3
 
             var flags: u8 = 0;
             if (self.clock_seq_initialized) flags |= 0x01;
@@ -1028,6 +1075,17 @@ pub const Generator = struct {
             std.mem.writeInt(i64, buf[22..30], self.last_ms, .little);
             std.mem.writeInt(u16, buf[30..32], @as(u16, self.mono_seq), .little);
         }
+
+        // SEC-P3-04: compute and append HMAC-SHA256 over the payload if a
+        // key is configured. HMAC runs outside the mutex — `buf[0..32]` is
+        // already a snapshot, and the key is an immutable field set at
+        // construction.
+        const write_len: usize = if (self.state_mac_key) |key| blk: {
+            var mac: [state_mac_size]u8 = undefined;
+            std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, buf[0..state_size], &key);
+            @memcpy(buf[state_size..state_size_v3], &mac);
+            break :blk state_size_v3;
+        } else state_size;
 
         // SEC-9: atomic write — write to <path>.tmp then rename so that a
         // crash or signal between write and close never leaves a torn file.
@@ -1076,7 +1134,7 @@ pub const Generator = struct {
                 const errno_val = std.os.linux.errno(rc);
                 if (errno_val != .SUCCESS) return Error.StateIoFailure;
             }
-            try f.writePositionalAll(io, &buf, 0);
+            try f.writePositionalAll(io, buf[0..write_len], 0);
         }
         try std.Io.Dir.renameAbsolute(tmp_path, path, io);
     }
@@ -1120,14 +1178,16 @@ pub const Generator = struct {
         defer f.close(io);
 
         // SEC-R13-04 (CWE-908): Zero-initialize to prevent uninitialized reads.
-        // For v1 state files (22 bytes), bytes 22–31 are never written by readAll.
+        // For v1 state files (22 bytes), bytes 22–63 are never written by readAll.
         // The version-2 guard prevents consumption, but zeroing eliminates the
         // latent risk if that guard is weakened in a future refactor.
-        var buf: [state_size]u8 = std.mem.zeroes([state_size]u8);
+        // SEC-P3-04: the buffer is sized to hold v3 (payload + HMAC trailer).
+        var buf: [state_size_v3]u8 = std.mem.zeroes([state_size_v3]u8);
         const n = try f.readPositionalAll(io, &buf, 0);
 
-        // Accept both v1 (22 bytes) and v2 (32 bytes).
-        if (n != state_size_v1 and n != state_size) return Error.InvalidFormat;
+        // Accept v1 (22 bytes), v2 (32 bytes), and v3 (64 bytes).
+        if (n != state_size_v1 and n != state_size and n != state_size_v3)
+            return Error.InvalidFormat;
 
         // SEC-R4-03: reject files with trailing bytes.  readAll fills buf up
         // to buf.len even when the file is larger, so n alone cannot detect
@@ -1136,7 +1196,44 @@ pub const Generator = struct {
         const extra = try f.readPositionalAll(io, &probe, n);
         if (extra != 0) return Error.InvalidFormat;
         if (!std.mem.eql(u8, buf[0..4], &state_magic)) return Error.InvalidFormat;
-        if (buf[4] != state_format_version_v1 and buf[4] != state_format_version) return Error.InvalidFormat;
+        const file_version = buf[4];
+        if (file_version != state_format_version_v1 and
+            file_version != state_format_version_v2 and
+            file_version != state_format_version_v3)
+            return Error.InvalidFormat;
+
+        // SEC-P3-04: enforce version-length matching so a v3 header cannot
+        // be paired with a truncated (v2-length) file, and vice versa.
+        const expected_len: usize = switch (file_version) {
+            state_format_version_v1 => state_size_v1,
+            state_format_version_v2 => state_size,
+            state_format_version_v3 => state_size_v3,
+            else => unreachable,
+        };
+        if (n != expected_len) return Error.InvalidFormat;
+
+        // SEC-P3-04: verify HMAC for v3 files. `state_mac_key` must be set;
+        // mismatch is reported as `StateMacMismatch` (distinct from
+        // `InvalidFormat` so callers can distinguish tampering from a
+        // corrupt file). Timing-safe equality protects against remote
+        // timing oracles.
+        if (file_version == state_format_version_v3) {
+            const key = self.state_mac_key orelse return Error.StateMacMismatch;
+            var expected: [state_mac_size]u8 = undefined;
+            std.crypto.auth.hmac.sha2.HmacSha256.create(&expected, buf[0..state_size], &key);
+            const trailer = buf[state_size..state_size_v3];
+            if (!std.crypto.timing_safe.eql([state_mac_size]u8, expected, trailer.*)) {
+                return Error.StateMacMismatch;
+            }
+        } else if (self.state_mac_key != null) {
+            // v1/v2 accepted for backward compat, but inform the operator
+            // that the state file is unauthenticated despite a key being
+            // configured (SEC-P3-04 backward-compat warning).
+            std.log.warn(
+                "uuid: loaded unauthenticated state file (version {d}); state_mac_key is set but file has no HMAC trailer",
+                .{file_version},
+            );
+        }
 
         // SEC-R13-08 (CWE-833): Read the clock BEFORE acquiring the mutex.
         // If ClockFn blocks (network-backed NTP, slow hardware clock, test
@@ -1198,8 +1295,12 @@ pub const Generator = struct {
             self.clearNodeCacheLocked();
         }
 
-        // PERF-04 + SEC-10: restore V7 state only from version-2 files.
-        if (buf[4] == state_format_version and n == state_size) {
+        // PERF-04 + SEC-10: restore V7 state from v2 or v3 files (v1 has no
+        // V7 payload).  For v3 the HMAC has already verified above, so the
+        // bytes at buf[22..30] and buf[30..32] are authenticated.
+        if (file_version == state_format_version_v2 or
+            file_version == state_format_version_v3)
+        {
             const saved_ms = std.mem.readInt(i64, buf[22..30], .little);
             // SEC-P3-02: apply the same clock-rollback guard to V7 state.
             // A saved last_ms far in the future relative to the current

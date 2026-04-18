@@ -68,6 +68,13 @@ pub const Error = error{
     /// `std.posix` / `std.Io.File` / `std.Io.Dir` error set into a single
     /// library-level error so callers depend on a stable error surface.
     StateIoFailure,
+    /// SEC-P3-04: returned by `Generator.loadState` when the persisted state
+    /// file is wire-format version 3 (HMAC-authenticated) and the HMAC-SHA256
+    /// trailer fails timing-safe verification against the configured
+    /// `state_mac_key`.  Also returned when a version-3 file is encountered
+    /// and no `state_mac_key` is configured (the library refuses to accept
+    /// data it cannot authenticate).
+    StateMacMismatch,
 };
 
 /// UUID version nibble (bits 76-79 of byte 6).
