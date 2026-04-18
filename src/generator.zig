@@ -138,10 +138,26 @@ pub const Generator = struct {
     // v1v6_mutex.  saveState/loadState acquire both in fixed order
     // (v7_mutex first, then v1v6_mutex) to prevent deadlock.
 
+    // PERF-29: cache-line-align the V7 state cluster so its fields do not
+    // share a 64-byte line with the V1/V6 cluster below.  Without this
+    // alignment, a pair of threads — one minting V7 UUIDs, one minting
+    // V1/V6 UUIDs — can false-share the same cache line even though they
+    // hold independent mutexes, stalling both paths on MESI ping-pong.
+    // 64 bytes matches the line size on every modern server ISA
+    // (x86_64, arm64, power9); for smaller embedded targets this is
+    // over-aligned but harmless.
+
     // V7 monotonicity state (protected by v7_mutex)
-    v7_mutex: std.Io.Mutex = std.Io.Mutex.init,
+    v7_mutex: std.Io.Mutex align(64) = std.Io.Mutex.init,
     last_ms: i64 = 0,
     mono_seq: u12 = 0,
+
+    // PERF-29: pad the V1/V6 cluster onto its own 64-byte-aligned
+    // boundary so it cannot share a cache line with the V7 cluster
+    // above.  The zero-size aligned field is free at runtime (no storage)
+    // but forces the compiler to bump the next field's offset up to the
+    // alignment.
+    _v1v6_pad: [0]u8 align(64) = .{},
 
     // V1/V6 shared clock state (protected by v1v6_mutex; F-8: documented above)
     v1v6_mutex: std.Io.Mutex = std.Io.Mutex.init,
