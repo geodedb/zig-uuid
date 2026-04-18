@@ -1335,9 +1335,19 @@ pub const Generator = struct {
         // key is configured. HMAC runs outside the mutex — `buf[0..32]` is
         // already a snapshot, and the key is an immutable field set at
         // construction.
-        const write_len: usize = if (self.state_mac_key) |key| blk: {
+        // SEC-P4-02: capture the key as a pointer (`|*key_ptr|`) into
+        // `self.state_mac_key`'s Optional payload, NOT by value.  A
+        // value capture (`|key|`) creates a 32-byte stack copy that
+        // Zig will not `secureZero` on function return — classic
+        // cleartext-in-memory residue (CWE-316).  The pointer capture
+        // dispatches HMAC directly through the Generator's own storage;
+        // `secureWipeMacKey` (the authoritative wipe path) already
+        // volatile-zeros that storage.  `HmacSha256.create` takes the
+        // key as `*const [32]u8`, so the pointer capture is a drop-in
+        // signature match.
+        const write_len: usize = if (self.state_mac_key) |*key_ptr| blk: {
             var mac: [state_mac_size]u8 = undefined;
-            std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, buf[0..state_size], &key);
+            std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, buf[0..state_size], key_ptr);
             @memcpy(buf[state_size..state_size_v3], &mac);
             break :blk state_size_v3;
         } else state_size;
@@ -1515,9 +1525,11 @@ pub const Generator = struct {
         // corrupt file). Timing-safe equality protects against remote
         // timing oracles.
         if (file_version == state_format_version_v3) {
-            const key = self.state_mac_key orelse return Error.StateMacMismatch;
+            // SEC-P4-02: point into the Optional's payload directly;
+            // see saveStateImpl for the rationale.
+            const key_ptr: *const [32]u8 = if (self.state_mac_key) |*k| k else return Error.StateMacMismatch;
             var expected: [state_mac_size]u8 = undefined;
-            std.crypto.auth.hmac.sha2.HmacSha256.create(&expected, buf[0..state_size], &key);
+            std.crypto.auth.hmac.sha2.HmacSha256.create(&expected, buf[0..state_size], key_ptr);
             const trailer = buf[state_size..state_size_v3];
             if (!std.crypto.timing_safe.eql([state_mac_size]u8, expected, trailer.*)) {
                 return Error.StateMacMismatch;
