@@ -4115,10 +4115,10 @@ Style/formatting commit `5bee3e7` (`zig fmt` nit after PERF-22) accompanies Grou
 - `Error.StateMacMismatch`.
 - `/.well-known/security.txt` (RFC 9116).
 
-**Verifier follow-up (non-blocking, 2026-04-18):**
+**Verifier follow-up (2026-04-18) — ✅ both closed same day:**
 
-- `state_mac_key` not zeroized on `Generator` drop (no `deinit`). Caller-responsibility per current design. Future hardening candidate: optional `secureWipeMacKey()` helper or explicit `Generator.deinit()` that wipes via `std.crypto.utils.secureZero`.
-- 2-byte `seq` CSPRNG draw is inside the CAS retry loop by design (`newV7Atomic`). Worst case on a CAS miss: a wasted CSPRNG draw. Noted in-code.
+- ✅ `state_mac_key` not zeroized on `Generator` drop — closed by `19400a5` (`feat(generator): secureWipeMacKey for SEC-P3-04 key hygiene`). Added `Generator.secureWipeMacKey()` + module-level wrapper `uuid.secureWipeMacKey()`. Uses `std.crypto.secureZero` (volatile) to purge the 32-byte Optional payload, then clears the optional to `null`. Idempotent; safe when no key is configured. Two new tests in `src/generator_state_test.zig` confirm the original key bytes are gone post-wipe (mode-agnostic).
+- ✅ 2-byte `seq` CSPRNG draw in the CAS retry loop — closed by `574beef` (`perf(generator): lazy CSPRNG draw in V7 CAS loop`). Moved to function-scope with a lazy `rand_seq_drawn` latch; drawn at most once per `newV7Atomic` call and reused across retries of the clock-advance branch. 3 consecutive full-suite runs (219/219 unit + 32/32 integration) pass, including the multi-thread monotonicity stress.
 
 **Blocked — external input required (0):**
 

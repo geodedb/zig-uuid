@@ -756,11 +756,11 @@ _All Group D SEC items landed (SEC-P3-07 partial — 3 human-input TODOs flagged
 - **SEC-R9-02** (CI Zig hash TOFU) — Won't Do. Pipeline governance concern, not a library-code finding. MUST NOT re-open.
 - **SEC-R2-01** (unverified Zig download) — Won't Do. Pipeline governance concern. MUST NOT re-open.
 
-### Verifier follow-up (non-blocking, 2026-04-18)
+### Verifier follow-up (2026-04-18) — ✅ both closed (same day)
 
-These items surfaced during Group D verification but are **not blockers** — they are captured here for future hardening. Neither opens a new gap in this cycle.
+Both items surfaced during Group D verification as non-blocking notes; both have since been closed.
 
-1. **`state_mac_key` not zeroized on Generator drop** — the `Generator` struct has no `deinit`, so the 32-byte HMAC key is not wiped from memory when a `Generator` falls out of scope. This is **caller-responsibility** per the current design (the caller owns key lifecycle). Future hardening candidate: an optional `secureWipeMacKey()` helper, or introduce an explicit `Generator.deinit()` that zeroizes via `std.crypto.utils.secureZero` and nulls the field. Not landed this cycle.
-2. **2-byte `seq` CSPRNG draw inside the V7 CAS retry loop** (opt-in `v7_lockfree` path) — by design. Worst case on a CAS miss is a wasted CSPRNG draw on the next retry; this is cheaper than moving the draw outside the loop (which would force a mutex or a more complex try-commit scheme). Commented in-code at the CAS site.
+1. ✅ **`state_mac_key` not zeroized on Generator drop** — closed by commit `19400a5` (`feat(generator): secureWipeMacKey for SEC-P3-04 key hygiene`). Added `Generator.secureWipeMacKey()` (and module-level `uuid.secureWipeMacKey()` wrapper) that zeroes the 32-byte Optional payload via `std.crypto.secureZero` (volatile) and clears the optional to `null`. Idempotent; safe on Generators without a key. Two new tests in `src/generator_state_test.zig` verify the original key bytes are no longer present post-wipe (mode-agnostic: `0x00` in Release, `0xAA` safety-pattern in Debug — either way the original key bytes are gone). Long-lived or pre-fork callers should invoke this before the Generator leaves scope.
+2. ✅ **2-byte `seq` CSPRNG draw inside the V7 CAS retry loop** — closed by commit `574beef` (`perf(generator): lazy CSPRNG draw in V7 CAS loop`). Moved the draw to function scope and made it lazy (first clock-advance branch only, reused across retries). Draw happens at most once per `newV7Atomic` call. Correctness-preserving: each successful CAS emits exactly one UUID, so the cached bits are published at most once per call. Verified with 3 consecutive full-suite runs (219/219 unit + 32/32 integration) including the 8-thread × 5000-UUID monotonicity stress test.
 
 _Phase 3 closure cycle complete (Group D round, 2026-04-18) — 4 closed in Group C (SEC-P3-01/02/03/05), 2 closed in Group D (SEC-P3-04, SEC-P3-08), 1 partial in Group D (SEC-P3-07 — 3 human-input TODOs), 1 Won't-Do reconfirmed (SEC-P3-06)._
