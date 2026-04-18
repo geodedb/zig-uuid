@@ -34,6 +34,33 @@ fn defaultRand(buf: []u8) anyerror!void {
     gio().random(buf);
 }
 
+/// QC-99: Collapse the wide underlying filesystem / I/O error set that
+/// `saveStateImpl` and `loadStateImpl` inherit from std.posix / std.Io.*
+/// down to the library-level `Error` set. `Error`-typed errors (e.g.
+/// `Error.InvalidFormat` returned by validation branches inside loadState)
+/// pass through unchanged; every other error — permission denied, disk
+/// full, path not found, symlink rejected by O_NOFOLLOW, cross-device
+/// rename, etc. — becomes `Error.StateIoFailure`. Callers therefore see
+/// a stable error surface.
+fn mapStateError(err: anyerror) Error {
+    return switch (err) {
+        // Library-typed validation errors: pass through.
+        Error.InvalidFormat => Error.InvalidFormat,
+        Error.InvalidLength => Error.InvalidLength,
+        Error.InvalidBraces => Error.InvalidBraces,
+        Error.InvalidURNPrefix => Error.InvalidURNPrefix,
+        Error.InvalidDashes => Error.InvalidDashes,
+        Error.IncorrectByteLength => Error.IncorrectByteLength,
+        Error.NoHWAddressFound => Error.NoHWAddressFound,
+        Error.InvalidVersion => Error.InvalidVersion,
+        Error.RandomError => Error.RandomError,
+        Error.InvalidTimestamp => Error.InvalidTimestamp,
+        Error.StateIoFailure => Error.StateIoFailure,
+        // Anything else (OS/IO errors) → StateIoFailure.
+        else => Error.StateIoFailure,
+    };
+}
+
 /// Convert a raw nanosecond timestamp (i128) to a Unix millisecond value
 /// (i64), returning error.InvalidTimestamp for values that are negative or
 /// exceed the i64 range.
@@ -643,7 +670,14 @@ pub const Generator = struct {
     /// **PERF:** State is serialised under the mutex into a stack buffer, then the
     ///           mutex is released before any file I/O.  UUID generation is not
     ///           blocked by slow storage (NFS, spinning disk, etc.).
-    pub fn saveState(self: *Generator, path: []const u8) !void {
+    pub fn saveState(self: *Generator, path: []const u8) Error!void {
+        // QC-99: delegate to saveStateImpl which returns the wide underlying
+        // inferred error set; collapse everything except Error-typed failures
+        // into Error.StateIoFailure at the single boundary below.
+        self.saveStateImpl(path) catch |e| return mapStateError(e);
+    }
+
+    fn saveStateImpl(self: *Generator, path: []const u8) !void {
         // Snapshot state under both mutexes; release before I/O.
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
         var buf: [state_size]u8 = undefined;
@@ -721,7 +755,12 @@ pub const Generator = struct {
     /// spin-wait on the first post-restart V7 call.  Only when last_ms is still
     /// current (extremely fast restart within the same millisecond) is mono_seq
     /// set to maxInt(u12) to force a spin-wait and prevent collisions.
-    pub fn loadState(self: *Generator, path: []const u8) !void {
+    pub fn loadState(self: *Generator, path: []const u8) Error!void {
+        // QC-99: delegate and collapse wide underlying errors at the boundary.
+        self.loadStateImpl(path) catch |e| return mapStateError(e);
+    }
+
+    fn loadStateImpl(self: *Generator, path: []const u8) !void {
         // SEC-R11-04 (CWE-61): Open the state file without following symlinks
         // on POSIX targets.  An attacker who can place a symlink at the state-file
         // path before loadState runs could redirect the read to any world-readable

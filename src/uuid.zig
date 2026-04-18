@@ -15,6 +15,13 @@ pub const Error = error{
     RandomError,
     /// Returned by Timestamp.now() when the system clock is before the Unix epoch.
     InvalidTimestamp,
+    /// QC-99: Returned by `Generator.saveState` / `Generator.loadState` when
+    /// the underlying filesystem I/O fails (permission denied, disk full,
+    /// path not found, symlink rejected by O_NOFOLLOW, rename across
+    /// filesystems, etc.). This collapses the wide underlying
+    /// `std.posix` / `std.Io.File` / `std.Io.Dir` error set into a single
+    /// library-level error so callers depend on a stable error surface.
+    StateIoFailure,
 };
 
 /// UUID version nibble (bits 76-79 of byte 6).
