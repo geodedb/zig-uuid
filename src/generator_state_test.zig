@@ -475,6 +475,54 @@ test "Generator.loadState: saved_ms >= current_ms forces mono_seq overflow (QC-1
     try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
 }
 
+// --- SEC-P3-03: saveState produces a file with mode 0o600 ---
+
+test "Generator.saveState: result file has POSIX mode 0o600 (SEC-P3-03)" {
+    // SEC-P3-03 (CWE-276 / CWE-732): verify the final state file is owner-
+    // only regardless of the process umask.  The implementation requests
+    // .permissions=0o600 at create time AND performs an umask-proof fchmod
+    // before writing bytes, so the rename target must have mode == 0o600.
+    //
+    // Skip on Windows — POSIX mode bits do not apply.
+    if (builtin.os.tag == .windows) return;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // Deliberately set a permissive umask so that open(2) alone would leave
+    // the file world-readable.  The fchmod fallback in saveState must still
+    // force 0o600.  Use the raw Linux umask(2) syscall (std.posix has no
+    // umask wrapper in 0.16).
+    const old_umask: usize = std.os.linux.syscall1(.umask, 0o000);
+    defer _ = std.os.linux.syscall1(.umask, old_umask);
+
+    var gen = Generator.init();
+    gen.clock_seq = 0x0099;
+    gen.clock_seq_initialized = true;
+    try gen.saveState(path);
+
+    // statx(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, STATX_MODE, &stx) and verify
+    // the low 9 mode bits are exactly 0o600.
+    var path_z_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path_z = try std.fmt.bufPrintZ(&path_z_buf, "{s}", .{path});
+    var stx: std.os.linux.Statx = undefined;
+    const AT_SYMLINK_NOFOLLOW: u32 = 0x100;
+    const rc = std.os.linux.statx(
+        std.os.linux.AT.FDCWD,
+        path_z.ptr,
+        AT_SYMLINK_NOFOLLOW,
+        .{ .MODE = true },
+        &stx,
+    );
+    try std.testing.expectEqual(std.os.linux.E.SUCCESS, std.os.linux.errno(rc));
+    const perm_bits: u16 = @intCast(stx.mode & 0o777);
+    try std.testing.expectEqual(@as(u16, 0o600), perm_bits);
+}
+
 // --- SEC-R11-04: loadState rejects symlinks (O_NOFOLLOW) ---
 
 test "Generator.loadState: symlink at state path is rejected (SEC-R11-04)" {

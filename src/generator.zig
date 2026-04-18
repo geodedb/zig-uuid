@@ -804,11 +804,31 @@ pub const Generator = struct {
         const io = gio();
         std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
         {
-            // exclusive:true → O_EXCL on POSIX: fails if any file or symlink now
-            // exists at tmp_path, preventing symlink-following on creation.
-            const f = try std.Io.Dir.createFileAbsolute(io, tmp_path, .{ .exclusive = true });
+            // SEC-P3-03 (CWE-276 / CWE-732): Request 0o600 via the Permissions
+            // field so the initial open(2) mode is owner-only. POSIX applies
+            // the process umask to this value (mode & ~umask), so on hosts
+            // with a permissive umask the file could still be created
+            // world-readable. The explicit fchmod after create (below, POSIX
+            // only) guarantees the final mode is exactly 0o600 regardless of
+            // umask, so the state file never exposes node_id / last_v1_ts to
+            // other local users.
+            //
+            // exclusive:true → O_EXCL on POSIX: fails if any file or symlink
+            // now exists at tmp_path, preventing symlink-following on create.
+            const f = try std.Io.Dir.createFileAbsolute(io, tmp_path, .{
+                .exclusive = true,
+                .permissions = std.Io.File.Permissions.fromMode(0o600),
+            });
             errdefer std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
             defer f.close(io);
+            // SEC-P3-03: umask-proof fchmod to exactly 0o600 on POSIX. Windows
+            // has no POSIX mode concept; the Permissions enum is a no-op
+            // there and this branch is skipped.
+            if (comptime builtin.os.tag != .windows) {
+                const rc = std.os.linux.fchmod(f.handle, 0o600);
+                const errno_val = std.os.linux.errno(rc);
+                if (errno_val != .SUCCESS) return Error.StateIoFailure;
+            }
             try f.writePositionalAll(io, &buf, 0);
         }
         try std.Io.Dir.renameAbsolute(tmp_path, path, io);
