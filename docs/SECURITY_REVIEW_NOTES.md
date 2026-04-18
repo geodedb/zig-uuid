@@ -764,3 +764,138 @@ Both items surfaced during Group D verification as non-blocking notes; both have
 2. ✅ **2-byte `seq` CSPRNG draw inside the V7 CAS retry loop** — closed by commit `574beef` (`perf(generator): lazy CSPRNG draw in V7 CAS loop`). Moved the draw to function scope and made it lazy (first clock-advance branch only, reused across retries). Draw happens at most once per `newV7Atomic` call. Correctness-preserving: each successful CAS emits exactly one UUID, so the cached bits are published at most once per call. Verified with 3 consecutive full-suite runs (219/219 unit + 32/32 integration) including the 8-thread × 5000-UUID monotonicity stress test.
 
 _Phase 3 closure cycle complete (Group D round, 2026-04-18) — 4 closed in Group C (SEC-P3-01/02/03/05), 2 closed in Group D (SEC-P3-04, SEC-P3-08), 1 partial in Group D (SEC-P3-07 — 3 human-input TODOs), 1 Won't-Do reconfirmed (SEC-P3-06)._
+
+---
+
+## Phase 4 follow-up audit (2026-04-18, cycle 2)
+
+> **HEAD:** `bcde186`
+> **Scope:** Re-audit of Phase 3 closures (SEC-P3-01 … SEC-P3-08) + adjacent surfaces exposed by the new `state_mac_key` / `InitOptions.random` / `Namespace` APIs + `/.well-known/security.txt`.
+> **Supply chain:** `build.zig.zon` `json` dep commit pin matches upstream HEAD — no stale pin. Recommend a weekly CI re-resolution alert (scheduled pipeline) to detect drift.
+> Risk = Impact × Likelihood × 4 (scored on the 0–100 scale used elsewhere in this repo).
+
+### New Findings (Phase 4)
+
+**1. SEC-P4-01** (HIGH, CWE-757 "Selection of Less-Secure Algorithm During Negotiation — Algorithm Downgrade", Risk **7.4**, confidence::confirmed) — **Requires user sign-off before implementation (API default-behavior change).**
+Evidence: `src/generator.zig:1463-1471` — when `state_mac_key` is set, `loadState` still accepts a v1/v2 state file (no MAC) after only emitting `std.log.warn`. An attacker who can write to the state directory can downgrade v3 → v2 by truncating the tag and flipping the format version byte; the keyed generator then consumes un-authenticated state.
+Remediation: add `InitOptions.state_mac_policy: enum { any, require_mac_when_keyed, require_mac_always } = .require_mac_when_keyed` (**new default — behavior change**: keyed generators reject v1/v2 state by default). Provide a `migrateStateToV3(path)` helper so existing operators can opt into upgrade without flipping the policy to `.any`. Demote the `std.log.warn` to `std.log.debug` once the policy gate is the primary control.
+⚠️ **Implementation blocked until maintainer signs off** on the default-behavior change and on the `migrateStateToV3` helper signature. Proposed issue is **confidential** (exploit path details).
+
+**2. SEC-P4-02** (Medium, CWE-316 "Cleartext Storage of Sensitive Information in Memory", Risk **5.1**, confidence::confirmed) — HMAC key stack-spill.
+Evidence: `src/generator.zig:1318-1323, 1455-1462` — the 32-byte `state_mac_key` optional payload is **copied** into a local (`const key = self.state_mac_key.?;`) before being passed to `HmacSha256.create`. The local capture is never wiped; under optimizer pressure it can live on the stack until the frame is overwritten by unrelated code, leaving recoverable key material in core dumps / Spectre-class leaks.
+Remediation: pass `&self.state_mac_key.?` directly into `HmacSha256.create` (no local copy); or, if a local is required for lifetime reasons, `var key_copy: [32]u8 = …; defer std.crypto.secureZero(u8, &key_copy);` and verify with `zig build-obj -femit-asm` that the compiler did not DCE the wipe.
+Implementable this session. Proposed issue is **confidential** (references key handling + commit `3f34a96` internals).
+
+**3. SEC-P4-03** (Medium, CWE-294 "Authentication Bypass by Capture-replay", Risk **4.6**, confidence::confirmed) — Hard-coded 1 s replay window.
+Evidence: `src/generator.zig:1249` — `clock_rollback_tolerance_ms = 1000`. A 1-second window is a wide replay / same-timestamp reuse surface for V1/V6 callers on fast hosts.
+Remediation: lower default to **250 ms**; expose via `InitOptions.clock_rollback_tolerance_ms: ?i64 = null` (null → default); cap the accepted range to `[0, 60_000]` with a compile-time assertion + runtime error for out-of-range.
+Implementable this session.
+
+**4. SEC-P4-04** (Low, CWE-1188 "Initialization of a Resource with an Insecure Default", Risk **3.2**, confidence::confirmed) — `Namespace.custom([16]u8)` accepts attacker bytes.
+Evidence: `src/namespace.zig:52-71` — `Namespace.custom` constructor takes any `[16]u8` at runtime. Callers deriving V3/V5 UUIDs over user-controlled namespaces re-open the SEC-P3-05 forgery surface the `Namespace` enum was meant to close.
+Remediation: add `fromConfig(bytes: [16]u8, origin: NamespaceOrigin) !Namespace` with a `registerTrustedNamespaceOrigin` allowlist. Preserve `.custom` for explicit opt-in / interop, but require the origin tag.
+
+**5. SEC-P4-05** (Low, CWE-1053 "Missing Documentation for Design", Risk **2.0**, confidence::confirmed) — Doc-only; close in session.
+Evidence: `src/namespace.zig:45-51` — doc comment on `Namespace.custom` does not mention CWE-347 forgery risk already called out on `newV3`/`newV5`. Doc drift vs Phase-3 SEC-P3-05.
+Remediation: rewrite the paragraph to reference CWE-347 and point to `newV3Strict` / `newV5Strict`.
+**Close-in-session candidate.**
+
+**6. SEC-P4-06** (Low, RFC 9116 compliance, Risk **2.0**, confidence::confirmed) — `/.well-known/security.txt` missing `Canonical:` + `Acknowledgments:`.
+Evidence: file added in Phase 3 (`6ffe052`) lacks both fields; `Hiring:` is present but empty.
+Remediation: add `Canonical:` and `Acknowledgments:` URLs; omit the empty `Hiring:` line entirely.
+**Close-in-session candidate.**
+
+**7. SEC-P4-07** (Low, CWE-732 "Incorrect Permission Assignment for Critical Resource", Risk **1.8**, confidence::confirmed) — `security.txt` mode `0o664`.
+Evidence: `/.well-known/security.txt` is checked in with group-writable perms.
+Remediation: `chmod 0o644`.
+**Close-in-session candidate.**
+
+**8. SEC-P4-08** (Low, CWE-203 "Observable Discrepancy", Risk **1.4**, confidence::confirmed) — `v7_lockfree_fallbacks` fingerprint.
+Evidence: `src/generator.zig:184` — `pub` counter exposing hot-loop contention events. A co-tenant can read this via any binding that surfaces generator stats and fingerprint the host.
+Remediation: de-`pub` or move behind a `diagnostics` sub-struct gated by `comptime Config.expose_diagnostics`.
+
+**9. SEC-P4-09** (Low, CWE-345 "Insufficient Verification of Data Authenticity", Risk **1.5**, confidence::confirmed) — `InitOptions.random` caller-trusted.
+Evidence: `src/generator.zig:138, 325` — `InitOptions.random: ?std.Random` is documented as the opt-in explicit-RNG knob (SEC-P3-08) but the `Generator.initOptions` path does no sanity check for known-weak PRNGs (e.g. `std.Random.DefaultPrng` seeded with 0).
+Remediation: in Debug builds, assert against a known-weak-PRNG fingerprint (first 16 bytes of output equal to a library-shipped `known_weak_prng_signatures: []const [16]u8`). Add a doc note directing callers to `std.crypto.random`.
+
+### Triage plan (Phase 4)
+
+| Gap-ID | Severity | Risk | Session plan | One-commit? |
+| ------ | -------- | ---- | ------------ | ----------- |
+| SEC-P4-01 | HIGH | 7.4 | ⚠️ Requires user sign-off (InitOptions.state_mac_policy default = .require_mac_when_keyed is a **default-behavior change**). | Separate PR; pair with migration helper + changelog entry. |
+| SEC-P4-02 | Medium | 5.1 | Implementable this session; one commit. | Yes. |
+| SEC-P4-03 | Medium | 4.6 | Implementable this session; one commit. | Yes. |
+| SEC-P4-04 | Low | 3.2 | Follow-up cycle (API addition). | No — coordinate with namespace docs. |
+| SEC-P4-05 | Low | 2.0 | Close-in-session (doc only). | Folded into SEC-P4-04 or standalone doc commit. |
+| SEC-P4-06 | Low | 2.0 | Close-in-session (file additions). | Yes. |
+| SEC-P4-07 | Low | 1.8 | Close-in-session (chmod). | Folded into SEC-P4-06 commit. |
+| SEC-P4-08 | Low | 1.4 | Follow-up cycle. | Yes. |
+| SEC-P4-09 | Low | 1.5 | Follow-up cycle. | Yes. |
+
+### Ready-to-run `glab` commands (documentation-only — **do not execute in this cycle**)
+
+The Phase-4 task explicitly forbids mutating GitLab. The commands below are transcribed for the next maintainer action; `--confidential` is set on SEC-P4-01 and SEC-P4-02 (exploit-path detail / key-handling internals).
+
+```bash
+# SEC-P4-01 — HIGH, confidential (downgrade; requires user sign-off)
+glab issue create \
+  --title "SEC-P4-01: v3->v2 state downgrade trivial under keyed generator (CWE-757)" \
+  --label "security,severity::high,type::bug,confidence::confirmed,status::triage" \
+  --confidential \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 7.4. REQUIRES MAINTAINER SIGN-OFF (default-behavior change on InitOptions.state_mac_policy)."
+
+# SEC-P4-02 — Medium, confidential (HMAC key stack-spill)
+glab issue create \
+  --title "SEC-P4-02: HMAC state_mac_key stack-spill / missing secureZero (CWE-316)" \
+  --label "security,severity::medium,type::bug,confidence::confirmed,status::triage" \
+  --confidential \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 5.1. Implementable this session; one commit."
+
+# SEC-P4-03 — Medium
+glab issue create \
+  --title "SEC-P4-03: clock_rollback_tolerance_ms default 1000 ms (CWE-294)" \
+  --label "security,severity::medium,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 4.6. Lower default to 250 ms; expose via InitOptions; cap [0, 60_000]."
+
+# SEC-P4-04 — Low
+glab issue create \
+  --title "SEC-P4-04: Namespace.custom accepts attacker bytes (CWE-1188)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 3.2. Add fromConfig + registerTrustedNamespaceOrigin allowlist."
+
+# SEC-P4-05 — Low (doc-only)
+glab issue create \
+  --title "SEC-P4-05: Namespace.custom doc comment missing CWE-347 forgery warning" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 2.0. Close-in-session candidate."
+
+# SEC-P4-06 — Low (RFC 9116)
+glab issue create \
+  --title "SEC-P4-06: security.txt missing Canonical + Acknowledgments (RFC 9116)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 2.0. Close-in-session candidate."
+
+# SEC-P4-07 — Low (chmod)
+glab issue create \
+  --title "SEC-P4-07: /.well-known/security.txt mode 0o664 should be 0o644 (CWE-732)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 1.8. Close-in-session candidate."
+
+# SEC-P4-08 — Low
+glab issue create \
+  --title "SEC-P4-08: v7_lockfree_fallbacks observable co-tenant fingerprint (CWE-203)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 1.4. De-pub or gate behind diagnostics sub-struct."
+
+# SEC-P4-09 — Low
+glab issue create \
+  --title "SEC-P4-09: InitOptions.random has no weak-PRNG guard (CWE-345)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 follow-up audit. Risk 1.5. Debug-mode assertion against known-weak PRNGs + doc note."
+```
+
+### Supply-chain note (Phase 4)
+
+`build.zig.zon` `json` dependency: pinned commit matches upstream HEAD at audit time (no stale pin). Recommend a **weekly scheduled pipeline** that runs `zig fetch --save` into a scratch worktree and emails/opens an issue if the resolved hash drifts from the pinned `.zon` value — detects silent upstream force-pushes (content-hash mismatch) and advertises stale pins for security-relevant upstream fixes.
+
+_Last updated: 2026-04-18 — Phase 4 follow-up audit (cycle 2). 9 new findings (1 HIGH awaiting sign-off, 2 Medium one-commit-each, 3 Low close-in-session, 3 Low follow-up). No GitLab mutations performed in this cycle._
