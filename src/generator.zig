@@ -160,7 +160,7 @@ pub const Generator = struct {
 
     /// PERF-21: opt-in lock-free V7 path.  When true, `newV7` updates
     /// monotonicity state via a CAS loop over a packed `(ms:52)|(seq:12)`
-    /// `u64` instead of the `v7_mutex`.  The lock-free path is wait-free
+    /// `u64` instead of the `v7.mutex`.  The lock-free path is wait-free
     /// for threads that do not race; on contention threads retry their CAS
     /// with fresh state, preserving RFC-9562 §6.2 strict monotonicity.
     /// On mono_seq saturation (12-bit counter exhausted within one ms)
@@ -184,16 +184,16 @@ pub const Generator = struct {
     v7_lockfree_fallbacks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
     // PERF-19: Two independent mutexes for V7 and V1/V6 clock domains.
-    // V7 generation only acquires v7_mutex; V1/V6 generation only acquires
-    // v1v6_mutex.  saveState/loadState acquire both in fixed order
-    // (v7_mutex first, then v1v6_mutex) to prevent deadlock.
+    // V7 generation only acquires v7.mutex; V1/V6 generation only acquires
+    // v1v6.mutex.  saveState/loadState acquire both in fixed order
+    // (v7.mutex first, then v1v6.mutex) to prevent deadlock.
 
     // PERF-29 / PERF-33: V7 and V1/V6 monotonicity state live in
     // nested `align(64)` structs so Zig's field-reorder pass cannot
     // pack small-aligned fields from either cluster across the
     // cache-line boundary.  The earlier `[0]u8 align(64)` separator
     // was insufficient — the compiler treated zero-size fields as
-    // no-storage and happily hoisted `v1v6_mutex`, `clock_seq`,
+    // no-storage and happily hoisted `v1v6.mutex`, `clock_seq`,
     // `last_v1_ts` into the tail of the V7 line.  Nested structs
     // create a hard boundary that reorder cannot cross.
     //
@@ -225,7 +225,7 @@ pub const Generator = struct {
     /// Cached node ID for V1/V6 generation (F-4 + F-6/G-6).
     ///
     /// PERF-27 (CWE-362): the cold-path `hasNodeCache()` fast-path reads
-    /// this cache outside `v1v6_mutex` to decide whether the caller must
+    /// this cache outside `v1v6.mutex` to decide whether the caller must
     /// pre-fetch a node ID. A plain read of an `?[6]u8` in parallel with
     /// the writer under the lock is a data race. Instead we split the
     /// logical "cache" into a valid-flag plus a byte buffer:
@@ -280,14 +280,14 @@ pub const Generator = struct {
         return self.node_cache_valid.load(.acquire);
     }
 
-    /// Caller MUST hold `v1v6_mutex`. Returns the cached bytes; only valid
+    /// Caller MUST hold `v1v6.mutex`. Returns the cached bytes; only valid
     /// when `hasNodeCache()` previously returned true (or the same mutex
     /// section wrote them).
     inline fn loadNodeCacheBytes(self: *Generator) [6]u8 {
         return self.node_cache_bytes;
     }
 
-    /// Caller MUST hold `v1v6_mutex`. Writes the bytes then publishes the
+    /// Caller MUST hold `v1v6.mutex`. Writes the bytes then publishes the
     /// valid-flag with release order so that any reader that acquire-loads
     /// `node_cache_valid == true` observes the matching bytes.
     inline fn storeNodeCache(self: *Generator, node: [6]u8) void {
@@ -295,7 +295,7 @@ pub const Generator = struct {
         self.node_cache_valid.store(true, .release);
     }
 
-    /// Caller MUST hold `v1v6_mutex`. Drops the cached node; next
+    /// Caller MUST hold `v1v6.mutex`. Drops the cached node; next
     /// `hasNodeCache()` returns false until a subsequent storeNodeCache.
     inline fn clearNodeCacheLocked(self: *Generator) void {
         self.node_cache_valid.store(false, .release);
@@ -404,7 +404,7 @@ pub const Generator = struct {
     /// Force the next V1/V6 generation to re-fetch the node ID (F-6/G-6).
     /// If the node ID changes after a re-fetch, clock_seq is incremented (F-4).
     ///
-    /// SEC-R6-01: Acquires v1v6_mutex before writing node_cache so that the
+    /// SEC-R6-01: Acquires v1v6.mutex before writing node_cache so that the
     /// write is not concurrent with resolveV1V6State (which also reads and
     /// writes node_cache under the same mutex).  Without this lock, a race
     /// exists between clearNodeCache and any in-flight V1/V6 generation.
@@ -708,7 +708,7 @@ pub const Generator = struct {
         return self.newV7Locked(ts);
     }
 
-    /// V7 generation core. Caller must hold `v7_mutex` on entry; this function
+    /// V7 generation core. Caller must hold `v7.mutex` on entry; this function
     /// always releases the mutex before returning (on success or error path).
     ///
     /// QC-95: the mutex release is now driven by a single `defer unlock()` in
@@ -755,9 +755,9 @@ pub const Generator = struct {
         return u;
     }
 
-    /// Inner core of `newV7Locked` (QC-95): runs entirely under `v7_mutex`
+    /// Inner core of `newV7Locked` (QC-95): runs entirely under `v7.mutex`
     /// with a single `defer unlock()`, returning the committed `(ms, seq)`
-    /// pair. Caller must hold `v7_mutex` on entry.
+    /// pair. Caller must hold `v7.mutex` on entry.
     fn newV7LockedInner(self: *Generator, ts: i64) Error!struct { ms: i64, seq: u12 } {
         defer self.v7.mutex.unlock(gio());
 
@@ -891,7 +891,7 @@ pub const Generator = struct {
     }
 
     fn getNode(self: *Generator) Error![6]u8 {
-        // Caller holds v1v6_mutex (per resolveV1V6State); loadNodeCacheBytes
+        // Caller holds v1v6.mutex (per resolveV1V6State); loadNodeCacheBytes
         // is consistent with storeNodeCache under the same lock.
         if (self.hasNodeCache()) return self.loadNodeCacheBytes();
         const node = try self.fetchRawNode();
@@ -901,13 +901,13 @@ pub const Generator = struct {
 
     /// Shared state-resolution helper for V1 and V6 generation (QC-1).
     ///
-    /// Acquires and releases v1v6_mutex, initialises clock_seq, updates
+    /// Acquires and releases v1v6.mutex, initialises clock_seq, updates
     /// last_v1_ts, populates the node cache, and handles F-4 node-change
     /// detection.  Returns the resolved (timestamp, node, clock_seq) so that
     /// each public function only needs to perform its version-specific
     /// timestamp byte encoding.
     ///
-    /// **caller must NOT hold v1v6_mutex on entry.**
+    /// **caller must NOT hold v1v6.mutex on entry.**
     fn resolveV1V6State(
         self: *Generator,
         ts: Timestamp,

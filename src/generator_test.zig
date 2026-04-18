@@ -1237,7 +1237,6 @@ test "GeneratorInterfaceFor wraps default_generator (PERF-31)" {
 // required.
 test "PERF-34: V7 and V1V6 clusters occupy distinct cache lines" {
     const cache_line: usize = 64;
-    const v7_start = @offsetOf(Generator, "v7") / cache_line;
     const v7_end = (@offsetOf(Generator, "v7") + @sizeOf(@FieldType(Generator, "v7")) - 1) / cache_line;
     const v1v6_start = @offsetOf(Generator, "v1v6") / cache_line;
 
@@ -1255,5 +1254,4 @@ test "PERF-34: V7 and V1V6 clusters occupy distinct cache lines" {
     const v7_mono_seq_line = (@offsetOf(Generator, "v7") +
         @offsetOf(@FieldType(Generator, "v7"), "mono_seq")) / cache_line;
     try std.testing.expectEqual(v7_mutex_line, v7_mono_seq_line);
-    _ = v7_start; // currently unused — future assertions may read it
 }
