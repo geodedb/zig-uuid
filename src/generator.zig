@@ -1390,8 +1390,46 @@ pub const Generator = struct {
                 if (errno_val != .SUCCESS) return Error.StateIoFailure;
             }
             try f.writePositionalAll(io, buf[0..write_len], 0);
+            // PERF-35: flush file data to stable storage BEFORE the
+            // defer-close runs.  rename(2) only atomically swaps the
+            // directory entry — the file's data blocks may still be
+            // buffered in the OS page cache.  A power loss between
+            // rename and writeback leaves a zero/torn state file.
+            try f.sync(io);
         }
         try std.Io.Dir.renameAbsolute(tmp_path, path, io);
+
+        // PERF-35: fsync the parent directory so the rename itself is
+        // durable.  Without this, a crash after rename can leave the
+        // directory pointing at the tmp_path (or worse, neither) because
+        // most filesystems do not implicitly fsync directory mtime
+        // updates.
+        //
+        // std.Io.Dir does not expose a sync() method in Zig 0.16, and
+        // std.posix.fsync() is not exposed either.  The Dir/File handle
+        // types are both std.posix.fd_t, so we reuse std.Io.File.sync()
+        // by wrapping the directory fd in a File value — the kernel-
+        // level fsync(2) does not care whether the fd is a file or a
+        // directory.
+        //
+        // IMPORTANT: we must open the dir with .iterate = true.  On Linux,
+        // std.Io.Dir.openDir uses O_PATH when iterate is false, and O_PATH
+        // fds cannot be used with fsync(2) — the kernel returns EBADF.
+        // iterate=true opens a real readable dir fd that fsync accepts.
+        //
+        // Windows has no POSIX dir-fsync concept (FlushFileBuffers on the
+        // dir handle is the rough equivalent but out of scope); guard so
+        // non-POSIX targets still build.
+        if (comptime builtin.os.tag != .windows) {
+            const dir_path = std.fs.path.dirname(path) orelse "/";
+            var dir = try std.Io.Dir.openDirAbsolute(io, dir_path, .{ .iterate = true });
+            defer dir.close(io);
+            const dir_as_file: std.Io.File = .{
+                .handle = dir.handle,
+                .flags = .{ .nonblocking = false },
+            };
+            try dir_as_file.sync(io);
+        }
     }
 
     /// Load generator state from stable storage (F-9, SEC-10, PERF-04).

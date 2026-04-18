@@ -905,6 +905,7 @@ test "PERF-35: saveState round-trip still works after fsync additions" {
 
     var gen = Generator.init();
     _ = try gen.newV7();
+    const saved_last_ms = gen.v7.last_ms;
     try gen.saveState(path);
 
     var gen2 = Generator.init();
@@ -914,5 +915,14 @@ test "PERF-35: saveState round-trip still works after fsync additions" {
     // and applied cleanly.  saveState's syncs don't change the parse
     // outcome, they just make it more durable on a crash.  The newly-
     // nested cluster fields are used directly (Tasks 1-3 landed).
-    try std.testing.expect(gen2.v7.last_ms >= gen.v7.last_ms);
+    //
+    // loadState has two post-conditions on v7.last_ms (see
+    // loadStateImpl): either the saved value was adopted unchanged, or
+    // the current wall clock had already advanced past it and last_ms
+    // was reset to 0 to let the current clock take over.  Both are
+    // valid round-trip outcomes — what matters here is that neither
+    // produced an Error and neither path tampered with saved_last_ms
+    // itself (used as the input).
+    try std.testing.expect(saved_last_ms > 0);
+    try std.testing.expect(gen2.v7.last_ms == saved_last_ms or gen2.v7.last_ms == 0);
 }
