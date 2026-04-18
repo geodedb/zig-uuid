@@ -97,6 +97,81 @@ pub fn newV8(a: [6]u8, b: [2]u8, c: [8]u8) UUID {
     return gen_mod.default_generator.newV8(a, b, c);
 }
 
+// =============================================================================
+// QC-100: default_generator parity wrappers.
+//
+// Every method exposed by `Generator` that makes sense on a process-global
+// generator is wrapped below so callers who use the convenience `uuid.newV*`
+// family do not need to switch to a local `var gen = Generator.init()` just
+// to call `clearNodeCache`, `reseed`, `saveState`, etc.  For callers who
+// need direct access to the default generator pointer (e.g. to inspect
+// state after loadState), use `defaultGenerator()` below.
+//
+// Omissions by design:
+//   - `Generator.init`, `Generator.withClock`, `Generator.withRand`,
+//     `Generator.withHWAddr` are constructors — calling them on the shared
+//     default would be meaningless (they construct a new value). Callers
+//     that need a custom clock/rand/hwaddr should construct their own
+//     `Generator` instance.
+// =============================================================================
+
+/// QC-100 / SEC-P3-01: return a pointer to the process-global default
+/// `Generator` used by the module-level convenience functions. Callers
+/// can use this to invoke state-bearing methods such as `reseed()`
+/// (post-fork), `loadState()`, `saveState()`, or to inspect state
+/// directly. All concurrent UUID generation through the module-level
+/// `newV*` functions continues to be safe because `Generator` locks its
+/// own state; mutation of the returned pointer is the caller's
+/// responsibility.
+pub fn defaultGenerator() *gen_mod.Generator {
+    return &gen_mod.default_generator;
+}
+
+/// QC-100: module-level wrapper for `Generator.clearNodeCache`, operating
+/// on the shared `default_generator`. Forces the next V1/V6 call through
+/// the module-level `newV1`/`newV6` convenience functions to re-fetch
+/// the node ID.
+pub fn clearNodeCache() void {
+    gen_mod.default_generator.clearNodeCache();
+}
+
+/// QC-100 / SEC-P3-01: module-level wrapper for `Generator.reseed`
+/// operating on the shared `default_generator`. Intended for callers
+/// who fork() and use the module-level convenience functions — the
+/// child process MUST call this before generating UUIDs to avoid
+/// colliding with the parent on cached CSPRNG-derived state.
+pub fn reseed() void {
+    gen_mod.default_generator.reseed();
+}
+
+/// QC-100: module-level wrapper for `Generator.saveState` operating on
+/// the shared `default_generator`. `path` must be an absolute
+/// filesystem path; see `Generator.saveState` for full semantics.
+pub fn saveState(path: []const u8) Error!void {
+    return gen_mod.default_generator.saveState(path);
+}
+
+/// QC-100: module-level wrapper for `Generator.loadState` operating on
+/// the shared `default_generator`. `path` must be an absolute filesystem
+/// path; see `Generator.loadState` for full semantics including the
+/// SEC-P3-02 clock-rollback guard.
+pub fn loadState(path: []const u8) Error!void {
+    return gen_mod.default_generator.loadState(path);
+}
+
+/// QC-100 + PERF-30: module-level wrapper for `Generator.initV3Namespace`
+/// that builds a `PrehashedV3` snapshot under the shared `default_generator`.
+/// Safe to call concurrently: `initV3Namespace` only reads immutable
+/// hasher state.
+pub fn initV3Namespace(ns: UUID) gen_mod.Generator.PrehashedV3 {
+    return gen_mod.default_generator.initV3Namespace(ns);
+}
+
+/// QC-100 + PERF-30: module-level wrapper for `Generator.initV5Namespace`.
+pub fn initV5Namespace(ns: UUID) gen_mod.Generator.PrehashedV5 {
+    return gen_mod.default_generator.initV5Namespace(ns);
+}
+
 test "top-level newV4 delegates to default_generator" {
     const u = try newV4();
     try std.testing.expectEqual(uuid_mod.Version.v4, u.version());
@@ -222,4 +297,55 @@ test "newV5Strict(.custom, ...) with enum-carried bytes equals newV5 (SEC-P3-05)
     const strict = newV5Strict(.{ .custom = raw }, "content-1");
     const permissive = newV5(uuid_mod.UUID{ .bytes = raw }, "content-1");
     try std.testing.expect(strict.eql(permissive));
+}
+
+// QC-100: default_generator parity tests.
+
+test "defaultGenerator returns the same pointer across calls (QC-100)" {
+    const p1 = defaultGenerator();
+    const p2 = defaultGenerator();
+    try std.testing.expectEqual(p1, p2);
+    // Pointer must equal the generator.zig module's default_generator.
+    try std.testing.expectEqual(&gen_mod.default_generator, p1);
+}
+
+test "module-level clearNodeCache operates on default_generator (QC-100)" {
+    // Warm the cache via the convenience newV1, then clear it via the
+    // module-level wrapper, then confirm the default_generator's cache
+    // flag reflects the clear.
+    _ = try newV1();
+    try std.testing.expect(gen_mod.default_generator.node_cache_valid.load(.acquire));
+    clearNodeCache();
+    try std.testing.expect(!gen_mod.default_generator.node_cache_valid.load(.acquire));
+    // Re-warm so we leave no global-state surprise for subsequent tests.
+    _ = try newV1();
+}
+
+test "module-level reseed zeroes default_generator state (QC-100)" {
+    // Pre-populate then call the module-level reseed wrapper.
+    gen_mod.default_generator.clock_seq = 0x1234;
+    gen_mod.default_generator.clock_seq_initialized = true;
+    gen_mod.default_generator.last_ms = 9_999;
+    gen_mod.default_generator.mono_seq = 0x0ABC;
+    reseed();
+    try std.testing.expectEqual(@as(u14, 0), gen_mod.default_generator.clock_seq);
+    try std.testing.expect(!gen_mod.default_generator.clock_seq_initialized);
+    try std.testing.expectEqual(@as(i64, 0), gen_mod.default_generator.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen_mod.default_generator.mono_seq);
+}
+
+test "module-level initV3Namespace matches newV3 for the same namespace (QC-100)" {
+    const ns_mod = @import("namespace.zig");
+    const prehashed = initV3Namespace(ns_mod.namespace_dns);
+    const a = prehashed.name("example.com");
+    const b = newV3(ns_mod.namespace_dns, "example.com");
+    try std.testing.expect(a.eql(b));
+}
+
+test "module-level initV5Namespace matches newV5 for the same namespace (QC-100)" {
+    const ns_mod = @import("namespace.zig");
+    const prehashed = initV5Namespace(ns_mod.namespace_url);
+    const a = prehashed.name("https://example.com");
+    const b = newV5(ns_mod.namespace_url, "https://example.com");
+    try std.testing.expect(a.eql(b));
 }

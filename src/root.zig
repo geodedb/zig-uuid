@@ -51,18 +51,16 @@ pub const Namespace = @import("namespace.zig").Namespace;
 // Generator
 pub const Generator = @import("generator.zig").Generator;
 pub const GeneratorInterface = @import("generator.zig").GeneratorInterface;
-// SEC-R5-01: `default_generator` is NOT re-exported here.
+// SEC-R5-01 / QC-100: `default_generator` is not re-exported as a value
+// (that would create a VALUE COPY — a separate Generator at a different
+// address — defeating the shared-state intent).  Instead, the
+// `defaultGenerator()` function (re-exported below) returns a pointer to
+// the one true `default_generator`, and a set of parity wrappers
+// (`clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`,
+// `initV5Namespace`) operate on that same instance at the module level.
 //
-// The package-level convenience functions (newV4, newV7, …) in versions.zig
-// operate on `generator.zig`'s `default_generator` directly.  A re-export via
-// `pub var default_generator = @import("generator.zig").default_generator`
-// would create a VALUE COPY — a separate Generator instance at a different
-// memory address — so any `loadState`/`saveState`/`clearNodeCache` call on
-// `uuid.default_generator` would have no effect on the UUIDs produced by the
-// convenience functions.
-//
-// For most use-cases, the convenience functions are sufficient.
-// For persistent state, create and manage your own `Generator` instance:
+// For callers who need a different clock / rand / hwaddr source or an
+// isolated state file, construct their own `Generator` instance:
 //
 //   const uuid = @import("uuid");
 //   var gen = uuid.Generator.init();
@@ -82,6 +80,22 @@ pub const newV6AtTime = @import("versions.zig").newV6AtTime;
 pub const newV7 = @import("versions.zig").newV7;
 pub const newV7AtTime = @import("versions.zig").newV7AtTime;
 pub const newV8 = @import("versions.zig").newV8;
+
+// QC-100: default_generator state-management parity wrappers.
+//
+// These expose the state-bearing methods of the process-global
+// `default_generator` at the module level, so callers using the
+// convenience `uuid.newV*` family can also `uuid.reseed()` after
+// fork, `uuid.loadState(path)` on startup, etc. without constructing
+// their own Generator instance. Use `uuid.defaultGenerator()` if you
+// need a `*Generator` pointer (e.g. for methods not wrapped here).
+pub const defaultGenerator = @import("versions.zig").defaultGenerator;
+pub const clearNodeCache = @import("versions.zig").clearNodeCache;
+pub const reseed = @import("versions.zig").reseed;
+pub const saveState = @import("versions.zig").saveState;
+pub const loadState = @import("versions.zig").loadState;
+pub const initV3Namespace = @import("versions.zig").initV3Namespace;
+pub const initV5Namespace = @import("versions.zig").initV5Namespace;
 
 // Windows GUID interop (only available on Windows builds)
 pub const guidToUUID = if (builtin.os.tag == .windows)
