@@ -233,44 +233,68 @@ fuzz:
   needs:
     - build
 
-# PERF-26: bench-regression with hard threshold gate.
+# PERF-26 + INV-01: bench-regression with hard threshold gate.
 #
-# Runs the structured JSON benchmark suite and compares `latest.json`
-# against the committed `benchmarks/results/baseline.json` via the
-# `bench-compare` step. Regressions beyond `PERF26_THRESHOLD` (default 15%)
-# fail the job. `allow_failure` is intentionally omitted so a regression
-# blocks the merge-train.
+# Runs the structured JSON benchmark suite (single-thread + multi-thread
+# contention) and compares every `latest*.json` against its committed
+# `benchmarks/results/baseline*.json` counterpart via the walker-mode
+# `bench-compare-all` step. Regressions beyond PERF26_THRESHOLD (default
+# 15%) fail the job. Secondary lockfree_fallbacks drift is reported as a
+# WARN but does not fail (INV-01 guidance). `allow_failure` is omitted so
+# a hard regression blocks the merge-train.
 #
-# Regenerate the baseline whenever an intentional perf change lands:
+# Regenerate baselines whenever an intentional perf change lands:
 #   zig build bench -Doptimize=ReleaseFast -- \
 #       --output benchmarks/results/baseline.json
-#   git add benchmarks/results/baseline.json && git commit
+#   zig build bench-contention -Doptimize=ReleaseFast -- \
+#       --output benchmarks/results/baseline_contention.json
+#   git add benchmarks/results/baseline*.json && git commit
 #
 # The 15% threshold absorbs runner-to-runner jitter and ReleaseFast
-# non-determinism (~5-10% typical) without masking real regressions. The
-# compare tool additionally widens the effective gate to
-# `max(threshold, 3*stddev)` so noisy rows still have a sensible floor.
+# non-determinism. The compare tool additionally widens the effective
+# gate to max(threshold, 3*stddev) so noisy rows still have a sensible
+# floor.
 #
-# Artifacts retain the fresh-run JSON + compare report for 90 days so
-# post-mortems have the evidence without re-running the pipeline.
+# INV-01 pinning: when the runner has >= 4 cores, bench invocations are
+# wrapped with `taskset -c 2-N` so CI machinery on cores 0-1 does not
+# perturb contention scenarios. Skipped when nproc < 4 (tiny runner =
+# no meaningful isolation possible). Controlled by BENCH_PIN_CORES;
+# set to `"0"` to disable pinning explicitly.
+#
+# Artifacts retain the fresh-run JSONs + compare report for 90 days.
 bench-regression:
   stage: fuzz
   image: debian:bookworm-slim
   variables:
     PERF26_THRESHOLD: "0.15"
+    BENCH_PIN_CORES: "1"
   before_script:
     - *install-zig
+    - apt-get update && apt-get install -y --no-install-recommends util-linux procps
   script:
-    - zig build bench -Doptimize=ReleaseFast -- --output benchmarks/results/latest.json
     - |
-      zig build bench-compare -- \
-        --baseline benchmarks/results/baseline.json \
-        --candidate benchmarks/results/latest.json \
+      # Resolve the taskset prefix once so both bench invocations use
+      # an identical isolation envelope.
+      if [ "${BENCH_PIN_CORES:-1}" = "1" ] && command -v taskset >/dev/null 2>&1 && [ "$(nproc)" -ge 4 ]; then
+        LAST_CORE=$(($(nproc) - 1))
+        if [ "$LAST_CORE" -gt 17 ]; then LAST_CORE=17; fi
+        TASKSET_PREFIX="taskset -c 2-$LAST_CORE"
+        echo "INV-01: pinning bench to cores 2-$LAST_CORE (nproc=$(nproc))"
+      else
+        TASKSET_PREFIX=""
+        echo "INV-01: taskset pin skipped (nproc=$(nproc), BENCH_PIN_CORES=${BENCH_PIN_CORES:-1})"
+      fi
+      export TASKSET_PREFIX
+    - $TASKSET_PREFIX zig build bench -Doptimize=ReleaseFast -- --output benchmarks/results/latest.json
+    - $TASKSET_PREFIX zig build bench-contention -Doptimize=ReleaseFast -- --output benchmarks/results/latest_contention.json
+    - |
+      zig build bench-compare-all -- \
         --threshold "${PERF26_THRESHOLD:-0.15}" 2>&1 | tee bench-regression-report.txt
   artifacts:
     when: always
     paths:
       - benchmarks/results/latest.json
+      - benchmarks/results/latest_contention.json
       - bench-regression-report.txt
     expire_in: 90 days
   rules:
