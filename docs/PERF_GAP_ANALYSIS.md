@@ -1259,9 +1259,9 @@ Per-row stddev was 4–12 % at 2T/4T, 3–8 % at 8T/16T — the observed cross-r
 
 | # | PerfSeverity | PerfScore | Confidence | Finding | Component | File:line | In-band? |
 |---|--------------|-----------|------------|---------|-----------|-----------|----------|
-| PERF-33 | **P0** | **100** (5×5×4) | confirmed | PERF-29 regression — `align(64)` pad insufficient; Zig reorders small-aligned fields past `[0]u8 align(64)`; `mono_seq`@204 and `v1v6_mutex`@200 share cache line | `src/generator.zig` cluster layout | generator.zig (Generator struct) | ✅ propose closure |
-| PERF-34 | **P0** | **80** (4×5×4) | confirmed | No offset-witness test enforcing V7/V1V6 cluster cache-line separation | `tests/` or `src/generator_test.zig` | new test | ✅ propose closure |
-| PERF-35 | **P1** | **48** (4×3×4) | confirmed | `saveState` missing `f.sync()` + parent-dir fsync — crash-after-rename leaves zero/torn state file | `src/generator.zig` `saveState` | saveState body | ✅ propose closure |
+| PERF-33 | **P0** | **100** (5×5×4) | confirmed | PERF-29 regression — `align(64)` pad insufficient; Zig reorders small-aligned fields past `[0]u8 align(64)`; `mono_seq`@204 and `v1v6_mutex`@200 share cache line | `src/generator.zig` cluster layout | generator.zig (Generator struct) | ✅ Closed 2026-04-18 (`b55cbfe`, doc sweep `f0dbfa6`) |
+| PERF-34 | **P0** | **80** (4×5×4) | confirmed | No offset-witness test enforcing V7/V1V6 cluster cache-line separation | `tests/` or `src/generator_test.zig` | new test | ✅ Closed 2026-04-18 (`ab2de10` red + `b55cbfe` green) |
+| PERF-35 | **P1** | **48** (4×3×4) | confirmed | `saveState` missing `f.sync()` + parent-dir fsync — crash-after-rename leaves zero/torn state file | `src/generator.zig` `saveState` | saveState body | ✅ Closed 2026-04-18 (`7e8899d` fix + guard `997896a`/`45c2e19`) |
 | PERF-36 | **P1** | **48** (4×3×4) | suspected | Hybrid spin-then-sleep for lockfree saturation — 7,912 fallbacks × ~1 ms ≈ 8 s serialized at 16T | `src/generator.zig` `newV7Atomic` | fallback branch | ⏸ defer — needs spin_wins histogram |
 | PERF-37 | **P2** | **36** (3×3×4) | confirmed | `v7_lockfree_fallbacks` at generator.zig:184 shares cache line with `last_ms@192` — fetchAdd invalidates line 2 for readers | `src/generator.zig:184` | generator.zig:184 | defer (quick follow-up) |
 | PERF-38 | **P2** | **24** (3×2×4) | suspected | `PrehashedV3/V5.name()` hasher clone is ~88 B (Md5) / ~96 B (Sha1) `@memcpy` — may not pay for itself at <16-byte names | `src/generator.zig` PrehashedV3/V5 | generator.zig (prehashed variants) | defer |
