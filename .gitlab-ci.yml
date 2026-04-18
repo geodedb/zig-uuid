@@ -233,24 +233,113 @@ fuzz:
   needs:
     - build
 
-# PERF-24: Run benchmarks on main merges and scheduled pipelines.
-# Results are stored as artifacts for trend analysis.  This does NOT
-# block the pipeline — it captures data for manual regression detection.
+# PERF-26: bench-regression with hard threshold gate.
+#
+# Compares the fresh `zig build bench -Doptimize=ReleaseFast` run against
+# the committed `bench/baseline.txt` and FAILS the job when any benchmark
+# row reports ops/s below (baseline * (1 - PERF26_THRESHOLD)).  The gate
+# runs on main-branch pipelines and scheduled pipelines; allow_failure is
+# now `false` so a regression blocks the merge-train.
+#
+# Regenerate `bench/baseline.txt` whenever an intentional perf change
+# lands (run `zig build bench -Doptimize=ReleaseFast` on the same runner
+# shape and commit the output).  The 15% threshold absorbs runner-to-
+# runner jitter and ReleaseFast non-determinism (~5-10% typical) without
+# masking real regressions.
+#
+# Artifacts retain both the fresh run output AND a diff-style regression
+# report for 90 days so post-mortems have the evidence without re-running
+# the pipeline.
 bench-regression:
   stage: fuzz
   image: debian:bookworm-slim
+  variables:
+    PERF26_THRESHOLD: "0.15"
   before_script:
     - *install-zig
+    - apt-get install -y python3
   script:
     - zig build bench -Doptimize=ReleaseFast 2>&1 | tee bench-results.txt
+    - |
+      THRESHOLD="${PERF26_THRESHOLD:-0.15}" python3 - <<'PYEOF'
+      import os, re, sys
+
+      threshold = float(os.environ.get("THRESHOLD", "0.15"))
+      row_re = re.compile(r"^(\S+)\s+\+?\d+\s+ns/op\s+\+?(\d+)\s+ops/s")
+
+      def parse(path):
+          rows = {}
+          with open(path) as f:
+              for line in f:
+                  line = line.lstrip()
+                  if not line or line.startswith("#"):
+                      continue
+                  m = row_re.match(line)
+                  if not m:
+                      continue
+                  rows[m.group(1)] = int(m.group(2))
+          return rows
+
+      base = parse("bench/baseline.txt")
+      cur = parse("bench-results.txt")
+      if not base:
+          sys.exit("ERROR: bench/baseline.txt parsed zero rows")
+      if not cur:
+          sys.exit("ERROR: bench-results.txt parsed zero rows")
+
+      failed = []
+      missing = []
+      report = []
+      for name, base_ops in base.items():
+          if name not in cur:
+              missing.append(name)
+              continue
+          cur_ops = cur[name]
+          min_allowed = int(base_ops * (1 - threshold))
+          delta_pct = (cur_ops - base_ops) * 100.0 / base_ops if base_ops else 0.0
+          status = "OK"
+          if cur_ops < min_allowed:
+              failed.append((name, base_ops, cur_ops, delta_pct))
+              status = "REGRESSION"
+          report.append(
+              f"  {name:<16} base={base_ops:>12d}  cur={cur_ops:>12d}  "
+              f"delta={delta_pct:+6.2f}%  [{status}]"
+          )
+
+      print(f"\nbench-regression report (threshold {threshold*100:.1f}%):")
+      for r in report:
+          print(r)
+
+      with open("bench-regression-report.txt", "w") as f:
+          f.write(f"threshold {threshold*100:.1f}%\n")
+          for r in report:
+              f.write(r + "\n")
+          if failed:
+              f.write("\nFAILED rows:\n")
+              for n, b, c, d in failed:
+                  f.write(f"  {n}: base={b} cur={c} delta={d:+.2f}%\n")
+
+      if missing:
+          sys.stderr.write(
+              f"WARNING: baseline rows not present in current run: {missing}\n"
+          )
+      if failed:
+          sys.stderr.write(
+              f"FAIL: {len(failed)} benchmark row(s) regressed >"
+              f"{threshold*100:.1f}%\n"
+          )
+          sys.exit(1)
+      print(f"\nOK: all {len(base)} benchmark rows within {threshold*100:.1f}% of baseline.")
+      PYEOF
   artifacts:
+    when: always
     paths:
       - bench-results.txt
+      - bench-regression-report.txt
     expire_in: 90 days
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
-  allow_failure: true
   needs:
     - build
 
