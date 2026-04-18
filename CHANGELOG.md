@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **MSRV bumped to Zig 0.16.0** — `build.zig.zon`, `README.md`, and module
+  docstrings now require Zig 0.16.0 or later; this matches the actual
+  toolchain used by CI and the `std.Io`-based APIs that replaced
+  `std.time`/`std.fs.File.writer()` in Zig 0.16 (GAP-DOC-01, QC-93)
 - Aligned minimum Zig version to 0.15.2 in `README.md` and `build.zig.zon` (QC-44)
 - `UUID.eql()` doc comment extended with CWE-208 timing-safety warning directing secret-token callers to `timingSafeEql` (SEC-R9-01)
 - `UUID.isNil()` and `UUID.isMax()` doc comments extended with CWE-208 timing notes directing secret-comparison callers to `timingSafeEql(UUID.nil)` / `timingSafeEql(UUID.max)` (SEC-R11-03)

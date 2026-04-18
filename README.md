@@ -1,7 +1,7 @@
 # uuid
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Zig](https://img.shields.io/badge/Zig-0.15.2+-orange.svg)](https://ziglang.org/)
+[![Zig](https://img.shields.io/badge/Zig-0.16.0+-orange.svg)](https://ziglang.org/)
 
 A fully RFC-9562-compliant UUID library for Zig.
 
@@ -178,7 +178,7 @@ Both refer to the same values; prefer the shorter `uuid.nil`/`uuid.max` form.
 
 ## Requirements
 
-- Zig 0.15.2 or later
+- Zig 0.16.0 or later
 
 ## Building
 

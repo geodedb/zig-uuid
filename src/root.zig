@@ -20,7 +20,7 @@
 //! const u4 = try uuid.newV4();         // random UUID
 //! const v3 = uuid.newV3(uuid.namespace_dns, "example.com");
 //!
-//! std.debug.print("{f}\n", .{u});          // {f} specifier — no stack buffer needed
+//! std.debug.print("{f}\n", .{u});          // {f} specifier — no stack buffer needed (Zig 0.16+)
 //! ```
 
 const builtin = @import("builtin");
