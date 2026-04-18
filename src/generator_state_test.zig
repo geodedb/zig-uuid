@@ -886,3 +886,33 @@ test "Generator: secureWipeMacKey is safe when no key was ever set" {
     gen.secureWipeMacKey(); // must not panic
     try std.testing.expect(gen.state_mac_key == null);
 }
+
+// PERF-35: saveState must call fsync on the tmp file (before close) and
+// on the parent directory (after rename) so a crash between the two
+// does not leave a zero-length / torn state file.  We cannot inject a
+// crash inside a unit test, so this regression test only asserts that
+// the normal happy-path round-trip still works after the sync changes
+// are added.  Manual strace verification of the syscall sequence is
+// the authoritative check for the fsync semantics — see the PERF-35
+// commit for the expected trace.
+test "PERF-35: saveState round-trip still works after fsync additions" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    var gen = Generator.init();
+    _ = try gen.newV7();
+    try gen.saveState(path);
+
+    var gen2 = Generator.init();
+    try gen2.loadState(path);
+
+    // We care that no Error was returned — the file opened, parsed,
+    // and applied cleanly.  saveState's syncs don't change the parse
+    // outcome, they just make it more durable on a crash.  The newly-
+    // nested cluster fields are used directly (Tasks 1-3 landed).
+    try std.testing.expect(gen2.v7.last_ms >= gen.v7.last_ms);
+}
