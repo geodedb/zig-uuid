@@ -289,7 +289,21 @@ pub const ScenarioSpec = struct {
     /// this field rather than from `RunResult.iterations`.
     expected_iterations: u64 = 0,
     runFn: *const fn (std.mem.Allocator, std.Io) anyerror!RunResult,
+    /// When non-null, overrides the default 7-run / median-of-6 pattern.
+    /// INV-01 showed contention scenarios need wider sampling (15 runs /
+    /// median-of-10 is the recommended value — cuts ratio variance by ~3x
+    /// at 2T/4T).  The first run is always discarded as warmup so `run_count`
+    /// must be >= 2; the last `run_count - 1` are sorted and median'd.
+    run_count: ?usize = null,
 };
+
+/// Default run count when a spec does not override via `ScenarioSpec.run_count`.
+/// 7 runs = 1 warmup + 6 samples -> median-of-6.
+pub const default_run_count: usize = 7;
+/// Maximum stack-allocated run budget; specs requesting more fall back to a
+/// heap-allocated scratch slice.  32 is overkill for any realistic
+/// configuration (INV-01 recommends 15) and costs ~3 KiB of stack.
+pub const max_stack_run_count: usize = 32;
 
 pub fn runScenarios(allocator: std.mem.Allocator, io: std.Io, specs: []const ScenarioSpec, output_path: ?[]const u8) !void {
     var rows: std.ArrayList(ResultRow) = .empty;
@@ -338,14 +352,22 @@ fn freeRow(allocator: std.mem.Allocator, row: ResultRow) void {
 }
 
 fn runOneScenario(allocator: std.mem.Allocator, io: std.Io, spec: ScenarioSpec) !ResultRow {
-    const RUN_COUNT: usize = 7;
     const WARMUP_DISCARD: usize = 1;
-    const SAMPLE_COUNT: usize = RUN_COUNT - WARMUP_DISCARD;
+    const run_count: usize = @max(spec.run_count orelse default_run_count, 2);
+    const sample_count: usize = run_count - WARMUP_DISCARD;
 
-    var results: [RUN_COUNT]InternalRow = undefined;
+    // Stack-allocate the common case (run_count <= 32); heap-fall-through
+    // for any pathological override.
+    var stack_buf: [max_stack_run_count]InternalRow = undefined;
+    const results: []InternalRow = if (run_count <= max_stack_run_count)
+        stack_buf[0..run_count]
+    else
+        try allocator.alloc(InternalRow, run_count);
+    defer if (run_count > max_stack_run_count) allocator.free(results);
+
     var mem_after_warmup: MemorySnapshot = undefined;
 
-    for (&results, 0..) |*r, run_idx| {
+    for (results, 0..) |*r, run_idx| {
         const res = try spec.runFn(allocator, io);
         if (run_idx == 0) mem_after_warmup = memorySnapshot();
         r.* = .{
@@ -359,8 +381,8 @@ fn runOneScenario(allocator: std.mem.Allocator, io: std.Io, spec: ScenarioSpec) 
         allocator.free(r.result.latencies_ns);
     }
 
-    // Sort the 6 measured samples by throughput so we can take the median
-    // and compute stddev.
+    // Sort the measured samples by throughput so we can take the median
+    // and compute stddev over the post-warmup window.
     const samples = results[WARMUP_DISCARD..];
     std.sort.heap(InternalRow, samples, {}, struct {
         fn lessThan(_: void, a: InternalRow, b: InternalRow) bool {
@@ -368,7 +390,8 @@ fn runOneScenario(allocator: std.mem.Allocator, io: std.Io, spec: ScenarioSpec) 
         }
     }.lessThan);
 
-    const median = samples[SAMPLE_COUNT / 2];
+    const median_idx: usize = sample_count / 2;
+    const median = samples[median_idx];
     const median_throughput = median.throughput;
 
     var sum_sq: f64 = 0;
@@ -376,12 +399,12 @@ fn runOneScenario(allocator: std.mem.Allocator, io: std.Io, spec: ScenarioSpec) 
         const d = s.throughput - median_throughput;
         sum_sq += d * d;
     }
-    const stddev = std.math.sqrt(sum_sq / @as(f64, @floatFromInt(SAMPLE_COUNT)));
+    const stddev = std.math.sqrt(sum_sq / @as(f64, @floatFromInt(sample_count)));
 
     // Free every non-median sample's latency buffer; we only summarise the
     // median run's distribution.
     for (samples, 0..) |r, idx| {
-        if (idx == SAMPLE_COUNT / 2) continue;
+        if (idx == median_idx) continue;
         allocator.free(r.result.latencies_ns);
     }
 

@@ -27,15 +27,22 @@ pub fn main(init: std.process.Init) !void {
     // Matrix: (2, 4, 8, 16) × (mutex, lockfree).
     // 16T is the published ceiling; contention on larger hosts is clamped
     // so the bench characterises contention rather than system saturation.
+    //
+    // INV-01 (docs/PERF_GAP_ANALYSIS.md): contention rows swing >= 20%
+    // across independent captures at 2T/4T under the default 7-run /
+    // median-of-6 pattern.  Widen to 15 runs / median-of-10 so the sample
+    // window covers ~3x the observed per-capture variance.  Cost is ~55s
+    // added per full bench-contention invocation (manual / main-gated).
+    const contention_runs: usize = 15;
     const specs = [_]common.ScenarioSpec{
-        .{ .name = "v7_contention_mutex_2T", .variant = "mutex", .thread_count = 2, .expected_iterations = per_thread_iters * 2, .runFn = runMutex2 },
-        .{ .name = "v7_contention_mutex_4T", .variant = "mutex", .thread_count = 4, .expected_iterations = per_thread_iters * 4, .runFn = runMutex4 },
-        .{ .name = "v7_contention_mutex_8T", .variant = "mutex", .thread_count = 8, .expected_iterations = per_thread_iters * 8, .runFn = runMutex8 },
-        .{ .name = "v7_contention_mutex_16T", .variant = "mutex", .thread_count = 16, .expected_iterations = per_thread_iters * 16, .runFn = runMutex16 },
-        .{ .name = "v7_contention_lockfree_2T", .variant = "lockfree", .thread_count = 2, .expected_iterations = per_thread_iters * 2, .runFn = runLockfree2 },
-        .{ .name = "v7_contention_lockfree_4T", .variant = "lockfree", .thread_count = 4, .expected_iterations = per_thread_iters * 4, .runFn = runLockfree4 },
-        .{ .name = "v7_contention_lockfree_8T", .variant = "lockfree", .thread_count = 8, .expected_iterations = per_thread_iters * 8, .runFn = runLockfree8 },
-        .{ .name = "v7_contention_lockfree_16T", .variant = "lockfree", .thread_count = 16, .expected_iterations = per_thread_iters * 16, .runFn = runLockfree16 },
+        .{ .name = "v7_contention_mutex_2T", .variant = "mutex", .thread_count = 2, .expected_iterations = per_thread_iters * 2, .runFn = runMutex2, .run_count = contention_runs },
+        .{ .name = "v7_contention_mutex_4T", .variant = "mutex", .thread_count = 4, .expected_iterations = per_thread_iters * 4, .runFn = runMutex4, .run_count = contention_runs },
+        .{ .name = "v7_contention_mutex_8T", .variant = "mutex", .thread_count = 8, .expected_iterations = per_thread_iters * 8, .runFn = runMutex8, .run_count = contention_runs },
+        .{ .name = "v7_contention_mutex_16T", .variant = "mutex", .thread_count = 16, .expected_iterations = per_thread_iters * 16, .runFn = runMutex16, .run_count = contention_runs },
+        .{ .name = "v7_contention_lockfree_2T", .variant = "lockfree", .thread_count = 2, .expected_iterations = per_thread_iters * 2, .runFn = runLockfree2, .run_count = contention_runs },
+        .{ .name = "v7_contention_lockfree_4T", .variant = "lockfree", .thread_count = 4, .expected_iterations = per_thread_iters * 4, .runFn = runLockfree4, .run_count = contention_runs },
+        .{ .name = "v7_contention_lockfree_8T", .variant = "lockfree", .thread_count = 8, .expected_iterations = per_thread_iters * 8, .runFn = runLockfree8, .run_count = contention_runs },
+        .{ .name = "v7_contention_lockfree_16T", .variant = "lockfree", .thread_count = 16, .expected_iterations = per_thread_iters * 16, .runFn = runLockfree16, .run_count = contention_runs },
     };
     try common.runScenarios(allocator, init.io, &specs, output);
 }
