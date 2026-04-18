@@ -18,9 +18,15 @@ pub const Error = uuid_pkg.Error;
 /// Marshal a UUID to a `json.Value.str` with the canonical lowercase string.
 /// The returned `.str` is heap-allocated with `allocator`; caller must free
 /// (typically via `json.Value.deinit`).
+///
+/// PERF-25: one-pass encode — allocates the 36-byte heap slice up-front and
+/// writes the canonical string directly into it, skipping the previous
+/// stack-encode-then-`allocator.dupe` copy.
 pub fn uuidJsonMarshal(self: UUID, allocator: std.mem.Allocator) !json.Value {
-    var buf: [36]u8 = undefined;
-    return .{ .str = try allocator.dupe(u8, self.toString(&buf)) };
+    const out = try allocator.alloc(u8, 36);
+    errdefer allocator.free(out);
+    _ = self.toString(out[0..36]);
+    return .{ .str = out };
 }
 
 /// Parse a UUID from a `json.Value.str`. Returns `Error.InvalidFormat` if
@@ -34,10 +40,15 @@ pub fn uuidJsonUnmarshal(allocator: std.mem.Allocator, v: json.Value) !UUID {
 
 /// Marshal a NullUUID. Emits JSON null when invalid, canonical UUID string
 /// when valid. String payload is heap-allocated with `allocator`.
+///
+/// PERF-25: valid branch is one-pass — allocates the 36-byte heap slice and
+/// writes the canonical string directly into it (no stack buffer + dupe).
 pub fn nullUuidJsonMarshal(self: NullUUID, allocator: std.mem.Allocator) !json.Value {
     if (!self.valid) return .null;
-    var buf: [36]u8 = undefined;
-    return .{ .str = try allocator.dupe(u8, self.uuid.toString(&buf)) };
+    const out = try allocator.alloc(u8, 36);
+    errdefer allocator.free(out);
+    _ = self.uuid.toString(out[0..36]);
+    return .{ .str = out };
 }
 
 /// Parse a NullUUID. Accepts JSON null or a canonical UUID string.
