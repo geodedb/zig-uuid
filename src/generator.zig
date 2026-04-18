@@ -1405,6 +1405,10 @@ pub const Generator = struct {
         // most filesystems do not implicitly fsync directory mtime
         // updates.
         //
+        // TODO(zig-0.17+): replace this whole wrapper with
+        // `std.Io.Dir.sync(io)` once upstream Zig exposes it.  Tracked
+        // so `grep TODO` surfaces this when the workaround can go.
+        //
         // std.Io.Dir does not expose a sync() method in Zig 0.16, and
         // std.posix.fsync() is not exposed either.  The Dir/File handle
         // types are both std.posix.fd_t, so we reuse std.Io.File.sync()
