@@ -67,9 +67,15 @@ test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
 }
 
 test "Generator.loadState: V7 fast-restart forces mono_seq overflow (PERF-04)" {
-    // When the saved last_ms is in the future (or equal to now), the
+    // When the saved last_ms is equal to now (within NTP tolerance), the
     // conservative path activates: last_ms is kept, mono_seq = maxInt.
-    // SEC-R3-02: use tmpDir for test isolation.
+    //
+    // SEC-P3-02 note: the previous version of this test used
+    // last_ms = maxInt(i64) with the default clock, relying on the saved
+    // timestamp being far in the future.  That now trips the
+    // clock-rollback guard (any saved_ms > current_ms + 1s is rejected).
+    // We inject a clock matching the saved timestamp so the guard passes
+    // AND the fast-restart (else-branch) fires.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -77,8 +83,7 @@ test "Generator.loadState: V7 fast-restart forces mono_seq overflow (PERF-04)" {
     var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
 
-    // Use a far-future last_ms so that current_ms <= saved_ms always holds.
-    const far_future_ms: i64 = std.math.maxInt(i64);
+    const saved_ms: i64 = 1_700_000_000_000; // 2023-11-14 in ms
     var blob: [Generator.state_size]u8 = undefined;
     @memcpy(blob[0..4], &Generator.state_magic);
     blob[4] = Generator.state_format_version;
@@ -86,17 +91,24 @@ test "Generator.loadState: V7 fast-restart forces mono_seq overflow (PERF-04)" {
     std.mem.writeInt(u16, blob[6..8], 0, .little);
     std.mem.writeInt(u64, blob[8..16], 0, .little);
     @memset(blob[16..22], 0);
-    std.mem.writeInt(i64, blob[22..30], far_future_ms, .little);
+    std.mem.writeInt(i64, blob[22..30], saved_ms, .little);
     std.mem.writeInt(u16, blob[30..32], 0x0042, .little);
 
     const f = try std.Io.Dir.createFileAbsolute(std.Io.Threaded.global_single_threaded.io(), path, .{});
     try f.writePositionalAll(std.Io.Threaded.global_single_threaded.io(), &blob, 0);
     f.close(std.Io.Threaded.global_single_threaded.io());
 
-    var gen = Generator.init();
+    // Inject a clock equal to saved_ms so current_ms <= saved_ms AND the
+    // SEC-P3-02 rollback guard (saved_ms - current_ms > 1000) does not fire.
+    const same_ms_clock = struct {
+        fn clock() i128 {
+            return @as(i128, 1_700_000_000_000) * 1_000_000;
+        }
+    };
+    var gen = Generator.withClock(same_ms_clock.clock);
     try gen.loadState(path);
-    // Clock has NOT advanced past far_future_ms → conservative overflow.
-    try std.testing.expectEqual(far_future_ms, gen.last_ms);
+    // current_ms == saved_ms → conservative overflow branch fires.
+    try std.testing.expectEqual(saved_ms, gen.last_ms);
     try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
 }
 
@@ -338,6 +350,8 @@ test "Generator.loadState: rejects out-of-range last_v1_ts (SEC-R6-04)" {
 
 test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     // Inject a clock returning a value ≤ saved_ms → conservative overflow branch.
+    // SEC-P3-02: saved_ms must be within clock_rollback_tolerance_ms (1000)
+    // of current_ms; otherwise the rollback guard rejects the load.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -345,7 +359,7 @@ test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
 
-    const saved_ms: i64 = 9999;
+    const saved_ms: i64 = 1001;
     var blob: [Generator.state_size]u8 = undefined;
     @memcpy(blob[0..4], &Generator.state_magic);
     blob[4] = Generator.state_format_version;
@@ -360,7 +374,7 @@ test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     try f2.writePositionalAll(std.Io.Threaded.global_single_threaded.io(), &blob, 0);
     f2.close(std.Io.Threaded.global_single_threaded.io());
 
-    // Inject a clock returning 1ms (< saved_ms=9999) → conservative overflow.
+    // Inject a clock returning 1ms (< saved_ms=1001; diff=1000 ≤ tolerance).
     const past_clock = struct {
         fn clock() i128 {
             return 1 * 1_000_000; // 1ms in nanoseconds
@@ -473,6 +487,126 @@ test "Generator.loadState: saved_ms >= current_ms forces mono_seq overflow (QC-1
     // Fast-restart overflow branch: keep saved_ms, force counter to max.
     try std.testing.expectEqual(saved_ms, gen.last_ms);
     try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
+}
+
+// --- SEC-P3-02: loadState rejects future-dated state (clock-rollback guard) ---
+
+test "Generator.loadState: rejects last_ms beyond NTP tolerance (SEC-P3-02)" {
+    // SEC-P3-02 (CWE-367 / CWE-1240): a saved last_ms whose value is more
+    // than clock_rollback_tolerance_ms in the future relative to the clock
+    // indicates a rollback/replay attack or a corrupt persisted value.
+    // Accepting it would produce duplicate V7 UUIDs once the clock
+    // "catches up".  loadState must return Error.InvalidFormat.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // current_ms = 1_000 ms; saved_ms = 1_000 + 1001 = 2_001 → diff=1001 > 1000.
+    const current_ms: i64 = 1_000;
+    const saved_ms: i64 = current_ms + Generator.clock_rollback_tolerance_ms + 1;
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version;
+    blob[5] = 0x01;
+    std.mem.writeInt(u16, blob[6..8], 0, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], saved_ms, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+    try f.writePositionalAll(io, &blob, 0);
+    f.close(io);
+
+    const injected_clock = struct {
+        fn clock() i128 {
+            return @as(i128, 1_000) * 1_000_000; // 1s in ns
+        }
+    };
+    var gen = Generator.withClock(injected_clock.clock);
+    try std.testing.expectError(Error.InvalidFormat, gen.loadState(path));
+}
+
+test "Generator.loadState: accepts last_ms within NTP tolerance (SEC-P3-02)" {
+    // Same setup as the rejection test but with saved_ms exactly at the
+    // tolerance boundary (current + 1000).  diff == tolerance → NOT > → accepted.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    const current_ms: i64 = 1_000;
+    const saved_ms: i64 = current_ms + Generator.clock_rollback_tolerance_ms;
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version;
+    blob[5] = 0x01;
+    std.mem.writeInt(u16, blob[6..8], 0, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], saved_ms, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+    try f.writePositionalAll(io, &blob, 0);
+    f.close(io);
+
+    const injected_clock = struct {
+        fn clock() i128 {
+            return @as(i128, 1_000) * 1_000_000;
+        }
+    };
+    var gen = Generator.withClock(injected_clock.clock);
+    // Must NOT return an error.
+    try gen.loadState(path);
+    try std.testing.expectEqual(saved_ms, gen.last_ms);
+}
+
+test "Generator.loadState: clamps last_v1_ts to max(existing, persisted) (SEC-P3-02)" {
+    // SEC-P3-02 clamp: loadState must never rewind the V1/V6 monotonicity
+    // high-water mark.  If `self.last_v1_ts` is already ahead of the
+    // persisted value (e.g. caller generated some V1 UUIDs before loading,
+    // or two loadState calls with different files), keep the larger value.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // Persisted last_v1_ts = 1000 (small Gregorian value → converts to a
+    // very-negative Unix ms → passes the rollback guard trivially).
+    const persisted_v1_ts: u64 = 1_000;
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version;
+    blob[5] = 0x01;
+    std.mem.writeInt(u16, blob[6..8], 0, .little);
+    std.mem.writeInt(u64, blob[8..16], persisted_v1_ts, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], 0, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+    try f.writePositionalAll(io, &blob, 0);
+    f.close(io);
+
+    // Pre-populate the generator with a LARGER last_v1_ts than the file.
+    const pre_existing_v1_ts: u60 = 5_000;
+    var gen = Generator.init();
+    gen.last_v1_ts = pre_existing_v1_ts;
+    try gen.loadState(path);
+
+    // Clamp must keep the pre-existing (larger) value, not rewind to 1_000.
+    try std.testing.expectEqual(pre_existing_v1_ts, gen.last_v1_ts);
 }
 
 // --- SEC-P3-03: saveState produces a file with mode 0o600 ---

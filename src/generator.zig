@@ -729,6 +729,14 @@ pub const Generator = struct {
     pub const state_size_v1: usize = 22;
     pub const state_size: usize = 32;
 
+    /// SEC-P3-02: NTP-skew tolerance used by `loadState` when comparing the
+    /// persisted last_v1_ts / last_ms against the current wall clock. Saved
+    /// timestamps more than this many milliseconds in the future relative
+    /// to `self.clock()` are treated as clock-rollback / replay and
+    /// rejected with `Error.InvalidFormat`. 1000 ms accommodates typical
+    /// well-configured NTP skew without masking real rollbacks.
+    pub const clock_rollback_tolerance_ms: i64 = 1_000;
+
     /// Save generator state to stable storage (F-9, SEC-1, SEC-9, SEC-10).
     ///
     /// **`path` must be an absolute filesystem path** (e.g. `/var/lib/myapp/uuid.state`).
@@ -917,7 +925,34 @@ pub const Generator = struct {
         // a valid-looking timestamp.
         const raw_ts = std.mem.readInt(u64, buf[8..16], .little);
         if (raw_ts > std.math.maxInt(u60)) return Error.InvalidFormat;
-        self.last_v1_ts = @truncate(raw_ts);
+        const saved_v1_ts: u60 = @truncate(raw_ts);
+
+        // SEC-P3-02 (CWE-367 / CWE-1240): reject state files whose persisted
+        // V1/V6 timestamp is more than `clock_rollback_tolerance_ms` in the
+        // future relative to the current wall clock. A saved timestamp that
+        // far ahead of the clock indicates a clock-rollback attack (attacker
+        // replayed an old post-NTP-step state file) or a corrupt persisted
+        // value, either of which would lead to duplicate V1/V6 UUIDs once
+        // the clock catches up.
+        //
+        // The tolerance absorbs small NTP skew (<1s on well-configured
+        // hosts) without rejecting legitimate state files.
+        //
+        // Timestamp arithmetic: saved_v1_ts is in Gregorian 100-ns ticks
+        // (u60). Convert to Unix ms for comparison with current_ms.
+        const saved_v1_ms: i64 = (Timestamp{ .value = saved_v1_ts }).toUnixMs();
+        if (current_ms != 0 and saved_v1_ms > current_ms and
+            (saved_v1_ms - current_ms) > clock_rollback_tolerance_ms)
+        {
+            return Error.InvalidFormat;
+        }
+
+        // SEC-P3-02 clamp: max(existing, persisted). If loadState is called
+        // after some V1/V6 generation, or twice with different files, never
+        // accept a smaller value that would rewind the monotonicity guard.
+        if (saved_v1_ts > self.last_v1_ts) {
+            self.last_v1_ts = saved_v1_ts;
+        }
         if ((flags & 0x02) != 0) {
             self.node_cache = buf[16..22][0..6].*;
         } else {
@@ -927,6 +962,16 @@ pub const Generator = struct {
         // PERF-04 + SEC-10: restore V7 state only from version-2 files.
         if (buf[4] == state_format_version and n == state_size) {
             const saved_ms = std.mem.readInt(i64, buf[22..30], .little);
+            // SEC-P3-02: apply the same clock-rollback guard to V7 state.
+            // A saved last_ms far in the future relative to the current
+            // clock means either the clock stepped back (NTP, VM migration)
+            // or the state file is stale/tampered; either way accepting it
+            // would produce duplicate V7 UUIDs once the clock catches up.
+            if (current_ms != 0 and saved_ms > current_ms and
+                (saved_ms - current_ms) > clock_rollback_tolerance_ms)
+            {
+                return Error.InvalidFormat;
+            }
             if (current_ms > saved_ms) {
                 self.last_ms = 0;
                 self.mono_seq = 0;
