@@ -29,6 +29,8 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "v5_dns_long_latency", .expected_iterations = iters, .runFn = runV5Long },
         .{ .name = "v3_prehashed_short_latency", .variant = "prehashed", .expected_iterations = iters, .runFn = runV3PrehashedShort },
         .{ .name = "v5_prehashed_short_latency", .variant = "prehashed", .expected_iterations = iters, .runFn = runV5PrehashedShort },
+        .{ .name = "v3_prehashed_long_latency", .variant = "prehashed", .expected_iterations = iters, .runFn = runV3PrehashedLong },
+        .{ .name = "v5_prehashed_long_latency", .variant = "prehashed", .expected_iterations = iters, .runFn = runV5PrehashedLong },
     };
     try common.runScenarios(allocator, init.io, &specs, output);
 }
@@ -202,6 +204,63 @@ fn runV5PrehashedShort(allocator: std.mem.Allocator, _: std.Io) !common.RunResul
     while (i < iters) : (i += 1) {
         const t0 = common.nowNs();
         const u = pre.name(&names[@as(usize, @intCast(i % pool_size))]);
+        const t1 = common.nowNs();
+        sink ^= u.bytes[0];
+        if (i % sample_every == 0 and lat_idx < latencies.len) {
+            latencies[lat_idx] = t1 - t0;
+            lat_idx += 1;
+        }
+    }
+    const cpu_end = try common.processCpuTimeNs();
+    const end = common.nowNs();
+    std.mem.doNotOptimizeAway(sink);
+    return common.timedResult(iters, start, end, cpu_start, cpu_end, latencies);
+}
+
+// Long-name prehashed variants.  The naive long-name path (`runV3Long`)
+// re-absorbs the 16-byte namespace on every call; the prehashed path
+// amortises it.  With a 256-byte name the hash core dominates, so the
+// gap vs naive should be smaller than the short-name case — we report
+// both so the "when is prehashed worth it?" decision is data-driven.
+fn runV3PrehashedLong(allocator: std.mem.Allocator, _: std.Io) !common.RunResult {
+    var gen = uuid.Generator.init();
+    const pre = gen.initV3Namespace(uuid.namespace_dns);
+    const names = try buildLongNames(allocator);
+    const latencies = try allocator.alloc(u64, @as(usize, @intCast(iters / sample_every)));
+    var sink: u8 = 0;
+    const start = common.nowNs();
+    const cpu_start = try common.processCpuTimeNs();
+    var i: u64 = 0;
+    var lat_idx: usize = 0;
+    while (i < iters) : (i += 1) {
+        const t0 = common.nowNs();
+        const u = pre.name(names[@as(usize, @intCast(i % pool_size))]);
+        const t1 = common.nowNs();
+        sink ^= u.bytes[0];
+        if (i % sample_every == 0 and lat_idx < latencies.len) {
+            latencies[lat_idx] = t1 - t0;
+            lat_idx += 1;
+        }
+    }
+    const cpu_end = try common.processCpuTimeNs();
+    const end = common.nowNs();
+    std.mem.doNotOptimizeAway(sink);
+    return common.timedResult(iters, start, end, cpu_start, cpu_end, latencies);
+}
+
+fn runV5PrehashedLong(allocator: std.mem.Allocator, _: std.Io) !common.RunResult {
+    var gen = uuid.Generator.init();
+    const pre = gen.initV5Namespace(uuid.namespace_dns);
+    const names = try buildLongNames(allocator);
+    const latencies = try allocator.alloc(u64, @as(usize, @intCast(iters / sample_every)));
+    var sink: u8 = 0;
+    const start = common.nowNs();
+    const cpu_start = try common.processCpuTimeNs();
+    var i: u64 = 0;
+    var lat_idx: usize = 0;
+    while (i < iters) : (i += 1) {
+        const t0 = common.nowNs();
+        const u = pre.name(names[@as(usize, @intCast(i % pool_size))]);
         const t1 = common.nowNs();
         sink ^= u.bytes[0];
         if (i % sample_every == 0 and lat_idx < latencies.len) {
