@@ -40,15 +40,15 @@ test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
         }
     };
     var gen = Generator.withHWAddr(mock_hw.getHW);
-    gen.clock_seq = 0x1234;
-    gen.clock_seq_initialized = true;
-    gen.last_v1_ts = 0xDEADBEEF;
+    gen.v1v6.clock_seq = 0x1234;
+    gen.v1v6.clock_seq_initialized = true;
+    gen.v1v6.last_v1_ts = 0xDEADBEEF;
     // PERF-27: node_cache is now a split atomic-flag + bytes pair.
     gen.node_cache_bytes = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
     gen.node_cache_valid.store(true, .release);
     // SEC-10: set V7 state that should be persisted.
-    gen.last_ms = 1_700_000_000_123;
-    gen.mono_seq = 0x0ABC;
+    gen.v7.last_ms = 1_700_000_000_123;
+    gen.v7.mono_seq = 0x0ABC;
 
     try gen.saveState(path);
 
@@ -56,18 +56,18 @@ test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
     try gen2.loadState(path);
 
     // V1/V6 state preserved.
-    try std.testing.expectEqual(gen.clock_seq, gen2.clock_seq);
-    try std.testing.expectEqual(gen.clock_seq_initialized, gen2.clock_seq_initialized);
-    try std.testing.expectEqual(gen.last_v1_ts, gen2.last_v1_ts);
+    try std.testing.expectEqual(gen.v1v6.clock_seq, gen2.v1v6.clock_seq);
+    try std.testing.expectEqual(gen.v1v6.clock_seq_initialized, gen2.v1v6.clock_seq_initialized);
+    try std.testing.expectEqual(gen.v1v6.last_v1_ts, gen2.v1v6.last_v1_ts);
     try std.testing.expect(gen.node_cache_valid.load(.acquire));
     try std.testing.expect(gen2.node_cache_valid.load(.acquire));
     try std.testing.expectEqualSlices(u8, &gen.node_cache_bytes, &gen2.node_cache_bytes);
 
-    // PERF-04 + SEC-10: gen.last_ms (Nov 2023) is well in the past, so the
+    // PERF-04 + SEC-10: gen.v7.last_ms (Nov 2023) is well in the past, so the
     // clock-advance branch fires and both V7 fields are reset to zero.
     // No spin-wait penalty on the first post-restart V7 call.
-    try std.testing.expectEqual(@as(i64, 0), gen2.last_ms);
-    try std.testing.expectEqual(@as(u12, 0), gen2.mono_seq);
+    try std.testing.expectEqual(@as(i64, 0), gen2.v7.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen2.v7.mono_seq);
 }
 
 test "Generator.loadState: V7 fast-restart forces mono_seq overflow (PERF-04)" {
@@ -112,8 +112,8 @@ test "Generator.loadState: V7 fast-restart forces mono_seq overflow (PERF-04)" {
     var gen = Generator.withClock(same_ms_clock.clock);
     try gen.loadState(path);
     // current_ms == saved_ms → conservative overflow branch fires.
-    try std.testing.expectEqual(saved_ms, gen.last_ms);
-    try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
+    try std.testing.expectEqual(saved_ms, gen.v7.last_ms);
+    try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.v7.mono_seq);
 }
 
 test "Generator.saveState is atomic: no .tmp file lingers on success (SEC-9)" {
@@ -128,8 +128,8 @@ test "Generator.saveState is atomic: no .tmp file lingers on success (SEC-9)" {
     const tmp_path = try std.fmt.bufPrint(&tmp_path_buf, "{s}/state.bin.tmp", .{dir_path});
 
     var gen = Generator.init();
-    gen.clock_seq = 0x0042;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 0x0042;
+    gen.v1v6.clock_seq_initialized = true;
     try gen.saveState(path);
 
     // After a successful save the .tmp file must not exist.
@@ -188,10 +188,10 @@ test "Generator.loadState: v1 format (22 bytes) accepted for backward compat (SE
 
     var gen = Generator.init();
     try gen.loadState(path);
-    try std.testing.expectEqual(@as(u14, 0x0ABC), gen.clock_seq);
-    try std.testing.expect(gen.clock_seq_initialized);
+    try std.testing.expectEqual(@as(u14, 0x0ABC), gen.v1v6.clock_seq);
+    try std.testing.expect(gen.v1v6.clock_seq_initialized);
     // V7 state defaults to zero (no data in v1 blob).
-    try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
+    try std.testing.expectEqual(@as(i64, 0), gen.v7.last_ms);
 }
 
 test "Generator.saveState: symlink at .tmp path does not redirect write (SEC-R3-01)" {
@@ -222,8 +222,8 @@ test "Generator.saveState: symlink at .tmp path does not redirect write (SEC-R3-
     try std.Io.Dir.accessAbsolute(std.Io.Threaded.global_single_threaded.io(), tmp_path, .{});
 
     var gen = Generator.init();
-    gen.clock_seq = 0x0099;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 0x0099;
+    gen.v1v6.clock_seq_initialized = true;
 
     // saveState must succeed: it removes the symlink, creates a real file,
     // writes the state, and renames it into place.
@@ -236,8 +236,8 @@ test "Generator.saveState: symlink at .tmp path does not redirect write (SEC-R3-
     // The state must have been written correctly (round-trip load).
     var gen2 = Generator.init();
     try gen2.loadState(path);
-    try std.testing.expectEqual(gen.clock_seq, gen2.clock_seq);
-    try std.testing.expect(gen2.clock_seq_initialized);
+    try std.testing.expectEqual(gen.v1v6.clock_seq, gen2.v1v6.clock_seq);
+    try std.testing.expect(gen2.v1v6.clock_seq_initialized);
 }
 
 // --- SEC-R4-03: loadState rejects oversized state files ---
@@ -314,8 +314,8 @@ test "Generator.loadState: fast-restart branch uses injectable clock (QC-29)" {
     try gen.loadState(path);
 
     // Clock advanced past saved_ms → clean reset: last_ms=0, mono_seq=0.
-    try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
-    try std.testing.expectEqual(@as(u12, 0), gen.mono_seq);
+    try std.testing.expectEqual(@as(i64, 0), gen.v7.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen.v7.mono_seq);
 }
 
 // --- SEC-R6-04: loadState rejects out-of-range last_v1_ts ---
@@ -388,8 +388,8 @@ test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     try gen.loadState(path);
 
     // Clock has NOT advanced past saved_ms → keep saved_ms, overflow mono_seq.
-    try std.testing.expectEqual(saved_ms, gen.last_ms);
-    try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
+    try std.testing.expectEqual(saved_ms, gen.v7.last_ms);
+    try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.v7.mono_seq);
 }
 
 // --- QC-101: loadState v1→v2 upgrade path + fast-restart within-same-ms ---
@@ -437,12 +437,12 @@ test "Generator.loadState: v1 blob with injected clock zeroes V7 state (QC-101)"
     try gen.loadState(path);
 
     // V1/V6 state loaded from blob:
-    try std.testing.expectEqual(@as(u14, 0x0ABC), gen.clock_seq);
-    try std.testing.expect(gen.clock_seq_initialized);
+    try std.testing.expectEqual(@as(u14, 0x0ABC), gen.v1v6.clock_seq);
+    try std.testing.expect(gen.v1v6.clock_seq_initialized);
     // V7 state must be zero (no data in a v1 blob; loadState skips the
     // version-2-only restore branch).
-    try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
-    try std.testing.expectEqual(@as(u12, 0), gen.mono_seq);
+    try std.testing.expectEqual(@as(i64, 0), gen.v7.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen.v7.mono_seq);
 }
 
 test "Generator.loadState: saved_ms >= current_ms forces mono_seq overflow (QC-101)" {
@@ -489,8 +489,8 @@ test "Generator.loadState: saved_ms >= current_ms forces mono_seq overflow (QC-1
     try gen.loadState(path);
 
     // Fast-restart overflow branch: keep saved_ms, force counter to max.
-    try std.testing.expectEqual(saved_ms, gen.last_ms);
-    try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
+    try std.testing.expectEqual(saved_ms, gen.v7.last_ms);
+    try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.v7.mono_seq);
 }
 
 // --- SEC-P3-01: Generator.reseed() resets CSPRNG-derived cached state ---
@@ -504,11 +504,11 @@ test "Generator.reseed: clears clock_seq / mono_seq / node_cache (SEC-P3-01)" {
     // cached state.
     var gen = Generator.init();
     // Pre-populate every cached field the way an active generator would.
-    gen.clock_seq = 0x1234;
-    gen.clock_seq_initialized = true;
-    gen.last_v1_ts = 0xDEAD_BEEF;
-    gen.last_ms = 1_700_000_000_000;
-    gen.mono_seq = 0x0ABC;
+    gen.v1v6.clock_seq = 0x1234;
+    gen.v1v6.clock_seq_initialized = true;
+    gen.v1v6.last_v1_ts = 0xDEAD_BEEF;
+    gen.v7.last_ms = 1_700_000_000_000;
+    gen.v7.mono_seq = 0x0ABC;
     // PERF-27: node_cache is the split atomic-flag + bytes pair.
     gen.node_cache_bytes = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
     gen.node_cache_valid.store(true, .release);
@@ -516,11 +516,11 @@ test "Generator.reseed: clears clock_seq / mono_seq / node_cache (SEC-P3-01)" {
 
     gen.reseed();
 
-    try std.testing.expectEqual(@as(u14, 0), gen.clock_seq);
-    try std.testing.expect(!gen.clock_seq_initialized);
-    try std.testing.expectEqual(@as(u60, 0), gen.last_v1_ts);
-    try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
-    try std.testing.expectEqual(@as(u12, 0), gen.mono_seq);
+    try std.testing.expectEqual(@as(u14, 0), gen.v1v6.clock_seq);
+    try std.testing.expect(!gen.v1v6.clock_seq_initialized);
+    try std.testing.expectEqual(@as(u60, 0), gen.v1v6.last_v1_ts);
+    try std.testing.expectEqual(@as(i64, 0), gen.v7.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen.v7.mono_seq);
     try std.testing.expect(!gen.node_cache_valid.load(.acquire));
     try std.testing.expect(gen.last_node == null);
 }
@@ -529,8 +529,8 @@ test "Generator.reseed: subsequent V4/V7 calls still succeed (SEC-P3-01)" {
     // After reseed, the generator must still function — no latent state
     // corruption that breaks generation.
     var gen = Generator.init();
-    gen.clock_seq = 0x1234;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 0x1234;
+    gen.v1v6.clock_seq_initialized = true;
     gen.reseed();
 
     const uv4 = try gen.newV4();
@@ -617,12 +617,12 @@ test "Generator.loadState: accepts last_ms within NTP tolerance (SEC-P3-02)" {
     var gen = Generator.withClock(injected_clock.clock);
     // Must NOT return an error.
     try gen.loadState(path);
-    try std.testing.expectEqual(saved_ms, gen.last_ms);
+    try std.testing.expectEqual(saved_ms, gen.v7.last_ms);
 }
 
 test "Generator.loadState: clamps last_v1_ts to max(existing, persisted) (SEC-P3-02)" {
     // SEC-P3-02 clamp: loadState must never rewind the V1/V6 monotonicity
-    // high-water mark.  If `self.last_v1_ts` is already ahead of the
+    // high-water mark.  If `self.v1v6.last_v1_ts` is already ahead of the
     // persisted value (e.g. caller generated some V1 UUIDs before loading,
     // or two loadState calls with different files), keep the larger value.
     var tmp = std.testing.tmpDir(.{});
@@ -653,11 +653,11 @@ test "Generator.loadState: clamps last_v1_ts to max(existing, persisted) (SEC-P3
     // Pre-populate the generator with a LARGER last_v1_ts than the file.
     const pre_existing_v1_ts: u60 = 5_000;
     var gen = Generator.init();
-    gen.last_v1_ts = pre_existing_v1_ts;
+    gen.v1v6.last_v1_ts = pre_existing_v1_ts;
     try gen.loadState(path);
 
     // Clamp must keep the pre-existing (larger) value, not rewind to 1_000.
-    try std.testing.expectEqual(pre_existing_v1_ts, gen.last_v1_ts);
+    try std.testing.expectEqual(pre_existing_v1_ts, gen.v1v6.last_v1_ts);
 }
 
 // --- SEC-P3-03: saveState produces a file with mode 0o600 ---
@@ -686,8 +686,8 @@ test "Generator.saveState: result file has POSIX mode 0o600 (SEC-P3-03)" {
     defer _ = std.os.linux.syscall1(.umask, old_umask);
 
     var gen = Generator.init();
-    gen.clock_seq = 0x0099;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 0x0099;
+    gen.v1v6.clock_seq_initialized = true;
     try gen.saveState(path);
 
     // statx(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, STATX_MODE, &stx) and verify
@@ -754,11 +754,11 @@ test "Generator: v3 round-trip with HMAC key (SEC-P3-04)" {
     const key: [32]u8 = .{0xA5} ** 32;
 
     var gen = Generator.initOptions(.{ .state_mac_key = key });
-    gen.clock_seq = 0x0abc;
-    gen.clock_seq_initialized = true;
-    gen.last_v1_ts = 0xCAFEBABE;
-    gen.last_ms = 1_700_000_000_000;
-    gen.mono_seq = 0x0123;
+    gen.v1v6.clock_seq = 0x0abc;
+    gen.v1v6.clock_seq_initialized = true;
+    gen.v1v6.last_v1_ts = 0xCAFEBABE;
+    gen.v7.last_ms = 1_700_000_000_000;
+    gen.v7.mono_seq = 0x0123;
     try gen.saveState(path);
 
     // File length must be exactly v3 (64 bytes) and byte 4 = 3.
@@ -773,8 +773,8 @@ test "Generator: v3 round-trip with HMAC key (SEC-P3-04)" {
     // Round-trip: a second generator with the same key loads successfully.
     var gen2 = Generator.initOptions(.{ .state_mac_key = key });
     try gen2.loadState(path);
-    try std.testing.expectEqual(gen.clock_seq, gen2.clock_seq);
-    try std.testing.expectEqual(gen.last_v1_ts, gen2.last_v1_ts);
+    try std.testing.expectEqual(gen.v1v6.clock_seq, gen2.v1v6.clock_seq);
+    try std.testing.expectEqual(gen.v1v6.last_v1_ts, gen2.v1v6.last_v1_ts);
 }
 
 test "Generator: v3 with wrong key is rejected timing-safely (SEC-P3-04)" {
@@ -789,8 +789,8 @@ test "Generator: v3 with wrong key is rejected timing-safely (SEC-P3-04)" {
     const key_b: [32]u8 = .{0x5A} ** 32;
 
     var gen = Generator.initOptions(.{ .state_mac_key = key_a });
-    gen.clock_seq = 0xBEEF & 0x3FFF;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 0xBEEF & 0x3FFF;
+    gen.v1v6.clock_seq_initialized = true;
     try gen.saveState(path);
 
     // Wrong key → StateMacMismatch.
@@ -839,7 +839,7 @@ test "Generator: v2 file still loads when state_mac_key is set (SEC-P3-04 backwa
     const key: [32]u8 = .{0xA5} ** 32;
     var gen = Generator.initOptions(.{ .state_mac_key = key });
     try gen.loadState(path);
-    try std.testing.expectEqual(@as(u14, 0x1122), gen.clock_seq);
+    try std.testing.expectEqual(@as(u14, 0x1122), gen.v1v6.clock_seq);
 }
 
 test "Generator: secureWipeMacKey clears optional and destroys key material (SEC-P3-04 hygiene)" {

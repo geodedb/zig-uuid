@@ -330,15 +330,15 @@ test "module-level clearNodeCache operates on default_generator (QC-100)" {
 
 test "module-level reseed zeroes default_generator state (QC-100)" {
     // Pre-populate then call the module-level reseed wrapper.
-    gen_mod.default_generator.clock_seq = 0x1234;
-    gen_mod.default_generator.clock_seq_initialized = true;
-    gen_mod.default_generator.last_ms = 9_999;
-    gen_mod.default_generator.mono_seq = 0x0ABC;
+    gen_mod.default_generator.v1v6.clock_seq = 0x1234;
+    gen_mod.default_generator.v1v6.clock_seq_initialized = true;
+    gen_mod.default_generator.v7.last_ms = 9_999;
+    gen_mod.default_generator.v7.mono_seq = 0x0ABC;
     reseed();
-    try std.testing.expectEqual(@as(u14, 0), gen_mod.default_generator.clock_seq);
-    try std.testing.expect(!gen_mod.default_generator.clock_seq_initialized);
-    try std.testing.expectEqual(@as(i64, 0), gen_mod.default_generator.last_ms);
-    try std.testing.expectEqual(@as(u12, 0), gen_mod.default_generator.mono_seq);
+    try std.testing.expectEqual(@as(u14, 0), gen_mod.default_generator.v1v6.clock_seq);
+    try std.testing.expect(!gen_mod.default_generator.v1v6.clock_seq_initialized);
+    try std.testing.expectEqual(@as(i64, 0), gen_mod.default_generator.v7.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen_mod.default_generator.v7.mono_seq);
 }
 
 test "module-level initV3Namespace matches newV3 for the same namespace (QC-100)" {

@@ -476,8 +476,8 @@ test "RFC Appendix A.1 — V1 test vector (F-6)" {
         }
     };
     var gen = Generator.withHWAddr(mock_hw.getHW);
-    gen.clock_seq = 0x33C8;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 0x33C8;
+    gen.v1v6.clock_seq_initialized = true;
 
     const u = try gen.newV1AtTime(Timestamp{ .value = ts_val });
     var buf: [36]u8 = undefined;
@@ -498,8 +498,8 @@ test "RFC Appendix A.5 — V6 test vector (F-6)" {
         }
     };
     var gen = Generator.withHWAddr(mock_hw.getHW);
-    gen.clock_seq = 0x33C8;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 0x33C8;
+    gen.v1v6.clock_seq_initialized = true;
 
     const u = try gen.newV6AtTime(Timestamp{ .value = ts_val });
     var buf: [36]u8 = undefined;
@@ -520,7 +520,7 @@ test "RFC Appendix A.6 — V7 test vector (F-6)" {
         .pos = 0,
     };
     var gen = Generator.withRand(rfc_v7_mock_rand);
-    gen.last_ms = 0; // ensure new-ms branch (sets mono_seq from rand)
+    gen.v7.last_ms = 0; // ensure new-ms branch (sets mono_seq from rand)
 
     const ms: i64 = 0x017F22E279B0;
     const u = try gen.newV7AtTime(ms);
@@ -657,8 +657,8 @@ test "regression #216: V1 same-timestamp calls produce distinct clock_seq (V1)" 
     };
     var gen = Generator.withHWAddr(mock_hw.getHW);
     // Fix a known clock_seq so increments are predictable
-    gen.clock_seq = 100;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 100;
+    gen.v1v6.clock_seq_initialized = true;
 
     const fixed_ts = Timestamp{ .value = 1_000_000_000 };
 
@@ -688,8 +688,8 @@ test "regression #216: V6 same-timestamp calls produce distinct clock_seq (V6)" 
         }
     };
     var gen = Generator.withHWAddr(mock_hw.getHW);
-    gen.clock_seq = 200;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 200;
+    gen.v1v6.clock_seq_initialized = true;
 
     const fixed_ts = Timestamp{ .value = 2_000_000_000 };
 
@@ -719,8 +719,8 @@ test "regression #216: V1 concurrent same-timestamp — no duplicates" {
         }
     };
     var gen = Generator.withHWAddr(mock_hw.getHW);
-    gen.clock_seq = 0;
-    gen.clock_seq_initialized = true;
+    gen.v1v6.clock_seq = 0;
+    gen.v1v6.clock_seq_initialized = true;
 
     const fixed_ts = Timestamp{ .value = 9_999_999_999 };
 
@@ -814,8 +814,8 @@ test "Generator.newV7: spin-wait terminates with frozen clock (SEC-R5-03)" {
     // First call sets last_ms = frozen_ms and seeds mono_seq with random jitter.
     _ = try gen.newV7();
     // Now force last_ms to frozen_ms and mono_seq to maxInt to trigger spin-wait.
-    gen.last_ms = frozen_ms;
-    gen.mono_seq = std.math.maxInt(u12);
+    gen.v7.last_ms = frozen_ms;
+    gen.v7.mono_seq = std.math.maxInt(u12);
     // The clock is still frozen, so the spin-wait can never advance past last_ms.
     // After max_spins iterations it must return InvalidTimestamp, not hang.
     try std.testing.expectError(Error.InvalidTimestamp, gen.newV7());

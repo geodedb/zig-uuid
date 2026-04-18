@@ -188,32 +188,39 @@ pub const Generator = struct {
     // v1v6_mutex.  saveState/loadState acquire both in fixed order
     // (v7_mutex first, then v1v6_mutex) to prevent deadlock.
 
-    // PERF-29: cache-line-align the V7 state cluster so its fields do not
-    // share a 64-byte line with the V1/V6 cluster below.  Without this
-    // alignment, a pair of threads — one minting V7 UUIDs, one minting
-    // V1/V6 UUIDs — can false-share the same cache line even though they
-    // hold independent mutexes, stalling both paths on MESI ping-pong.
-    // 64 bytes matches the line size on every modern server ISA
-    // (x86_64, arm64, power9); for smaller embedded targets this is
-    // over-aligned but harmless.
+    // PERF-29 / PERF-33: V7 and V1/V6 monotonicity state live in
+    // nested `align(64)` structs so Zig's field-reorder pass cannot
+    // pack small-aligned fields from either cluster across the
+    // cache-line boundary.  The earlier `[0]u8 align(64)` separator
+    // was insufficient — the compiler treated zero-size fields as
+    // no-storage and happily hoisted `v1v6_mutex`, `clock_seq`,
+    // `last_v1_ts` into the tail of the V7 line.  Nested structs
+    // create a hard boundary that reorder cannot cross.
+    //
+    // The order of fields inside each cluster keeps the cluster's
+    // total footprint ≤ 64 bytes so the mutex and its protected
+    // small fields share one line (intra-cluster co-location is
+    // desirable; inter-cluster is the regression we guard against).
+    //
+    // The witness is `test "PERF-34: V7 and V1V6 clusters occupy
+    // distinct cache lines"` in generator_test.zig — if the layout
+    // ever regresses, the test fails at compile-time-evaluated
+    // @offsetOf and the build stops.
 
-    // V7 monotonicity state (protected by v7_mutex)
-    v7_mutex: std.Io.Mutex align(64) = std.Io.Mutex.init,
-    last_ms: i64 = 0,
-    mono_seq: u12 = 0,
+    /// V7 monotonicity state (protected by `v7.mutex`).
+    v7: struct {
+        mutex: std.Io.Mutex align(64) = std.Io.Mutex.init,
+        last_ms: i64 = 0,
+        mono_seq: u12 = 0,
+    } align(64) = .{},
 
-    // PERF-29: pad the V1/V6 cluster onto its own 64-byte-aligned
-    // boundary so it cannot share a cache line with the V7 cluster
-    // above.  The zero-size aligned field is free at runtime (no storage)
-    // but forces the compiler to bump the next field's offset up to the
-    // alignment.
-    _v1v6_pad: [0]u8 align(64) = .{},
-
-    // V1/V6 shared clock state (protected by v1v6_mutex; F-8: documented above)
-    v1v6_mutex: std.Io.Mutex = std.Io.Mutex.init,
-    clock_seq: u14 = 0,
-    clock_seq_initialized: bool = false,
-    last_v1_ts: u60 = 0,
+    /// V1/V6 shared clock state (protected by `v1v6.mutex`; F-8).
+    v1v6: struct {
+        mutex: std.Io.Mutex align(64) = std.Io.Mutex.init,
+        clock_seq: u14 = 0,
+        clock_seq_initialized: bool = false,
+        last_v1_ts: u60 = 0,
+    } align(64) = .{},
 
     /// Cached node ID for V1/V6 generation (F-4 + F-6/G-6).
     ///
@@ -402,8 +409,8 @@ pub const Generator = struct {
     /// writes node_cache under the same mutex).  Without this lock, a race
     /// exists between clearNodeCache and any in-flight V1/V6 generation.
     pub fn clearNodeCache(self: *Generator) void {
-        self.v1v6_mutex.lockUncancelable(gio());
-        defer self.v1v6_mutex.unlock(gio());
+        self.v1v6.mutex.lockUncancelable(gio());
+        defer self.v1v6.mutex.unlock(gio());
         self.clearNodeCacheLocked();
     }
 
@@ -431,15 +438,15 @@ pub const Generator = struct {
     /// injection points — those remain pointer-stable across fork by
     /// virtue of being code addresses.
     pub fn reseed(self: *Generator) void {
-        self.v7_mutex.lockUncancelable(gio());
-        defer self.v7_mutex.unlock(gio());
-        self.v1v6_mutex.lockUncancelable(gio());
-        defer self.v1v6_mutex.unlock(gio());
-        self.clock_seq = 0;
-        self.clock_seq_initialized = false; // forces CSPRNG re-sample on next V1/V6
-        self.last_v1_ts = 0;
-        self.last_ms = 0;
-        self.mono_seq = 0;
+        self.v7.mutex.lockUncancelable(gio());
+        defer self.v7.mutex.unlock(gio());
+        self.v1v6.mutex.lockUncancelable(gio());
+        defer self.v1v6.mutex.unlock(gio());
+        self.v1v6.clock_seq = 0;
+        self.v1v6.clock_seq_initialized = false; // forces CSPRNG re-sample on next V1/V6
+        self.v1v6.last_v1_ts = 0;
+        self.v7.last_ms = 0;
+        self.v7.mono_seq = 0;
         self.clearNodeCacheLocked(); // forces node re-fetch (and re-randomise if default)
         self.last_node = null;
     }
@@ -498,16 +505,16 @@ pub const Generator = struct {
 
         // PERF-07: Read clock inside the mutex to use the freshest possible
         // timestamp and avoid stale-timestamp collisions under high contention.
-        self.v7_mutex.lockUncancelable(gio());
+        self.v7.mutex.lockUncancelable(gio());
         var ms = clockToMs(self.clockCall()) catch |err| {
-            self.v7_mutex.unlock(gio());
+            self.v7.mutex.unlock(gio());
             return err;
         };
         // SEC-R14-02 (CWE-1284): If the system clock jumped backward (NTP
         // correction, VM migration), preserve last_ms to maintain V7 k-sortable
         // monotonicity.  This only applies to clock-derived timestamps; user-
         // provided timestamps via newV7AtTime are accepted as-is.
-        if (ms < self.last_ms) ms = self.last_ms;
+        if (ms < self.v7.last_ms) ms = self.v7.last_ms;
         return self.newV7Locked(ms);
     }
 
@@ -577,7 +584,7 @@ pub const Generator = struct {
     /// delegate to the mutex path — the two paths maintain independent
     /// sequence state and mixing them would produce a non-monotonic
     /// stream (the lockfree state at (M, 0xFFF) is invisible to the
-    /// mutex's self.mono_seq, and vice versa).  Instead the lockfree
+    /// mutex's self.v7.mono_seq, and vice versa).  Instead the lockfree
     /// path spin-sleeps to the next ms boundary under a short sleep per
     /// iteration, re-reads the clock, and retries the CAS.  This keeps
     /// the lockfree path self-contained and preserves monotonicity.
@@ -697,7 +704,7 @@ pub const Generator = struct {
     /// - `Error.RandomError` — the CSPRNG source failed.
     pub fn newV7AtTime(self: *Generator, ts: i64) Error!UUID {
         if (ts < 0) return Error.InvalidTimestamp; // QC-2: same error as newV7 for same condition
-        self.v7_mutex.lockUncancelable(gio());
+        self.v7.mutex.lockUncancelable(gio());
         return self.newV7Locked(ts);
     }
 
@@ -752,7 +759,7 @@ pub const Generator = struct {
     /// with a single `defer unlock()`, returning the committed `(ms, seq)`
     /// pair. Caller must hold `v7_mutex` on entry.
     fn newV7LockedInner(self: *Generator, ts: i64) Error!struct { ms: i64, seq: u12 } {
-        defer self.v7_mutex.unlock(gio());
+        defer self.v7.mutex.unlock(gio());
 
         var ms = ts;
 
@@ -770,7 +777,7 @@ pub const Generator = struct {
         // speeds; exceeding this bound is treated as an invalid/frozen clock.
         const max_spins: usize = 4096;
         var spins: usize = 0;
-        while (ms == self.last_ms and self.mono_seq == std.math.maxInt(u12)) {
+        while (ms == self.v7.last_ms and self.v7.mono_seq == std.math.maxInt(u12)) {
             spins += 1;
             if (spins > max_spins) {
                 return Error.InvalidTimestamp;
@@ -785,12 +792,12 @@ pub const Generator = struct {
             // InvalidTimestamp if the value is out of range.
             ms = try clockToMs(ns_now);
             // SEC-R14-02: clamp backward clock to preserve monotonicity
-            if (ms < self.last_ms) ms = self.last_ms;
+            if (ms < self.v7.last_ms) ms = self.v7.last_ms;
 
             // If the clock has already advanced past last_ms (or another
             // thread reset mono_seq), skip the sleep — the while condition
             // will exit on the next check.
-            if (ms != self.last_ms or self.mono_seq != std.math.maxInt(u12)) break;
+            if (ms != self.v7.last_ms or self.v7.mono_seq != std.math.maxInt(u12)) break;
 
             // Compute nanoseconds remaining in the current millisecond.
             // @rem(ns_now, 1_000_000) gives the fraction within [0, 999_999];
@@ -804,9 +811,9 @@ pub const Generator = struct {
             // re-acquire before the next loop iteration (and before the
             // `defer unlock` at function exit).
             const io_h = gio();
-            self.v7_mutex.unlock(io_h);
+            self.v7.mutex.unlock(io_h);
             io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .real) catch {};
-            self.v7_mutex.lockUncancelable(io_h);
+            self.v7.mutex.lockUncancelable(io_h);
         }
 
         // Single branch: same-ms increment OR new-ms reset. seq is always assigned.
@@ -814,17 +821,17 @@ pub const Generator = struct {
         // before calling this function (SEC-R14-02), and the spin-wait loop applies
         // the same clamp after each clock re-read.
         var seq: u12 = undefined;
-        if (ms == self.last_ms) {
+        if (ms == self.v7.last_ms) {
             // Same ms: increment (the spin-wait above guarantees mono_seq < maxInt).
-            self.mono_seq += 1;
-            seq = self.mono_seq;
+            self.v7.mono_seq += 1;
+            seq = self.v7.mono_seq;
         } else {
             // New ms: seed mono_seq with random jitter (RFC-9562 §6.2).
             var rand_seq: [2]u8 = undefined;
             self.randCall(&rand_seq) catch return Error.RandomError;
-            self.mono_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
-            seq = self.mono_seq;
-            self.last_ms = ms;
+            self.v7.mono_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
+            seq = self.v7.mono_seq;
+            self.v7.last_ms = ms;
         }
 
         return .{ .ms = ms, .seq = seq };
@@ -836,11 +843,11 @@ pub const Generator = struct {
     /// silently using the hardcoded constant 0x1234.  RFC-9562 §6.1 MUST:
     /// "The clock sequence MUST be originally initialized to a random number."
     fn initClockSeq(self: *Generator) Error!void {
-        if (self.clock_seq_initialized) return;
+        if (self.v1v6.clock_seq_initialized) return;
         var buf: [2]u8 = undefined;
         self.randCall(&buf) catch return Error.RandomError;
-        self.clock_seq = @truncate(std.mem.readInt(u16, &buf, .little) & 0x3FFF);
-        self.clock_seq_initialized = true;
+        self.v1v6.clock_seq = @truncate(std.mem.readInt(u16, &buf, .little) & 0x3FFF);
+        self.v1v6.clock_seq_initialized = true;
     }
 
     /// Return the node ID for V1/V6 UUIDs, respecting the caching and change-
@@ -906,17 +913,17 @@ pub const Generator = struct {
         ts: Timestamp,
         prefetched: ?[6]u8,
     ) Error!struct { t: u60, node: [6]u8, clock_seq: u14 } {
-        self.v1v6_mutex.lockUncancelable(gio());
-        defer self.v1v6_mutex.unlock(gio());
+        self.v1v6.mutex.lockUncancelable(gio());
+        defer self.v1v6.mutex.unlock(gio());
         try self.initClockSeq(); // F-3: propagate CSPRNG failure
         // Increment clock_seq on clock regression OR same-timestamp call (RFC-9562 §6.1).
         // Using <= (not <) ensures concurrent/repeated calls at identical timestamps
         // each get a unique clock_seq, preventing duplicate UUID production.
         // This fixes the same-timestamp uniqueness bug (gofrs/uuid #216).
-        if (ts.value <= self.last_v1_ts) {
-            self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
+        if (ts.value <= self.v1v6.last_v1_ts) {
+            self.v1v6.clock_seq = (self.v1v6.clock_seq +% 1) & 0x3FFF;
         }
-        self.last_v1_ts = ts.value;
+        self.v1v6.last_v1_ts = ts.value;
         // Populate cache under lock if it was empty (double-check for concurrent warmup).
         // PERF-27: hasNodeCache reads the atomic flag under the lock (.acquire
         // is strictly stronger than needed here but cheap on x86/arm64).
@@ -928,11 +935,11 @@ pub const Generator = struct {
         const node = try self.getNode(); // guaranteed cache hit after the block above
         if (old_node) |on| {
             if (!std.mem.eql(u8, &on, &node)) {
-                self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
+                self.v1v6.clock_seq = (self.v1v6.clock_seq +% 1) & 0x3FFF;
             }
         }
         self.last_node = node;
-        return .{ .t = ts.value, .node = node, .clock_seq = self.clock_seq };
+        return .{ .t = ts.value, .node = node, .clock_seq = self.v1v6.clock_seq };
     }
 
     /// Generate a UUIDv1 (Gregorian timestamp + node ID).
@@ -1297,22 +1304,22 @@ pub const Generator = struct {
         else
             state_format_version_v2;
         {
-            self.v7_mutex.lockUncancelable(gio());
-            defer self.v7_mutex.unlock(gio());
-            self.v1v6_mutex.lockUncancelable(gio());
-            defer self.v1v6_mutex.unlock(gio());
+            self.v7.mutex.lockUncancelable(gio());
+            defer self.v7.mutex.unlock(gio());
+            self.v1v6.mutex.lockUncancelable(gio());
+            defer self.v1v6.mutex.unlock(gio());
 
             @memcpy(buf[0..4], &state_magic);
             buf[4] = write_version; // 2 or 3
 
             var flags: u8 = 0;
-            if (self.clock_seq_initialized) flags |= 0x01;
+            if (self.v1v6.clock_seq_initialized) flags |= 0x01;
             const has_node = self.hasNodeCache();
             if (has_node) flags |= 0x02;
             buf[5] = flags;
 
-            std.mem.writeInt(u16, buf[6..8], @as(u16, self.clock_seq), .little);
-            std.mem.writeInt(u64, buf[8..16], @as(u64, self.last_v1_ts), .little);
+            std.mem.writeInt(u16, buf[6..8], @as(u16, self.v1v6.clock_seq), .little);
+            std.mem.writeInt(u64, buf[8..16], @as(u64, self.v1v6.last_v1_ts), .little);
             if (has_node) {
                 const bytes = self.loadNodeCacheBytes();
                 @memcpy(buf[16..22], &bytes);
@@ -1320,8 +1327,8 @@ pub const Generator = struct {
                 @memset(buf[16..22], 0);
             }
             // SEC-10: persist V7 state.
-            std.mem.writeInt(i64, buf[22..30], self.last_ms, .little);
-            std.mem.writeInt(u16, buf[30..32], @as(u16, self.mono_seq), .little);
+            std.mem.writeInt(i64, buf[22..30], self.v7.last_ms, .little);
+            std.mem.writeInt(u16, buf[30..32], @as(u16, self.v7.mono_seq), .little);
         }
 
         // SEC-P3-04: compute and append HMAC-SHA256 over the payload if a
@@ -1495,14 +1502,14 @@ pub const Generator = struct {
         const current_ms: i64 = clockToMs(self.clockCall()) catch 0;
 
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
-        self.v7_mutex.lockUncancelable(gio());
-        defer self.v7_mutex.unlock(gio());
-        self.v1v6_mutex.lockUncancelable(gio());
-        defer self.v1v6_mutex.unlock(gio());
+        self.v7.mutex.lockUncancelable(gio());
+        defer self.v7.mutex.unlock(gio());
+        self.v1v6.mutex.lockUncancelable(gio());
+        defer self.v1v6.mutex.unlock(gio());
 
         const flags = buf[5];
-        self.clock_seq = @truncate(std.mem.readInt(u16, buf[6..8], .little) & 0x3FFF);
-        self.clock_seq_initialized = (flags & 0x01) != 0;
+        self.v1v6.clock_seq = @truncate(std.mem.readInt(u16, buf[6..8], .little) & 0x3FFF);
+        self.v1v6.clock_seq_initialized = (flags & 0x01) != 0;
         // SEC-R6-04: Reject out-of-range last_v1_ts rather than truncating
         // silently.  A u64 value above maxInt(u60) indicates a corrupt or
         // tampered state file; return InvalidFormat instead of truncating to
@@ -1534,8 +1541,8 @@ pub const Generator = struct {
         // SEC-P3-02 clamp: max(existing, persisted). If loadState is called
         // after some V1/V6 generation, or twice with different files, never
         // accept a smaller value that would rewind the monotonicity guard.
-        if (saved_v1_ts > self.last_v1_ts) {
-            self.last_v1_ts = saved_v1_ts;
+        if (saved_v1_ts > self.v1v6.last_v1_ts) {
+            self.v1v6.last_v1_ts = saved_v1_ts;
         }
         if ((flags & 0x02) != 0) {
             self.storeNodeCache(buf[16..22][0..6].*);
@@ -1561,11 +1568,11 @@ pub const Generator = struct {
                 return Error.InvalidFormat;
             }
             if (current_ms > saved_ms) {
-                self.last_ms = 0;
-                self.mono_seq = 0;
+                self.v7.last_ms = 0;
+                self.v7.mono_seq = 0;
             } else {
-                self.last_ms = saved_ms;
-                self.mono_seq = std.math.maxInt(u12);
+                self.v7.last_ms = saved_ms;
+                self.v7.mono_seq = std.math.maxInt(u12);
             }
         }
     }

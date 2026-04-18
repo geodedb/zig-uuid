@@ -100,12 +100,12 @@ fn runStateBench(
                 var gen = uuid.Generator.init();
                 try gen.loadState(path);
                 // last_v1_ts is u60 — truncating keeps the bench loop observable.
-                sink ^= @as(u8, @truncate(gen.last_v1_ts));
+                sink ^= @as(u8, @truncate(gen.v1v6.last_v1_ts));
             },
             .load_v3 => {
                 var gen = uuid.Generator.initOptions(.{ .state_mac_key = key_a });
                 try gen.loadState(path);
-                sink ^= @as(u8, @truncate(gen.last_v1_ts));
+                sink ^= @as(u8, @truncate(gen.v1v6.last_v1_ts));
             },
             .load_v3_wrong_key => {
                 var gen = uuid.Generator.initOptions(.{ .state_mac_key = key_b });
