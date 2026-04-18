@@ -464,6 +464,13 @@ fn v7ContentionWorker(ctx: *V7ContentionCtx) void {
 }
 
 fn benchV7Contention() !void {
+    // PERF-22: mutex path. PERF-21: lockfree path. Both run with the same
+    // thread count / iters so their ops/s numbers are directly comparable.
+    try benchV7ContentionOnce(false);
+    try benchV7ContentionOnce(true);
+}
+
+fn benchV7ContentionOnce(lockfree: bool) !void {
     const thread_count_raw: usize = std.Thread.getCpuCount() catch 8;
     // Clamp to a reasonable upper bound so wildly-large CPU counts (e.g.,
     // 256-core servers) do not produce misleading numbers dominated by
@@ -471,8 +478,16 @@ fn benchV7Contention() !void {
     // not system saturation.
     const thread_count: usize = if (thread_count_raw > 32) 32 else thread_count_raw;
 
-    var shared_gen = uuid.Generator.init();
-    var alloc_buf: [32 * (@sizeOf(V7ContentionCtx) + @sizeOf(std.Thread))]u8 = undefined;
+    var shared_gen = if (lockfree)
+        uuid.Generator.initOptions(.{ .v7_lockfree = true })
+    else
+        uuid.Generator.init();
+    // PERF-21: doubled capacity so this function can run twice back-to-back
+    // (mutex + lockfree) without FBA exhaustion when per-thread scratch
+    // grows above nominal. Each call uses its own local FBA instance,
+    // so this only needs to fit one run's needs — +64 bytes for alignment
+    // slack.
+    var alloc_buf: [32 * (@sizeOf(V7ContentionCtx) + @sizeOf(std.Thread)) + 128]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&alloc_buf);
     const alloc = fba.allocator();
 
@@ -509,9 +524,10 @@ fn benchV7Contention() !void {
         0;
     const wall_ms = @divTrunc(elapsed, 1_000_000);
 
+    const path_tag: []const u8 = if (lockfree) "lockfree" else "mutex   ";
     std.debug.print(
-        "v7Contend/{d}T  {d:>6} ns/op  {d:>12} ops/s  (wall {d} ms, {d} total ops)\n",
-        .{ thread_count, ns_per_op, ops_per_sec, wall_ms, total_ops },
+        "v7Contend/{s}/{d}T  {d:>6} ns/op  {d:>12} ops/s  (wall {d} ms, {d} total ops)\n",
+        .{ path_tag, thread_count, ns_per_op, ops_per_sec, wall_ms, total_ops },
     );
 
     // Defeat DCE — the workers' sink bytes must be observable.

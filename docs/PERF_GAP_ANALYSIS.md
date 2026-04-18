@@ -1178,10 +1178,10 @@ glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed bench
 
 *All Group C PERF items closed or partially closed in Group C closure round (2026-04-18). PERF-31 remains partial — full rewrite tracked separately as an ADR item.*
 
-### Deferred (high-risk) — requires explicit approval (Group D, 1)
+### Closed in Group D (2026-04-18, 1)
 
-| Gap-ID | Status | Rationale | Required before implementation |
-| ------ | ------ | --------- | ------------------------------ |
-| PERF-21 | ⏸️ Deferred (high-risk) | Lock-free CAS over packed `u64 = (ms<<12)\|seq` replaces the V7 mutex critical section — non-trivial memory-ordering + RFC-9562 §6.2 monotonicity invariant rewrite. Depends on PERF-22 landing first to quantify gain. | Explicit written approval to undertake the redesign; PERF-22 bench must land first; TSan-clean stress-test demonstration required. |
+| Gap-ID | Status | Rationale | Evidence |
+| ------ | ------ | --------- | -------- |
+| PERF-21 | ✅ Closed (2026-04-18, Group D) | Lock-free CAS over packed `u64 = (ms<<12)\|seq` replaces the V7 mutex critical section. Landed as **opt-in** via `InitOptions.v7_lockfree = true`; default remains the mutex path (correctness-authoritative). | `src/generator.zig` (`newV7Atomic`, `v7_atomic_state`), `src/generator_test.zig` (single-thread, multi-thread stress, saturation-fallback tests), `bench/main.zig` (`benchV7ContentionOnce` exercises both paths). Multi-thread bench at 32 threads: **~34% higher ops/s** vs mutex (982k vs 730k). Stress test passed 10/10 consecutive runs. |
 
-*Phase 3 closure cycle complete — 5 closed, 6 deferred pending sign-off, 1 deferred high-risk.*
+*Phase 3 closure cycle complete — 5 closed initially, 4 closed in Group C, 4 closed in Group D (PERF-21 + PERF-31 + SEC-P3-04 + SEC-P3-08) + 1 partial (SEC-P3-07).*

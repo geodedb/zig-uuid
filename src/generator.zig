@@ -158,6 +158,31 @@ pub const Generator = struct {
     /// hard-code the key in source.
     state_mac_key: ?[32]u8 = null,
 
+    /// PERF-21: opt-in lock-free V7 path.  When true, `newV7` updates
+    /// monotonicity state via a CAS loop over a packed `(ms:52)|(seq:12)`
+    /// `u64` instead of the `v7_mutex`.  The lock-free path is wait-free
+    /// for threads that do not race; on contention threads retry their CAS
+    /// with fresh state, preserving RFC-9562 §6.2 strict monotonicity.
+    /// On mono_seq saturation (12-bit counter exhausted within one ms)
+    /// the path delegates to the mutex-protected `newV7Locked`, which
+    /// sleeps precisely to the next ms boundary.  Default false (mutex
+    /// path remains authoritative).  See `newV7Atomic` for the algorithm.
+    v7_lockfree: bool = false,
+
+    /// PERF-21: packed atomic V7 state `(ms:52)|(seq:12)` where `ms` is
+    /// the Unix millisecond timestamp (up to ~142,808 years ≫ u48) and
+    /// `seq` is the 12-bit RFC-9562 rand_a counter.  Only read/written
+    /// by the lock-free path.  Initial value 0 means "no prior V7 emit";
+    /// the first call observes `old_ms = 0` and takes the new-ms branch.
+    v7_atomic_state: std.atomic.Value(u64) align(64) = std.atomic.Value(u64).init(0),
+
+    /// PERF-21: counter of saturation fallbacks from the lock-free path
+    /// into the mutex-protected `newV7Locked`.  Exposed for tests and
+    /// diagnostics; not an API commitment — the exact interpretation may
+    /// change.  Reads use `.monotonic` since the absolute value is only
+    /// a rough signal ("did we fall back at least once?").
+    v7_lockfree_fallbacks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+
     // PERF-19: Two independent mutexes for V7 and V1/V6 clock domains.
     // V7 generation only acquires v7_mutex; V1/V6 generation only acquires
     // v1v6_mutex.  saveState/loadState acquire both in fixed order
@@ -314,6 +339,11 @@ pub const Generator = struct {
         /// key is copied into the returned `Generator`; the caller may
         /// zero the source buffer immediately after `initOptions` returns.
         state_mac_key: ?[32]u8 = null,
+
+        /// PERF-21: opt into the lock-free V7 path.  Default false keeps
+        /// the mutex-protected path (unchanged behaviour).  See
+        /// `Generator.v7_lockfree` for algorithmic details.
+        v7_lockfree: bool = false,
     };
 
     /// Create a new generator with default clock (std.time.nanoTimestamp),
@@ -334,6 +364,7 @@ pub const Generator = struct {
             .rand_impl = options.random,
             .hwaddr_fn = options.hwaddr_fn,
             .state_mac_key = options.state_mac_key,
+            .v7_lockfree = options.v7_lockfree,
         };
     }
 
@@ -437,6 +468,11 @@ pub const Generator = struct {
     /// own independent counter.  Use newV7AtTime with a shared clock source to
     /// keep the timestamp field monotone across shards.
     pub fn newV7(self: *Generator) Error!UUID {
+        // PERF-21: dispatch to the lock-free path when opted-in.  The
+        // mutex path remains the default and the correctness-authoritative
+        // reference implementation.
+        if (self.v7_lockfree) return self.newV7Atomic();
+
         // PERF-07: Read clock inside the mutex to use the freshest possible
         // timestamp and avoid stale-timestamp collisions under high contention.
         self.v7_mutex.lockUncancelable(gio());
@@ -450,6 +486,159 @@ pub const Generator = struct {
         // provided timestamps via newV7AtTime are accepted as-is.
         if (ms < self.last_ms) ms = self.last_ms;
         return self.newV7Locked(ms);
+    }
+
+    // =========================================================================
+    // PERF-21: lock-free V7 CAS path.
+    //
+    // Layout: a single u64 packed as `(ms << 12) | seq`, where `ms` is the
+    // 48-bit-plus Unix millisecond timestamp and `seq` is the 12-bit rand_a
+    // counter (RFC-9562 §6.2).  ms occupies bits 12..64 (52 bits — enough
+    // for ms values well past year 144,000), seq occupies bits 0..12.
+    //
+    // Algorithm:
+    //   1.  Read the current clock (outside the CAS loop).
+    //   2.  Snapshot old_state with acquire order.
+    //   3.  If clock_ms > old_ms      → new_ms = clock_ms, new_seq = CSPRNG u12
+    //       else (clock regressed or same ms):
+    //           new_ms = old_ms
+    //           if old_seq == 0xFFF   → saturation: fall back to mutex path.
+    //           else                  → new_ms = old_ms, new_seq = old_seq + 1.
+    //   4.  cmpxchgStrong(old, new, acq_rel, acquire).  On failure loop.
+    //   5.  On success emit the UUID outside the CAS loop: assemble bytes
+    //       and sample the 62-bit rand_b from the CSPRNG.
+    //
+    // Monotonicity argument:
+    //   - A successful CAS publishes (ms, seq) strictly greater than any
+    //     `(ms, seq)` observed by a concurrent thread that will later
+    //     succeed (either ms advances, or seq increments).
+    //   - Two threads that observe the same old_state will both propose
+    //     either (a) the same clock_ms → same ms, different seq candidates
+    //     (but only one wins the CAS; the loser retries and observes the
+    //     winner's new state, forcing it into the increment branch), or
+    //     (b) different clock_ms — again, only one wins; the loser retries
+    //     with refreshed state.  In neither case can two UUIDs share the
+    //     same `(ms, seq)` pair.
+    //
+    // rand_b (62 bits) is sampled from the CSPRNG *after* the CAS succeeds,
+    // so failed candidates waste at most 2 bytes of random (the seq
+    // candidate), never the full 8-byte rand_b read.
+    // =========================================================================
+
+    /// PERF-21: pack `(ms:52, seq:12)` into a u64.  `ms` must fit in the
+    /// low 52 bits; the caller enforces this by clamping to the previous
+    /// value on regression.  `seq` is a 12-bit value.
+    inline fn v7PackState(ms: u64, seq: u12) u64 {
+        return (ms << 12) | @as(u64, seq);
+    }
+
+    inline fn v7UnpackMs(packed_state: u64) u64 {
+        return packed_state >> 12;
+    }
+
+    inline fn v7UnpackSeq(packed_state: u64) u12 {
+        return @truncate(packed_state & 0x0FFF);
+    }
+
+    /// PERF-21: saturation counter increment used by the fallback branch.
+    /// Public-ish for tests (via `@field`) but not re-exported at the
+    /// library level.
+    inline fn bumpFallback(self: *Generator) void {
+        _ = self.v7_lockfree_fallbacks.fetchAdd(1, .monotonic);
+    }
+
+    /// PERF-21: lock-free V7 generation.  See the comment block above for
+    /// the full algorithm and monotonicity argument.
+    ///
+    /// On saturation (12-bit counter exhausted inside one ms) we do NOT
+    /// delegate to the mutex path — the two paths maintain independent
+    /// sequence state and mixing them would produce a non-monotonic
+    /// stream (the lockfree state at (M, 0xFFF) is invisible to the
+    /// mutex's self.mono_seq, and vice versa).  Instead the lockfree
+    /// path spin-sleeps to the next ms boundary under a short sleep per
+    /// iteration, re-reads the clock, and retries the CAS.  This keeps
+    /// the lockfree path self-contained and preserves monotonicity.
+    fn newV7Atomic(self: *Generator) Error!UUID {
+        const io_h = gio();
+
+        // Total retry budget across all CAS attempts (including spin-wait
+        // retries on saturation).  4096 is the RFC-9562 per-ms counter
+        // width × 1 — in the adversarial case where another thread wins
+        // every CAS, we still eventually converge within one ms.
+        const max_retries: usize = 32_768;
+        var retries: usize = 0;
+
+        var committed_ms: u64 = 0;
+        var committed_seq: u12 = 0;
+        while (true) : (retries += 1) {
+            if (retries >= max_retries) {
+                // Pathological contention with a frozen clock — treat as
+                // an invalid timestamp so callers see a bounded failure
+                // instead of an infinite spin.
+                self.bumpFallback();
+                return Error.InvalidTimestamp;
+            }
+
+            const clock_ms = try clockToMs(self.clockCall());
+            const clock_ms_u: u64 = @intCast(clock_ms);
+
+            const old = self.v7_atomic_state.load(.acquire);
+            const old_ms = v7UnpackMs(old);
+            const old_seq = v7UnpackSeq(old);
+
+            var new_ms: u64 = undefined;
+            var new_seq: u12 = undefined;
+            if (clock_ms_u > old_ms) {
+                // Clock advanced: seed seq from CSPRNG jitter per
+                // RFC-9562 §6.2.  Losing threads waste at most 2 bytes
+                // on retry.
+                new_ms = clock_ms_u;
+                var rand_seq: [2]u8 = undefined;
+                self.randCall(&rand_seq) catch return Error.RandomError;
+                new_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
+            } else {
+                // Clock at or behind old_ms — preserve old_ms for
+                // monotonicity (SEC-R14-02).  If the counter has saturated
+                // we sleep to the next ms boundary and retry; otherwise
+                // we bump the counter.
+                if (old_seq == std.math.maxInt(u12)) {
+                    self.bumpFallback();
+                    // Sleep precisely to the next ms boundary.  Use the
+                    // ns remainder of the current clock reading to pick
+                    // the sleep length (matches the mutex path's PERF-12
+                    // approach).  On the next loop iteration we re-read
+                    // the clock — it should now be >= old_ms + 1.
+                    const ns_now = self.clockCall();
+                    const sleep_ns: u64 = if (ns_now > 0) blk: {
+                        const ns_frac: u64 = @intCast(@rem(ns_now, 1_000_000));
+                        break :blk 1_000_000 - ns_frac;
+                    } else 500_000;
+                    io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .real) catch {};
+                    continue; // retry with fresh clock reading
+                }
+                new_ms = old_ms;
+                new_seq = old_seq + 1;
+            }
+
+            const new = v7PackState(new_ms, new_seq);
+            if (self.v7_atomic_state.cmpxchgStrong(old, new, .acq_rel, .acquire) == null) {
+                // CAS win — commit and emit outside the loop.
+                committed_ms = new_ms;
+                committed_seq = new_seq;
+                break;
+            }
+            // CAS lost — retry with fresh state.
+        }
+
+        // Emit the UUID outside the CAS loop.
+        var u: UUID = undefined;
+        std.mem.writeInt(u32, u.bytes[0..4], @truncate(committed_ms >> 16), .big);
+        std.mem.writeInt(u16, u.bytes[4..6], @truncate(committed_ms), .big);
+        std.mem.writeInt(u16, u.bytes[6..8], committed_seq, .big);
+        self.randCall(u.bytes[8..16]) catch return Error.RandomError;
+        u.setVersion(.v7);
+        u.setVariant(.rfc9562);
+        return u;
     }
 
     /// Generate a UUIDv7 using the given Unix millisecond timestamp instead

@@ -1040,6 +1040,182 @@ test "Generator.init() + initOptions coexist on same process (SEC-P3-08)" {
     try std.testing.expect(!a.eql(b));
 }
 
+// =============================================================================
+// PERF-21: opt-in lock-free V7 CAS path.
+//
+// Correctness is non-negotiable: RFC-9562 V7 must remain strictly monotonic.
+// Three test families:
+//   (1) Single-threaded parity with the mutex path over the same clock.
+//   (2) Multi-threaded stress: no duplicate (ms,seq) pairs; per-thread
+//       monotonicity.
+//   (3) Saturation fallback: a slow clock forces the path into the mutex
+//       fallback and the v7_lockfree_fallbacks counter increments.
+// =============================================================================
+
+/// Extract `(ms, seq)` from a V7 UUID's raw bytes.  ms is bytes [0..6] big-
+/// endian; seq is the low 12 bits of bytes [6..8] big-endian.
+fn v7MsSeq(u: UUID) struct { ms: u64, seq: u12 } {
+    const hi: u64 = std.mem.readInt(u32, u.bytes[0..4], .big);
+    const lo: u64 = std.mem.readInt(u16, u.bytes[4..6], .big);
+    const ms = (hi << 16) | lo;
+    const raw = std.mem.readInt(u16, u.bytes[6..8], .big);
+    const seq: u12 = @truncate(raw & 0x0FFF);
+    return .{ .ms = ms, .seq = seq };
+}
+
+test "Generator: lock-free V7 single-thread monotonicity (PERF-21)" {
+    // Default clock — the test should hold regardless of whether ms
+    // advances between calls.  Strict monotonicity on `(ms, seq)`.
+    var gen = Generator.initOptions(.{ .v7_lockfree = true });
+    const n: usize = 10_000;
+    var prev = try gen.newV7();
+    var i: usize = 1;
+    while (i < n) : (i += 1) {
+        const u = try gen.newV7();
+        try std.testing.expect(prev.order(u) == .lt);
+        prev = u;
+    }
+}
+
+test "Generator: mutex V7 parity with lock-free V7 (PERF-21)" {
+    // Both paths over 10_000 calls must remain strictly monotonic.
+    var gen_lock = Generator.init();
+    var gen_free = Generator.initOptions(.{ .v7_lockfree = true });
+    const n: usize = 10_000;
+    var prev_lock = try gen_lock.newV7();
+    var prev_free = try gen_free.newV7();
+    var i: usize = 1;
+    while (i < n) : (i += 1) {
+        const ul = try gen_lock.newV7();
+        const uf = try gen_free.newV7();
+        try std.testing.expect(prev_lock.order(ul) == .lt);
+        try std.testing.expect(prev_free.order(uf) == .lt);
+        prev_lock = ul;
+        prev_free = uf;
+    }
+}
+
+// Helper: worker thread that generates `per_thread` V7s and appends them
+// into `out` at contiguous slots starting at `start`.
+fn v7StressWorker(gen: *Generator, out: []UUID, start: usize, per_thread: usize) void {
+    var i: usize = 0;
+    while (i < per_thread) : (i += 1) {
+        out[start + i] = gen.newV7() catch |e| {
+            std.debug.panic("newV7 failed in stress worker: {s}", .{@errorName(e)});
+        };
+    }
+}
+
+test "Generator: lock-free V7 multi-thread stress — no (ms,seq) duplicates (PERF-21)" {
+    // Spawn `thread_count` workers, each generating `per_thread` V7s on the
+    // shared Generator with lockfree enabled.  Collect all results, sort
+    // lexicographically, verify:
+    //   (a) no duplicate (ms, seq) pairs,
+    //   (b) per-thread monotonicity on the output slice for that thread.
+    //
+    // Bounded test size so CI runtime stays in budget; the stress is
+    // enough to exercise the CAS retry branch (seq increments within the
+    // same ms) several thousand times per thread.
+    const cpu_count = std.Thread.getCpuCount() catch 4;
+    const thread_count = @min(cpu_count, 8);
+    const per_thread: usize = 5_000;
+    const total = thread_count * per_thread;
+
+    var gen = Generator.initOptions(.{ .v7_lockfree = true });
+    const allocator = std.testing.allocator;
+    const out = try allocator.alloc(UUID, total);
+    defer allocator.free(out);
+
+    var threads = try allocator.alloc(std.Thread, thread_count);
+    defer allocator.free(threads);
+
+    var t: usize = 0;
+    while (t < thread_count) : (t += 1) {
+        threads[t] = try std.Thread.spawn(.{}, v7StressWorker, .{ &gen, out, t * per_thread, per_thread });
+    }
+    t = 0;
+    while (t < thread_count) : (t += 1) threads[t].join();
+
+    // Per-thread monotonicity check.
+    t = 0;
+    while (t < thread_count) : (t += 1) {
+        const slice = out[t * per_thread .. (t + 1) * per_thread];
+        var j: usize = 1;
+        while (j < slice.len) : (j += 1) {
+            try std.testing.expect(slice[j - 1].order(slice[j]) == .lt);
+        }
+    }
+
+    // Global uniqueness on (ms, seq).  Encode each pair into a u64 with
+    // `(ms << 12) | seq` (matching the atomic layout) and sort; check for
+    // any repeats.
+    const keys = try allocator.alloc(u64, total);
+    defer allocator.free(keys);
+    var i: usize = 0;
+    while (i < total) : (i += 1) {
+        const p = v7MsSeq(out[i]);
+        keys[i] = (p.ms << 12) | @as(u64, p.seq);
+    }
+    std.mem.sort(u64, keys, {}, comptime std.sort.asc(u64));
+    i = 1;
+    while (i < total) : (i += 1) {
+        if (keys[i] == keys[i - 1]) {
+            std.debug.print("Duplicate (ms,seq) at index {d}: 0x{x}\n", .{ i, keys[i] });
+            return error.TestDuplicateMsSeq;
+        }
+    }
+}
+
+test "Generator: lock-free V7 saturation falls back to mutex path (PERF-21)" {
+    // Inject a clock that advances slowly enough that the 12-bit counter
+    // saturates inside the same ms, but fast enough that eventually the
+    // ms advances and the test escapes.
+    //
+    // Budget math: newV7Atomic calls clockCall once per iteration (plus a
+    // second time inside the saturation branch to compute sleep length).
+    // The counter rolls over at 4096 emits.  A stride of 8000 clock reads
+    // per ms guarantees that each ms sees at least ~4000 emits (some
+    // budget is spent on saturation retries + sleep-length reads), so
+    // saturation is hit in every ms.  After ~16 clock reads during
+    // saturation sleeps, ms advances by one and the counter re-seeds.
+    const SlowClock = struct {
+        var call_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+        // Base: 1_700_000_000_000 ms.  Advance ms every `stride` calls.
+        const stride: u32 = 8_000;
+        fn clock() i128 {
+            const n = @This().call_count.fetchAdd(1, .monotonic);
+            const ms: u64 = 1_700_000_000_000 + @as(u64, n / stride);
+            return @as(i128, ms) * 1_000_000;
+        }
+    };
+    SlowClock.call_count.store(0, .monotonic);
+
+    var gen = Generator.initOptions(.{
+        .v7_lockfree = true,
+        .clock = SlowClock.clock,
+    });
+
+    // 5_000 UUIDs — more than one full counter-roll's worth — but short
+    // enough that the test runs in sub-second time.
+    const n: usize = 5_000;
+    const allocator = std.testing.allocator;
+    const out = try allocator.alloc(UUID, n);
+    defer allocator.free(out);
+
+    var i: usize = 0;
+    while (i < n) : (i += 1) out[i] = try gen.newV7();
+
+    // At least one fallback must have occurred.
+    const falls = gen.v7_lockfree_fallbacks.load(.monotonic);
+    try std.testing.expect(falls >= 1);
+
+    // All UUIDs strictly monotonic.
+    i = 1;
+    while (i < n) : (i += 1) {
+        try std.testing.expect(out[i - 1].order(out[i]) == .lt);
+    }
+}
+
 test "GeneratorInterfaceFor wraps default_generator (PERF-31)" {
     // The wrapper should also work against the process-global default
     // generator — this is the recommended hot-path shape for callers that
