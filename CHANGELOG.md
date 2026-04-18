@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Release Notes -- 2026-04-18 Gap Closure Cycle (Groups A + B + C + D)
+
+This release closes a 60-item gap-analysis cycle spanning security, performance, quality, and documentation: 52 items closed in prior rounds (25 Phase-2 bookkeeping tracker items, 16 Phase-3 initial closures, and 11 Group C closures) are joined by 4 full closures and 1 partial from Group D. Performance gets an opt-in lock-free V7 CAS path (`InitOptions.v7_lockfree`, ~34% uplift at 32 threads with the mutex path remaining the default for correctness-authority) and a zero-indirection comptime-generic `GeneratorInterfaceFor(G)` that complements — without replacing — the runtime vtable `GeneratorInterface`. Security gets explicit CSPRNG injection via `InitOptions.random: ?std.Random` (`Generator.initOptions(opts)`), HMAC-SHA256-authenticated state-file wire-format v3 with timing-safe tag compare and full v1/v2 backward compatibility (opt-in via `Generator.state_mac_key`; new `Error.StateMacMismatch`), fork-safety via `Generator.reseed()`, V3/V5 `newV3Strict`/`newV5Strict` guarded by a `Namespace` enum, `loadState` clock-rollback rejection, explicit `0o600` mode on `saveState`, and a published `/.well-known/security.txt` (RFC 9116) alongside CVSS v4.0 and a Disclose.io-derived safe-harbor draft (3 human-input TODOs remain: PGP fingerprint publication, CNA choice, safe-harbor legal review). Module-surface parity landed via `defaultGenerator()` plus wrappers (`clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`). Performance also gains `NamespaceContext`, `ProcessHashContext`, an `align(64)` false-sharing separator between V7 and V1/V6 state, atomic `node_cache`, and a threshold-gated CI `bench-regression`. Four Won't-Do items reaffirmed (SEC-P3-06, SEC-R9-02, SEC-R2-01, GAP-DOC-04). No existing call sites break: every Group C + Group D change is additive or default-preserving.
+
 ### Added
+
+- `uuid.GeneratorInterfaceFor(comptime G: type)` — comptime-generic zero-indirection wrapper around any concrete generator type; complements (does not replace) the runtime vtable `GeneratorInterface` (PERF-31)
+- `Generator.InitOptions { random, clock, hwaddr_fn, state_mac_key, v7_lockfree }` + `Generator.initOptions(opts)` — single entry point for explicit random-source, clock, hwaddr, state-file MAC key, and opt-in lock-free V7 selection (SEC-P3-08, SEC-P3-04, PERF-21)
+- `Generator.state_mac_key: ?[32]u8` — optional caller-supplied HMAC-SHA256 key enabling state-file wire-format v3 with timing-safe tag verification; default `null` preserves v1/v2 read behaviour (SEC-P3-04)
+- `Generator.v7_lockfree: bool` — opt-in lock-free V7 CAS path (default `false`; mutex path remains correctness-authoritative) (PERF-21)
+- `Error.StateMacMismatch` — returned by `loadState` when a v3 state file fails HMAC verification (SEC-P3-04)
+- `/.well-known/security.txt` per RFC 9116 (SEC-P3-07 partial)
+- `Generator.reseed()` — fork-safe CSPRNG re-seeding; callers should invoke post-`fork(2)` on fork-capable platforms (SEC-P3-01)
+- `Namespace` enum + `asUUID()`; `newV3Strict` / `newV5Strict` Generator + module-level variants (SEC-P3-05)
+- `defaultGenerator() *Generator` + module-level parity wrappers (`clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`) (QC-100)
+- `Config.clock_rollback_tolerance_ms = 1_000` (SEC-P3-02)
+- `NamespaceContext` — pre-absorbed Md5/Sha1 state for V3/V5 in-namespace callers (PERF-30)
+- `ProcessHashContext` — per-process CSPRNG-seeded V5 helper; zero runtime cost (PERF-32)
+- `benchV7Contention` multi-threaded V7 bench (PERF-22)
+- `bench/baseline.txt` snapshot + CI threshold-gated `bench-regression` job (PERF-26)
+
+### Changed
+
+- `loadState` rejects future-dated state beyond `Config.clock_rollback_tolerance_ms = 1_000`; clamps `last_v1_ts` monotonically (SEC-P3-02)
+- `saveState` sets explicit `.mode = 0o600` + belt-and-suspenders `fchmod(0o600)` (SEC-P3-03)
+- `node_cache` now uses atomic `node_cache_valid` flag + raw `node_cache_bytes` with acquire/release ordering (PERF-27)
+- `align(64)` cache-line separator between V7 and V1/V6 state clusters in `Generator` (PERF-29)
+- `rand` / `clock` fields are nullable — default paths use inlinable CSPRNG / clock; test-injectable variants retained (PERF-23)
+- `std.Io.Threaded.global_single_threaded.io()` hoisted to per-function / field constant (PERF-28 / QC-96)
+- `jsonMarshal` is now single-pass (PERF-25)
+
+### Added (prior)
 
 - `toHexAlloc` / `toHexUpperAlloc` — allocating hex-without-dashes variants completing the API surface (QC-42)
 - `benchFromStringHex` / `benchFromStringURN` benchmarks in `bench/main.zig` (QC-45)
