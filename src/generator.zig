@@ -218,17 +218,22 @@ pub const Generator = struct {
         return self.newV7Locked(ts);
     }
 
-    /// V7 generation core. Caller must hold `mutex` on entry; this function
-    /// always releases `mutex` before returning (on success or error path).
+    /// V7 generation core. Caller must hold `v7_mutex` on entry; this function
+    /// always releases the mutex before returning (on success or error path).
     ///
-    /// PERF-12: Uses Thread.sleep(ns_to_next_ms) in the overflow spin-wait.
-    ///   PERF-01 previously switched from Thread.sleep(100_000 ns) to
-    ///   Thread.yield() to reduce per-spin latency.  However Thread.yield()
-    ///   maps to sched_yield(2), which returns immediately when no other thread
-    ///   is ready, producing a busy-wait that burns 82% of V7 CPU time
-    ///   (~3.28M yields per 1M calls).  Thread.sleep(ns_remaining_in_ms)
-    ///   sleeps precisely until the next ms boundary: 1 syscall per overflow
-    ///   vs ~8,000 yields, and correctly idles the CPU.
+    /// QC-95: the mutex release is now driven by a single `defer unlock()` in
+    /// `newV7LockedInner`, which returns the committed `(ms, seq)` pair. This
+    /// wrapper then performs the unlocked post-processing (rand_b CSPRNG +
+    /// UUID byte assembly) that PERF-02 kept outside the critical section.
+    ///
+    /// PERF-12: Uses std.Io.sleep(ns_to_next_ms) in the overflow spin-wait.
+    ///   PERF-01 previously switched from sleep(100_000 ns) to Thread.yield()
+    ///   to reduce per-spin latency.  However Thread.yield() maps to
+    ///   sched_yield(2), which returns immediately when no other thread is
+    ///   ready, producing a busy-wait that burns 82% of V7 CPU time
+    ///   (~3.28M yields per 1M calls).  Sleep(ns_remaining_in_ms) sleeps
+    ///   precisely until the next ms boundary: 1 syscall per overflow vs
+    ///   ~8,000 yields, and correctly idles the CPU.
     ///
     /// PERF-02: Releases the mutex before the 8-byte rand_b CSPRNG call so
     ///   concurrent threads are not serialised on the getrandom syscall.
@@ -240,6 +245,32 @@ pub const Generator = struct {
     ///   (a) the clock advances, or (b) another thread reset mono_seq, followed
     ///   by a single if/else that always assigns seq.
     fn newV7Locked(self: *Generator, ts: i64) Error!UUID {
+        // Run the mutex-protected state update under `defer unlock` so every
+        // error path (InvalidTimestamp, RandomError) releases the lock.
+        const committed = try self.newV7LockedInner(ts);
+
+        // PERF-02: post-unlock — assemble the UUID and sample rand_b outside
+        // the critical section.
+        var u: UUID = undefined;
+        const ms_u: u64 = @intCast(committed.ms);
+        // unix_ts_ms: 48 bits big-endian in bytes 0-5
+        std.mem.writeInt(u32, u.bytes[0..4], @truncate(ms_u >> 16), .big);
+        std.mem.writeInt(u16, u.bytes[4..6], @truncate(ms_u), .big);
+        // rand_a: 12-bit monotonic counter in low 12 bits of bytes 6-7
+        std.mem.writeInt(u16, u.bytes[6..8], committed.seq, .big);
+        // rand_b: 62 bits random in bytes 8-15 (outside the mutex, PERF-02)
+        self.rand(u.bytes[8..16]) catch return Error.RandomError;
+        u.setVersion(.v7);
+        u.setVariant(.rfc9562);
+        return u;
+    }
+
+    /// Inner core of `newV7Locked` (QC-95): runs entirely under `v7_mutex`
+    /// with a single `defer unlock()`, returning the committed `(ms, seq)`
+    /// pair. Caller must hold `v7_mutex` on entry.
+    fn newV7LockedInner(self: *Generator, ts: i64) Error!struct { ms: i64, seq: u12 } {
+        defer self.v7_mutex.unlock(gio());
+
         var ms = ts;
 
         // If the counter is exhausted in the current ms, wait until either:
@@ -259,7 +290,6 @@ pub const Generator = struct {
         while (ms == self.last_ms and self.mono_seq == std.math.maxInt(u12)) {
             spins += 1;
             if (spins > max_spins) {
-                self.v7_mutex.unlock(gio());
                 return Error.InvalidTimestamp;
             }
             // SEC-R13-01: Cache one clock reading per spin iteration. Both
@@ -270,10 +300,7 @@ pub const Generator = struct {
 
             // SEC-R4-01: derive ms from the cached clock reading; propagate
             // InvalidTimestamp if the value is out of range.
-            ms = clockToMs(ns_now) catch |err| {
-                self.v7_mutex.unlock(gio());
-                return err;
-            };
+            ms = try clockToMs(ns_now);
             // SEC-R14-02: clamp backward clock to preserve monotonicity
             if (ms < self.last_ms) ms = self.last_ms;
 
@@ -290,6 +317,9 @@ pub const Generator = struct {
                 const ns_frac: u64 = @intCast(@rem(ns_now, 1_000_000));
                 break :blk 1_000_000 - ns_frac;
             } else 500_000;
+            // Drop the lock across the sleep so other waiters can progress;
+            // re-acquire before the next loop iteration (and before the
+            // `defer unlock` at function exit).
             const io_h = gio();
             self.v7_mutex.unlock(io_h);
             io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .real) catch {};
@@ -308,32 +338,13 @@ pub const Generator = struct {
         } else {
             // New ms: seed mono_seq with random jitter (RFC-9562 §6.2).
             var rand_seq: [2]u8 = undefined;
-            self.rand(&rand_seq) catch {
-                self.v7_mutex.unlock(gio());
-                return Error.RandomError;
-            };
+            self.rand(&rand_seq) catch return Error.RandomError;
             self.mono_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
             seq = self.mono_seq;
             self.last_ms = ms;
         }
 
-        // PERF-02: Release v7_mutex before the 8-byte rand_b CSPRNG call.
-        // All shared state (last_ms, mono_seq) is committed above; UUID
-        // construction uses only stack-local variables.
-        self.v7_mutex.unlock(gio());
-
-        var u: UUID = undefined;
-        // unix_ts_ms: 48 bits big-endian in bytes 0-5
-        const ms_u: u64 = @intCast(ms);
-        std.mem.writeInt(u32, u.bytes[0..4], @truncate(ms_u >> 16), .big);
-        std.mem.writeInt(u16, u.bytes[4..6], @truncate(ms_u), .big);
-        // rand_a: 12-bit monotonic counter in low 12 bits of bytes 6-7
-        std.mem.writeInt(u16, u.bytes[6..8], seq, .big);
-        // rand_b: 62 bits random in bytes 8-15 (outside the mutex, PERF-02)
-        self.rand(u.bytes[8..16]) catch return Error.RandomError;
-        u.setVersion(.v7);
-        u.setVariant(.rfc9562);
-        return u;
+        return .{ .ms = ms, .seq = seq };
     }
 
     /// Initialise clock_seq from CSPRNG (F-3).
