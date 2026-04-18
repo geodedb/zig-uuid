@@ -1193,13 +1193,13 @@ pub var default_generator: Generator = Generator.init();
 /// `toString` hot paths where the library itself runs in <50 ns).
 ///
 /// **Recommendation for hot paths:** hold the concrete `*Generator`
-/// pointer directly.  The interface exists for call sites that need
-/// polymorphism over implementations (testing with a fake generator,
-/// wrappers that inject metrics, etc.); use it where the polymorphism is
-/// required, not by default.  A future version of this library may expose
-/// a comptime-generic alternative (`GeneratorOf(T)`) that monomorphises
-/// the dispatch away; that change would be API-breaking and is tracked
-/// separately under PERF-31 in `docs/PERF_GAP_ANALYSIS.md`.
+/// pointer directly, OR use the comptime-generic `GeneratorInterfaceFor(G)`
+/// type below, which wraps `*G` and dispatches every method through a
+/// direct call that LLVM fully inlines at ReleaseFast.  The vtable
+/// `GeneratorInterface` remains for call sites that need runtime
+/// polymorphism over implementations (DI tests, metric wrappers, fakes);
+/// the comptime-generic variant is the zero-overhead alternative for the
+/// common case where the concrete type is known at compile time.
 pub const GeneratorInterface = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -1323,6 +1323,90 @@ const generator_vtable = GeneratorInterface.VTable{
         }
     }.f,
 };
+
+// =============================================================================
+// PERF-31: GeneratorInterfaceFor — comptime-generic, zero-indirection wrapper.
+//
+// Unlike the vtable-based `GeneratorInterface` above (which erases the
+// concrete generator type through `*anyopaque` and function pointers),
+// `GeneratorInterfaceFor(G)` captures the concrete type `G` at compile time
+// and dispatches every method via a direct call `self.g.<method>(...)`.
+// LLVM inlines through the call at ReleaseFast, so a single-type call site
+// pays no per-method overhead over calling the concrete method directly.
+//
+// Use this wrapper whenever:
+//   - the generator's concrete type is known at the call site (the common
+//     case in library-internal code and most application code), AND
+//   - the hot path would benefit from inlining the UUID-generation body.
+//
+// Use the vtable `GeneratorInterface` when runtime polymorphism matters
+// (dependency injection in tests, metric-wrapping middlewares, a function
+// that must accept *either* a real Generator *or* a fake without
+// recompiling). Both coexist — they are mutually complementary.
+//
+// The returned type exposes the exact method surface of `GeneratorInterface`
+// (newV4, newV7, newV7AtTime, newV1, newV1AtTime, newV6, newV6AtTime, newV3,
+// newV5, newV8) so the two interfaces are drop-in compatible at call sites.
+// =============================================================================
+
+/// PERF-31: comptime-generic, inlinable generator interface. See the comment
+/// block above this declaration for the trade-off versus `GeneratorInterface`.
+///
+/// ```zig
+/// var gen = Generator.init();
+/// var iface = GeneratorInterfaceFor(Generator){ .g = &gen };
+/// const u = try iface.newV4();
+/// ```
+pub fn GeneratorInterfaceFor(comptime G: type) type {
+    return struct {
+        const Self = @This();
+
+        /// Concrete generator pointer. The wrapper is a thin view — the
+        /// caller owns the underlying `G` instance.
+        g: *G,
+
+        /// Generate a random UUIDv4 via the underlying generator.
+        pub inline fn newV4(self: Self) Error!UUID {
+            return self.g.newV4();
+        }
+        /// Generate a UUIDv7 using the system clock.
+        pub inline fn newV7(self: Self) Error!UUID {
+            return self.g.newV7();
+        }
+        /// Generate a UUIDv7 using the given Unix millisecond timestamp.
+        pub inline fn newV7AtTime(self: Self, ts: i64) Error!UUID {
+            return self.g.newV7AtTime(ts);
+        }
+        /// Generate a UUIDv1 (Gregorian timestamp + node ID).
+        pub inline fn newV1(self: Self) Error!UUID {
+            return self.g.newV1();
+        }
+        /// Generate a UUIDv1 using the given Gregorian timestamp.
+        pub inline fn newV1AtTime(self: Self, ts: Timestamp) Error!UUID {
+            return self.g.newV1AtTime(ts);
+        }
+        /// Generate a UUIDv6 (reordered Gregorian timestamp + node ID).
+        pub inline fn newV6(self: Self) Error!UUID {
+            return self.g.newV6();
+        }
+        /// Generate a UUIDv6 using the given Gregorian timestamp.
+        pub inline fn newV6AtTime(self: Self, ts: Timestamp) Error!UUID {
+            return self.g.newV6AtTime(ts);
+        }
+        /// Generate a UUIDv3 (MD5 name-based) from namespace and name.
+        pub inline fn newV3(self: Self, ns: UUID, name: []const u8) UUID {
+            return self.g.newV3(ns, name);
+        }
+        /// Generate a UUIDv5 (SHA-1 name-based) from namespace and name.
+        pub inline fn newV5(self: Self, ns: UUID, name: []const u8) UUID {
+            return self.g.newV5(ns, name);
+        }
+        /// Generate a UUIDv8 (custom/experimental) from caller-provided fields.
+        pub inline fn newV8(self: Self, a: [6]u8, b: [2]u8, c: [8]u8) UUID {
+            return self.g.newV8(a, b, c);
+        }
+    };
+}
 
 // =============================================================================
 // Tests — split across two files to keep each under 800 lines (QC-4, QC-28)

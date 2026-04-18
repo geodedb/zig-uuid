@@ -1172,7 +1172,7 @@ glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed bench
 | PERF-26 | ✅ Closed (2026-04-18) | `05491f2` | `bench/baseline.txt`, `.gitlab-ci.yml` | `bench/baseline.txt` committed; `bench-regression` job dropped `allow_failure:true` and gates on a 15% regression threshold. |
 | PERF-27 | ✅ Closed (2026-04-18) | `2f93fac` | `src/generator.zig` (atomic `node_cache_valid` + `node_cache_bytes`) | `node_cache` split into `std.atomic.Value(bool)` valid-flag + raw bytes with acquire/release ordering; TSan-clean. Distinct from SEC-P3-06 (Won't-Do) which covers the intentional pre-lock fast-path read elsewhere. |
 | PERF-29 | ✅ Closed (2026-04-18) | `d31bb22` | `src/generator.zig` | `align(64)` cache-line separator inserted between V7 and V1/V6 state clusters; false sharing eliminated. |
-| PERF-31 | ⚠️ Partially Closed (2026-04-18) | `e9cbf7f` | `src/generator.zig` (GeneratorInterface doc warning) | Mitigation-only: doc warning directs hot-path callers to hold `*Generator` directly. Full comptime-generic rewrite (`GeneratorInterfaceFor(G)`) deferred pending an ADR + major-version bump (API-breaking). |
+| PERF-31 | ✅ Closed (2026-04-18, Group D) | *Group D D1* | `src/generator.zig` (`GeneratorInterfaceFor(G)`), `src/generator_test.zig` | Additive comptime-generic wrapper `GeneratorInterfaceFor(G)` added alongside existing vtable `GeneratorInterface`; every method is `inline` direct call through `self.g.*`, LLVM inlines through at ReleaseFast. Vtable retained for runtime-polymorphism call sites (DI / fakes / metric wrappers). Backward compatible — no existing call site changes. |
 
 ### Deferred — pending user sign-off (Group C, 0)
 

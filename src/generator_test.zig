@@ -8,6 +8,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Generator = @import("generator.zig").Generator;
 const GeneratorInterface = @import("generator.zig").GeneratorInterface;
+const GeneratorInterfaceFor = @import("generator.zig").GeneratorInterfaceFor;
 const UUID = @import("uuid.zig").UUID;
 const Version = @import("uuid.zig").Version;
 const Variant = @import("uuid.zig").Variant;
@@ -891,4 +892,81 @@ test "Generator.withRand overrides default rand (PERF-23)" {
     // but untouched bytes should reflect the deterministic fill.
     try std.testing.expectEqual(@as(u8, 0), u.bytes[0]);
     try std.testing.expectEqual(@as(u8, 1), u.bytes[1]);
+}
+
+// =============================================================================
+// PERF-31: GeneratorInterfaceFor — comptime-generic, zero-indirection wrapper.
+// Every method is an `inline` direct call through `self.g`, so LLVM inlines
+// the generator body at ReleaseFast.  These tests verify that the full
+// method surface is present and produces UUIDs with the correct version and
+// variant bits (the acceptance criterion in PERF-31 D1).
+// =============================================================================
+
+test "GeneratorInterfaceFor(Generator): full method surface (PERF-31)" {
+    const ns_mod = @import("namespace.zig");
+    const ts_mod = @import("timestamp.zig");
+
+    var gen = Generator.init();
+    const Iface = GeneratorInterfaceFor(Generator);
+    var iface = Iface{ .g = &gen };
+
+    // newV4
+    const v4 = try iface.newV4();
+    try std.testing.expectEqual(Version.v4, v4.version());
+    try std.testing.expectEqual(Variant.rfc9562, v4.variant());
+
+    // newV7 + newV7AtTime
+    const v7 = try iface.newV7();
+    try std.testing.expectEqual(Version.v7, v7.version());
+    try std.testing.expectEqual(Variant.rfc9562, v7.variant());
+    const v7_ms: i64 = 1_700_000_000_000;
+    const v7_t = try iface.newV7AtTime(v7_ms);
+    try std.testing.expectEqual(v7_ms, (try ts_mod.timestampFromV7(v7_t)).toUnixMs());
+
+    // newV1 + newV1AtTime
+    const v1 = try iface.newV1();
+    try std.testing.expectEqual(Version.v1, v1.version());
+    const greg_ts = ts_mod.Timestamp{ .value = 139_806_912_000_000_000 };
+    const v1_t = try iface.newV1AtTime(greg_ts);
+    try std.testing.expectEqual(Version.v1, v1_t.version());
+
+    // newV6 + newV6AtTime
+    const v6 = try iface.newV6();
+    try std.testing.expectEqual(Version.v6, v6.version());
+    const v6_t = try iface.newV6AtTime(greg_ts);
+    try std.testing.expectEqual(Version.v6, v6_t.version());
+    try std.testing.expectEqual(greg_ts.value, (try ts_mod.timestampFromV6(v6_t)).value);
+
+    // newV3 / newV5 produce the RFC test vectors for DNS / www.example.com
+    var buf: [36]u8 = undefined;
+    const v3 = iface.newV3(ns_mod.namespace_dns, "www.example.com");
+    try std.testing.expectEqualStrings(
+        "5df41881-3aed-3515-88a7-2f4a814cf09e",
+        v3.toString(&buf),
+    );
+    const v5 = iface.newV5(ns_mod.namespace_dns, "www.example.com");
+    try std.testing.expectEqualStrings(
+        "2ed6657d-e927-568b-95e1-2665a8aea6a2",
+        v5.toString(&buf),
+    );
+
+    // newV8 — infallible
+    const a = [6]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
+    const b_bytes = [2]u8{ 0x07, 0x08 };
+    const c = [8]u8{ 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
+    const v8 = iface.newV8(a, b_bytes, c);
+    try std.testing.expectEqual(Version.v8, v8.version());
+    try std.testing.expectEqual(Variant.rfc9562, v8.variant());
+}
+
+test "GeneratorInterfaceFor wraps default_generator (PERF-31)" {
+    // The wrapper should also work against the process-global default
+    // generator — this is the recommended hot-path shape for callers that
+    // want inlinable dispatch without creating a local Generator.
+    const default_generator = &@import("generator.zig").default_generator;
+    const Iface = GeneratorInterfaceFor(Generator);
+    var iface = Iface{ .g = default_generator };
+    const u = try iface.newV4();
+    try std.testing.expectEqual(Version.v4, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
 }

@@ -51,6 +51,10 @@ pub const Namespace = @import("namespace.zig").Namespace;
 // Generator
 pub const Generator = @import("generator.zig").Generator;
 pub const GeneratorInterface = @import("generator.zig").GeneratorInterface;
+/// PERF-31: comptime-generic, zero-indirection generator interface.  See
+/// `src/generator.zig` for the trade-off vs. the vtable-based
+/// `GeneratorInterface`.
+pub const GeneratorInterfaceFor = @import("generator.zig").GeneratorInterfaceFor;
 // SEC-R5-01 / QC-100: `default_generator` is not re-exported as a value
 // (that would create a VALUE COPY — a separate Generator at a different
 // address — defeating the shared-state intent).  Instead, the
