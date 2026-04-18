@@ -7,21 +7,27 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Dependencies
-    const json_dep = b.dependency("json", .{ .target = target, .optimize = optimize });
-    const json_module = json_dep.module("json");
-
-    // Main library module. Binding `json` via post-addModule `addImport`
-    // (rather than inline `.imports`) lets Zig's package system dedupe the
-    // import edge across multiple consumer paths — needed because uuid is
-    // instantiated by several siblings (geode, geode-client-zig,
-    // graph-storage) that each reach uuid through different graph chains.
+    // Core `uuid` module is dep-free. The json adapter lives in a separate
+    // `uuid_json` module consumers opt into. Keeping json out of the core
+    // module avoids diamond errors when uuid is instantiated by multiple
+    // sibling build contexts (geode, geode-client-zig, graph-storage) that
+    // each reach uuid through different graph chains.
     const module = b.addModule("uuid", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("json", json_module);
+
+    // Opt-in json adapter. Depends on `json` and the core uuid module.
+    const json_dep = b.dependency("json", .{ .target = target, .optimize = optimize });
+    const json_module = json_dep.module("json");
+    const uuid_json_module = b.addModule("uuid_json", .{
+        .root_source_file = b.path("src/uuid_json.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    uuid_json_module.addImport("json", json_module);
+    uuid_json_module.addImport("uuid", module);
 
     // Unit tests — reuse the public `module` so src/root.zig isn't rooted by
     // multiple module instances (would trigger "file exists in modules 'json'
@@ -31,7 +37,7 @@ pub fn build(b: *std.Build) void {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     test_step.dependOn(&run_unit_tests.step);
 
-    // Integration tests
+    // Integration tests exercise both core and the json adapter.
     const integration_step = b.step("test-integration", "Run integration tests");
     const integration_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -40,12 +46,18 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "uuid", .module = module },
+                .{ .name = "uuid_json", .module = uuid_json_module },
                 .{ .name = "json", .module = json_module },
             },
         }),
     });
     const run_integration_tests = b.addRunArtifact(integration_tests);
     integration_step.dependOn(&run_integration_tests.step);
+
+    // Unit tests for the json adapter itself.
+    const unit_tests_json = b.addTest(.{ .root_module = uuid_json_module });
+    const run_unit_tests_json = b.addRunArtifact(unit_tests_json);
+    test_step.dependOn(&run_unit_tests_json.step);
 
     // Check step (fast syntax validation) — reuse public `module` (same
     // dedup reason as unit_tests above).

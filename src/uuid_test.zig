@@ -313,14 +313,7 @@ test "format via std.fmt" {
     try std.testing.expectEqualStrings("00000000-0000-0000-0000-000000000000", s);
 }
 
-test "UUID.jsonMarshal round-trip" {
-    const alloc = std.testing.allocator;
-    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
-    const v = try u.jsonMarshal(alloc);
-    defer alloc.free(v.str);
-    const parsed = try UUID.jsonUnmarshal(alloc, v);
-    try std.testing.expect(u.eql(parsed));
-}
+// UUID.jsonMarshal round-trip moved to src/uuid_json.zig / tests/integration.zig.
 
 // --- New tests for G-1, G-2, F-5/G-3, G-7, G-9 ---
 

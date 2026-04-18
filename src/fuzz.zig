@@ -20,7 +20,6 @@
 const std = @import("std");
 const UUID = @import("uuid.zig").UUID;
 const NullUUID = @import("null_uuid.zig").NullUUID;
-const json = @import("json");
 const Timestamp = @import("timestamp.zig").Timestamp;
 const Generator = @import("generator.zig").Generator;
 
@@ -85,46 +84,8 @@ fn fuzzFromBytes(_: void, smith: *std.testing.Smith) anyerror!void {
     _ = UUID.fromBytes(input) catch {};
 }
 
-/// Fuzz target: NullUUID.jsonUnmarshal must not panic on arbitrary input (QC-32, SEC-R5-04).
-///
-/// Exercises all json.Value variants so that every branch of the else-clause
-/// (which maps non-string, non-null values to Error.InvalidFormat) is covered
-/// by the fuzzer without panicking or exhibiting undefined behaviour.
-///
-/// Variants covered:
-///   .str   — primary path: arbitrary UUID string (most interesting for parsing)
-///   .null  — secondary path: returns NullUUID.nil
-///   .bool  — must return Error.InvalidFormat, not panic
-///   .num   — must return Error.InvalidFormat, not panic (Number is stack-allocated)
-///   .arr   — must return Error.InvalidFormat, not panic (zero-length slice is safe)
-///   .obj   — must return Error.InvalidFormat, not panic (zero-length slice is safe)
-fn fuzzNullUUIDJsonUnmarshal(_: void, smith: *std.testing.Smith) anyerror!void {
-    var input_buf: [256]u8 = undefined;
-    const input_len = smith.slice(&input_buf);
-    const input = input_buf[0..input_len];
-    var buf: [256]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&buf);
-    const alloc = fba.allocator();
-    // Exercise the string input path (most interesting for UUID parsing).
-    _ = NullUUID.jsonUnmarshal(alloc, json.Value{ .str = input }) catch {};
-    // Also exercise the null path to ensure coverage.
-    _ = NullUUID.jsonUnmarshal(alloc, .null) catch {};
-    // SEC-R5-04: additional variant coverage — all must return an error, never panic.
-    _ = NullUUID.jsonUnmarshal(alloc, json.Value{ .bool = input.len % 2 == 0 }) catch {};
-    // .num requires a json.Number; use a stack-local with input.len as the lexeme.
-    // sign=1, digits=lexeme, exp10=0 is a valid (if synthetic) Number representation.
-    const num = json.Number{
-        .lexeme = input,
-        .sign = 1,
-        .digits = input,
-        .exp10 = 0,
-    };
-    _ = NullUUID.jsonUnmarshal(alloc, json.Value{ .num = num }) catch {};
-    // .arr and .obj with zero-length slices avoid any heap allocation while
-    // still exercising the variant branches.
-    _ = NullUUID.jsonUnmarshal(alloc, json.Value{ .arr = &.{} }) catch {};
-    _ = NullUUID.jsonUnmarshal(alloc, json.Value{ .obj = &.{} }) catch {};
-}
+// NullUUID.jsonUnmarshal fuzz target moved to the uuid_json submodule
+// (src/uuid_json.zig) — core fuzz suite no longer needs a `json` import.
 
 test "fuzz: UUID.fromString does not panic on arbitrary input (SEC-R2-11/#52)" {
     try std.testing.fuzz({}, fuzzFromString, .{ .corpus = corpus });
@@ -134,9 +95,7 @@ test "fuzz: UUID.fromBytes does not panic on arbitrary input (QC-32)" {
     try std.testing.fuzz({}, fuzzFromBytes, .{ .corpus = byte_corpus });
 }
 
-test "fuzz: NullUUID.jsonUnmarshal does not panic on arbitrary string input (QC-32)" {
-    try std.testing.fuzz({}, fuzzNullUUIDJsonUnmarshal, .{ .corpus = corpus });
-}
+// Fuzz coverage for NullUUID JSON unmarshal lives in src/uuid_json.zig.
 
 // =============================================================================
 // SEC-R8-02: Fuzz targets for Timestamp and Generator.loadState

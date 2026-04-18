@@ -2,7 +2,6 @@
 // Copyright (c) 2024-2025 CodePros
 
 const std = @import("std");
-const json = @import("json");
 const UUID = @import("uuid.zig").UUID;
 const Error = @import("uuid.zig").Error;
 
@@ -32,24 +31,7 @@ pub const NullUUID = struct {
         }
     }
 
-    /// json library custom marshaler.
-    /// Emits JSON null (invalid) or "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" (valid).
-    pub fn jsonMarshal(self: NullUUID, allocator: std.mem.Allocator) !json.Value {
-        if (!self.valid) return .null;
-        var buf: [36]u8 = undefined;
-        return .{ .str = try allocator.dupe(u8, self.uuid.toString(&buf)) };
-    }
-
-    /// json library custom unmarshaler.
-    /// allocator parameter exists for interface conformance; UUID.fromString is zero-alloc.
-    pub fn jsonUnmarshal(allocator: std.mem.Allocator, v: json.Value) !NullUUID {
-        _ = allocator;
-        return switch (v) {
-            .null => .{},
-            .str => |s| .{ .uuid = try UUID.fromString(s), .valid = true },
-            else => Error.InvalidFormat,
-        };
-    }
+    // json adapters moved to src/uuid_json.zig (opt-in submodule).
 };
 
 test "NullUUID.from and value()" {
@@ -65,43 +47,8 @@ test "NullUUID zero value is invalid" {
     try std.testing.expect(nu.value() == null);
 }
 
-test "NullUUID.jsonMarshal: null when invalid" {
-    const alloc = std.testing.allocator;
-    const nu = NullUUID{};
-    const v = try nu.jsonMarshal(alloc);
-    try std.testing.expect(v == .null);
-}
-
-test "NullUUID.jsonMarshal: string when valid" {
-    const alloc = std.testing.allocator;
-    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
-    const nu = NullUUID.from(u);
-    const v = try nu.jsonMarshal(alloc);
-    defer alloc.free(v.str);
-    try std.testing.expect(v == .str);
-    try std.testing.expectEqualStrings("6ba7b810-9dad-11d1-80b4-00c04fd430c8", v.str);
-}
-
-test "NullUUID.jsonUnmarshal: null input → invalid NullUUID" {
-    const nu = try NullUUID.jsonUnmarshal(std.testing.allocator, .null);
-    try std.testing.expect(!nu.valid);
-}
-
-test "NullUUID.jsonUnmarshal: non-string non-null input → error" {
-    const v = json.Value{ .bool = true };
-    try std.testing.expectError(Error.InvalidFormat, NullUUID.jsonUnmarshal(std.testing.allocator, v));
-}
-
-test "NullUUID.jsonUnmarshal: string input → valid NullUUID" {
-    const v = json.Value{ .str = "6ba7b810-9dad-11d1-80b4-00c04fd430c8" };
-    const nu = try NullUUID.jsonUnmarshal(std.testing.allocator, v);
-    try std.testing.expect(nu.valid);
-    var buf: [36]u8 = undefined;
-    try std.testing.expectEqualStrings(
-        "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-        nu.uuid.toString(&buf),
-    );
-}
+// Json adapter tests live in tests/integration.zig (via the uuid_json
+// submodule) so the core module stays dep-free.
 
 test "NullUUID.format valid UUID produces canonical output (QC-55)" {
     const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");

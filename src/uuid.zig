@@ -2,7 +2,6 @@
 // Copyright (c) 2024-2025 CodePros
 
 const std = @import("std");
-const json = @import("json");
 
 pub const Error = error{
     InvalidFormat,
@@ -420,23 +419,12 @@ pub const UUID = struct {
         try w.writeAll(self.toString(&buf));
     }
 
-    /// Marshal to a `json.Value.str` containing the canonical lowercase UUID string.
-    ///
-    /// The returned `.str` is heap-allocated with `allocator`; the caller is
-    /// responsible for freeing it (typically via `json.Value.deinit`).
-    /// This function is part of the `json` serialisation interface used by
-    /// zig-json / std.json marshalling pipelines.
-    pub fn jsonMarshal(self: UUID, allocator: std.mem.Allocator) !json.Value {
-        var buf: [36]u8 = undefined;
-        return .{ .str = try allocator.dupe(u8, self.toString(&buf)) };
-    }
-
-    /// allocator parameter exists for interface conformance; UUID.fromString is zero-alloc.
-    pub fn jsonUnmarshal(allocator: std.mem.Allocator, v: json.Value) !UUID {
-        _ = allocator;
-        if (v != .str) return Error.InvalidFormat;
-        return fromString(v.str);
-    }
+    // json adapters moved to src/uuid_json.zig (opt-in submodule) so the
+    // core `uuid` module doesn't force a `json` dependency on downstream
+    // consumers. Instantiating uuid from multiple build contexts with a
+    // top-level json import caused duplicate-module diamond errors. The
+    // json adapters remain available via `@import("uuid_json")` for
+    // consumers that wire up the uuid-json submodule.
 };
 
 // --- private helpers ---

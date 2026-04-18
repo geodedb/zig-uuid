@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const uuid = @import("uuid");
+const uuid_json = @import("uuid_json");
 const json = @import("json");
 
 // =============================================================================
@@ -61,9 +62,9 @@ test "integration: V1 round-trip" {
 test "integration: NullUUID null JSON round-trip" {
     const alloc = std.testing.allocator;
     const nu = uuid.NullUUID{};
-    const v = try nu.jsonMarshal(alloc);
+    const v = try uuid_json.nullUuidJsonMarshal(nu, alloc);
     try std.testing.expect(v == .null);
-    const nu2 = try uuid.NullUUID.jsonUnmarshal(alloc, v);
+    const nu2 = try uuid_json.nullUuidJsonUnmarshal(alloc, v);
     try std.testing.expect(!nu2.valid);
 }
 
@@ -71,26 +72,19 @@ test "integration: NullUUID string JSON round-trip" {
     const alloc = std.testing.allocator;
     const u = try uuid.newV4();
     const nu = uuid.NullUUID.from(u);
-    const v = try nu.jsonMarshal(alloc);
+    const v = try uuid_json.nullUuidJsonMarshal(nu, alloc);
     defer alloc.free(v.str);
-    const nu2 = try uuid.NullUUID.jsonUnmarshal(alloc, v);
+    const nu2 = try uuid_json.nullUuidJsonUnmarshal(alloc, v);
     try std.testing.expect(nu2.valid);
     try std.testing.expect(nu2.uuid.eql(u));
 }
 
-test "integration: UUID in struct encoded with json.encode" {
+test "integration: UUID encodes to canonical string via uuid_json adapter" {
     const alloc = std.testing.allocator;
-    const MyStruct = struct {
-        id: uuid.UUID,
-        name: []const u8,
-    };
-    const s = MyStruct{
-        .id = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
-        .name = "test",
-    };
-    const encoded = try json.encode(alloc, s, .{ .allocator = alloc });
-    defer alloc.free(encoded);
-    try std.testing.expect(std.mem.indexOf(u8, encoded, "6ba7b810-9dad-11d1-80b4-00c04fd430c8") != null);
+    const u = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const v = try uuid_json.uuidJsonMarshal(u, alloc);
+    defer alloc.free(v.str);
+    try std.testing.expectEqualStrings("6ba7b810-9dad-11d1-80b4-00c04fd430c8", v.str);
 }
 
 // =============================================================================
@@ -376,7 +370,7 @@ test "integration: NullUUID.jsonUnmarshal rejects non-string non-null value (QC-
     // .bool is not a valid JSON representation for a UUID
     try std.testing.expectError(
         uuid.Error.InvalidFormat,
-        uuid.NullUUID.jsonUnmarshal(alloc, json.Value{ .bool = true }),
+        uuid_json.nullUuidJsonUnmarshal(alloc, json.Value{ .bool = true }),
     );
 }
 
@@ -384,7 +378,7 @@ test "integration: NullUUID.jsonUnmarshal rejects invalid UUID string (QC-69)" {
     const alloc = std.testing.allocator;
     try std.testing.expectError(
         uuid.Error.InvalidLength,
-        uuid.NullUUID.jsonUnmarshal(alloc, json.Value{ .str = "not-a-uuid" }),
+        uuid_json.nullUuidJsonUnmarshal(alloc, json.Value{ .str = "not-a-uuid" }),
     );
 }
 
