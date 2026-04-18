@@ -1,0 +1,18 @@
+# RFC 9116 security.txt for the devnw/zig uuid library.
+#
+# Although this repository ships a source-level library (no web-root to
+# serve from), the /.well-known/security.txt location is kept here so
+# that any CI/CD pipeline, downstream packaging, or project site that
+# mirrors the repo can expose this file at the canonical URL.
+#
+# Fields below follow the IETF RFC 9116 "A File Format to Aid in the
+# Coordinated Disclosure of Security Vulnerabilities" specification.
+
+Contact: mailto:benji@codepros.org
+Expires: 2027-12-31T23:59:59Z
+Policy: https://gitlab.com/devnw/zig/uuid/-/blob/main/SECURITY.md
+Preferred-Languages: en
+
+# Encryption: TODO — publish the PGP fingerprint for the mailbox above
+#   once a disclosure key is generated.  Until then, reporters who need
+#   encrypted transport should request the key via the Contact address.

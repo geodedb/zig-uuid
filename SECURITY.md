@@ -51,6 +51,21 @@ We assess reported vulnerabilities using [CVSS v3.1](https://www.first.org/cvss/
 | Low      | 0.1–3.9   | Next release |
 | Info     | 0.0       | Backlog      |
 
+## Severity Classification (CVSS v4.0)
+
+We also accept reports scored against [CVSS v4.0](https://www.first.org/cvss/v4-0/).
+The CVSS v4 score is authoritative when both scores are supplied.  The
+response SLA tiers and numeric bands mirror the v3.1 table above;
+examples of category fit are provided for reference.
+
+| Severity | CVSS v4.0 Score | Response SLA | Typical example |
+|----------|-----------------|--------------|-----------------|
+| Critical | 9.0–10.0        | 24–72 hours  | Remote code execution, full CSPRNG compromise, unauthenticated auth bypass via UUID forgery. |
+| High     | 7.0–8.9         | 1–2 weeks    | Predictable UUID on an auth-bearing path, state-file tamper leading to collision. |
+| Medium   | 4.0–6.9         | 2–4 weeks    | Local information disclosure (e.g. hardware MAC leak on an opt-in config), timing side-channel requiring co-location. |
+| Low      | 0.1–3.9         | Next release | Defensive hardening gaps, non-exploitable invariant violations. |
+| Info     | 0.0             | Backlog      | Documentation or telemetry improvements. |
+
 ## Version Support Policy
 
 | Version | Status             | Security Fixes Until |
@@ -197,6 +212,72 @@ When using this library:
 2. Review security advisories regularly
 3. Report any suspicious behavior
 4. Follow secure coding guidelines
+
+## Safe Harbor
+
+<!-- TODO: legal review — the text below is derived from the
+     https://disclose.io Core Terms template and has NOT been reviewed by
+     counsel.  Until that review is complete, this section expresses the
+     project's intent but does not waive any legal rights of the
+     copyright holders or their successors in interest. -->
+
+We welcome good-faith security research on this library.  Consistent with
+the [disclose.io](https://disclose.io) core terms, if you make a good-faith
+effort to comply with this policy during your security research, we will:
+
+- **Not pursue or support any legal action against you** related to your
+  research, including DMCA claims against technical research.
+- **Work with you** to understand and resolve the issue quickly, and
+  credit you as the reporter (unless you request anonymity).
+- **Recognise your contribution** publicly in the release notes if you are
+  the first to report a material issue that we act upon.
+
+In turn, we ask that researchers:
+
+- Make every reasonable effort to **avoid privacy violations, data
+  destruction, and service disruption**.
+- Only interact with systems and data that you own, or for which the
+  owner has given explicit permission.
+- Do not perform testing that could degrade service availability for
+  other users (DDoS, fork-bomb, resource-exhaustion fuzzing on shared
+  infrastructure).
+- **Report findings promptly** via the contact channels in this document
+  and give us a reasonable window (see the SLA table above) before any
+  public disclosure.
+
+This section will be replaced with a version that has been reviewed by
+counsel once that review is available; the current text is informational
+and aspirational.
+
+## CVE Numbering Authority (CNA)
+
+<!-- TODO: choose a CNA.  Options:
+       - MITRE as Root CNA (default; covers open-source projects).
+       - GitHub Security Advisories (auto-assigns when the project mirrors
+         to GitHub and opts in to private vulnerability reporting).
+       - GitLab Security Advisory Database (when hosted on GitLab.com).
+       - Become a CNA ourselves (high bar; out of scope for a single
+         library of this size).
+     The choice determines where reporters should look up the assigned
+     CVE ID after coordinated disclosure. -->
+
+Until a CNA is formally chosen, CVE assignment for validated reports
+against this library will be requested from **MITRE as the Root CNA**.
+Reporters who require an early CVE reservation may also open a
+simultaneous report against the CNA of the distribution channel they
+encountered the library through (e.g. a downstream package ecosystem's
+CNA).
+
+This section will be updated once a permanent CNA is selected.
+
+## Machine-Readable Metadata
+
+A [RFC 9116](https://datatracker.ietf.org/doc/html/rfc9116) `security.txt`
+file is published at [`/.well-known/security.txt`](.well-known/security.txt)
+with the authoritative contact address, policy URL, expiry, and preferred
+languages.  Automated discovery tools and security researchers are
+encouraged to consume the machine-readable file; this document remains
+the canonical long-form policy.
 
 ## Contact
 
