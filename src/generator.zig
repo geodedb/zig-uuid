@@ -1181,6 +1181,25 @@ pub var default_generator: Generator = Generator.init();
 /// var iface = GeneratorInterface.fromGenerator(&gen);
 /// const u = try iface.newV4();
 /// ```
+///
+/// ## PERF-31: performance trade-off (P3)
+///
+/// Every `GeneratorInterface` method is a pointer dispatch through the
+/// vtable: a load of `self.vtable.<method>`, an indirect call, and a cast
+/// from `*anyopaque` back to `*Generator`.  At ReleaseFast the indirect
+/// call prevents inlining even when the concrete type is known to the
+/// compiler, adding roughly one function-call frame of overhead per
+/// UUID (on x86_64 ~2–4 ns on L1-hot code — not noise on the `newV4` /
+/// `toString` hot paths where the library itself runs in <50 ns).
+///
+/// **Recommendation for hot paths:** hold the concrete `*Generator`
+/// pointer directly.  The interface exists for call sites that need
+/// polymorphism over implementations (testing with a fake generator,
+/// wrappers that inject metrics, etc.); use it where the polymorphism is
+/// required, not by default.  A future version of this library may expose
+/// a comptime-generic alternative (`GeneratorOf(T)`) that monomorphises
+/// the dispatch away; that change would be API-breaking and is tracked
+/// separately under PERF-31 in `docs/PERF_GAP_ANALYSIS.md`.
 pub const GeneratorInterface = struct {
     ptr: *anyopaque,
     vtable: *const VTable,

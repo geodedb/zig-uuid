@@ -1008,6 +1008,8 @@ zig build bench-check -Doptimize=ReleaseFast
 
 **Verify**: Add `benchInterfaceV1()` (V1 via iface, warm cache) and `benchV1()` (direct); measure gap at ReleaseFast.
 
+**Status (2026-04-18, Group C Phase-3 closure):** ⏸️ **Deferred** — the proposed comptime-generic `GeneratorInterfaceFor(G)` is API-breaking (removes or changes the `GeneratorInterface` type exported from `src/root.zig`). For Group C we landed a **mitigation-only** change: a doc warning on `GeneratorInterface` directing hot-path callers to hold `*Generator` directly. Full closure requires an ADR documenting the new comptime-generic contract and a major-version bump; re-open when the project accepts the next breaking change. Commit `docs(generator): document GeneratorInterface perf tradeoff (PERF-31 mitigation)` captures the interim mitigation.
+
 ---
 
 #### PERF-32: No `ProcessHashContext` (per-process random seed; zero runtime cost) (P3, suspected)
