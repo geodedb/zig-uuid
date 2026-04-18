@@ -605,6 +605,81 @@ pub const Generator = struct {
         return u;
     }
 
+    // =========================================================================
+    // PERF-30: prehashed V3 / V5 namespace variants.
+    //
+    // `newV3` / `newV5` re-hash the 16-byte namespace on every call. Callers
+    // that issue many UUIDs under one namespace (e.g. per-row content IDs for
+    // a single namespace DNS) can amortize that by snapshotting the hasher's
+    // partial state after `update(ns.bytes)` once, then cloning the snapshot
+    // per-name and finalising with just `update(name); final(&digest);`.
+    //
+    // Zig 0.16's Md5 and Sha1 are plain structs containing fixed-size fields
+    // (`s: [N]u32`, `buf: [64]u8`, `buf_len: u8`, `total_len: u64`), so a
+    // value-copy clone of the struct is well-defined and independent of the
+    // source. We rely on that semantics via `var cloned = self.hasher;`.
+    // =========================================================================
+
+    /// Prehashed V3 (MD5) namespace — see `initV3Namespace`.
+    pub const PrehashedV3 = struct {
+        hasher: std.crypto.hash.Md5,
+
+        /// Compute a V3 UUID for `name` under the prehashed namespace. The
+        /// source hasher state is preserved (value-copied) so the same
+        /// `PrehashedV3` may be reused for many names.
+        pub fn name(self: *const PrehashedV3, name_bytes: []const u8) UUID {
+            var cloned = self.hasher;
+            cloned.update(name_bytes);
+            var digest: [16]u8 = undefined;
+            cloned.final(&digest);
+            var u = UUID{ .bytes = digest };
+            u.setVersion(.v3);
+            u.setVariant(.rfc9562);
+            return u;
+        }
+    };
+
+    /// Prehashed V5 (SHA-1) namespace — see `initV5Namespace`.
+    pub const PrehashedV5 = struct {
+        hasher: std.crypto.hash.Sha1,
+
+        /// Compute a V5 UUID for `name` under the prehashed namespace. The
+        /// source hasher state is preserved (value-copied) so the same
+        /// `PrehashedV5` may be reused for many names.
+        pub fn name(self: *const PrehashedV5, name_bytes: []const u8) UUID {
+            var cloned = self.hasher;
+            cloned.update(name_bytes);
+            var digest: [20]u8 = undefined;
+            cloned.final(&digest);
+            var u = UUID{ .bytes = digest[0..16].* };
+            u.setVersion(.v5);
+            u.setVariant(.rfc9562);
+            return u;
+        }
+    };
+
+    /// PERF-30: build a prehashed V3 namespace. The returned object can be
+    /// reused across many `name()` calls; each call is equivalent to a full
+    /// `newV3(ns, name)` but skips the 16-byte namespace re-hash.
+    ///
+    /// **Security:** inherits the same MD5 / collision warnings as `newV3`.
+    pub fn initV3Namespace(_: *Generator, ns: UUID) PrehashedV3 {
+        var h = std.crypto.hash.Md5.init(.{});
+        h.update(&ns.bytes);
+        return .{ .hasher = h };
+    }
+
+    /// PERF-30: build a prehashed V5 namespace. The returned object can be
+    /// reused across many `name()` calls; each call is equivalent to a full
+    /// `newV5(ns, name)` but skips the 16-byte namespace re-hash.
+    ///
+    /// **Security:** inherits the same SHA-1 / collision warnings as `newV5`.
+    pub fn initV5Namespace(_: *Generator, ns: UUID) PrehashedV5 {
+        var h = std.crypto.hash.Sha1.init(.{});
+        h.update(&ns.bytes);
+        return .{ .hasher = h };
+    }
+
     /// Generate a UUIDv8 (custom/experimental) from caller-provided fields.
     ///
     /// This function is infallible — the body contains no fallible operations.

@@ -198,6 +198,69 @@ test "Generator.newV5: RFC Appendix B — DNS namespace + 'www.example.com'" {
     );
 }
 
+// PERF-30: prehashed namespace variants produce the same UUIDs as
+// Generator.newV3 / Generator.newV5 while amortising the namespace hash.
+
+test "Generator.initV3Namespace: matches newV3 for the RFC DNS vector (PERF-30)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const pre = gen.initV3Namespace(ns_mod.namespace_dns);
+    const u = pre.name("www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "5df41881-3aed-3515-88a7-2f4a814cf09e",
+        u.toString(&buf),
+    );
+    try std.testing.expectEqual(@import("uuid.zig").Version.v3, u.version());
+}
+
+test "Generator.initV5Namespace: matches newV5 for the RFC DNS vector (PERF-30)" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+    const pre = gen.initV5Namespace(ns_mod.namespace_dns);
+    const u = pre.name("www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "2ed6657d-e927-568b-95e1-2665a8aea6a2",
+        u.toString(&buf),
+    );
+    try std.testing.expectEqual(@import("uuid.zig").Version.v5, u.version());
+}
+
+test "PrehashedV3 / PrehashedV5: reusable across many names (PERF-30)" {
+    // The cloned-hasher trick must be independent per call; verify by
+    // hashing two different names under one prehashed namespace and
+    // comparing each result to the reference newV3 / newV5 output.
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+
+    const pre3 = gen.initV3Namespace(ns_mod.namespace_dns);
+    const a3 = pre3.name("alpha.example");
+    const b3 = pre3.name("beta.example");
+    try std.testing.expect(!std.mem.eql(u8, &a3.bytes, &b3.bytes));
+    try std.testing.expectEqual(
+        gen.newV3(ns_mod.namespace_dns, "alpha.example").bytes,
+        a3.bytes,
+    );
+    try std.testing.expectEqual(
+        gen.newV3(ns_mod.namespace_dns, "beta.example").bytes,
+        b3.bytes,
+    );
+
+    const pre5 = gen.initV5Namespace(ns_mod.namespace_dns);
+    const a5 = pre5.name("alpha.example");
+    const b5 = pre5.name("beta.example");
+    try std.testing.expect(!std.mem.eql(u8, &a5.bytes, &b5.bytes));
+    try std.testing.expectEqual(
+        gen.newV5(ns_mod.namespace_dns, "alpha.example").bytes,
+        a5.bytes,
+    );
+    try std.testing.expectEqual(
+        gen.newV5(ns_mod.namespace_dns, "beta.example").bytes,
+        b5.bytes,
+    );
+}
+
 // QC-66: Additional namespace test vectors for V3 and V5.
 // Reference values verified with Python's uuid.uuid3() / uuid.uuid5().
 
