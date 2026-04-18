@@ -159,6 +159,13 @@ pub fn loadState(path: []const u8) Error!void {
     return gen_mod.default_generator.loadState(path);
 }
 
+/// QC-100: module-level wrapper for `Generator.secureWipeMacKey` operating
+/// on the shared `default_generator`. See `Generator.secureWipeMacKey` for
+/// semantics (idempotent volatile zeroization of the HMAC state-file key).
+pub fn secureWipeMacKey() void {
+    gen_mod.default_generator.secureWipeMacKey();
+}
+
 /// QC-100 + PERF-30: module-level wrapper for `Generator.initV3Namespace`
 /// that builds a `PrehashedV3` snapshot under the shared `default_generator`.
 /// Safe to call concurrently: `initV3Namespace` only reads immutable

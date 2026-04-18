@@ -444,6 +444,29 @@ pub const Generator = struct {
         self.last_node = null;
     }
 
+    /// Securely zero the HMAC state-file key (`state_mac_key`) and clear it
+    /// to `null`.
+    ///
+    /// Callers that configured a `state_mac_key` (SEC-P3-04) and hold the
+    /// Generator across a long-lived process should invoke this before the
+    /// Generator leaves scope, the process forks an untrusted child, or a
+    /// core dump could be taken, so key bytes don't linger in process
+    /// memory.  Uses `std.crypto.secureZero` (volatile write) to prevent
+    /// the compiler from eliding the zeroization as a dead-store.
+    ///
+    /// Idempotent: safe to call when no key is configured.
+    ///
+    /// After this call `state_mac_key` is `null`, so subsequent `saveState`
+    /// emits wire-format v2 and `loadState` refuses v3 files with
+    /// `Error.StateMacMismatch`.  Re-supply a key via `initOptions` if v3
+    /// semantics are needed again.
+    pub fn secureWipeMacKey(self: *Generator) void {
+        if (self.state_mac_key) |*key_ptr| {
+            std.crypto.secureZero(u8, key_ptr);
+        }
+        self.state_mac_key = null;
+    }
+
     /// Generate a UUIDv4 (random).
     ///
     /// All 122 non-version/variant bits are filled from the CSPRNG source.

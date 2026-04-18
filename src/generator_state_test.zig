@@ -841,3 +841,48 @@ test "Generator: v2 file still loads when state_mac_key is set (SEC-P3-04 backwa
     try gen.loadState(path);
     try std.testing.expectEqual(@as(u14, 0x1122), gen.clock_seq);
 }
+
+test "Generator: secureWipeMacKey clears optional and destroys key material (SEC-P3-04 hygiene)" {
+    const key: [32]u8 = .{0x5A} ** 32;
+    var gen = Generator.initOptions(.{ .state_mac_key = key });
+
+    // Pre-condition: the key is configured, payload bytes match.
+    try std.testing.expect(gen.state_mac_key != null);
+    try std.testing.expectEqualSlices(u8, &key, &gen.state_mac_key.?);
+
+    // Capture a pointer at the optional's storage BEFORE wiping so we can
+    // inspect post-wipe memory. Note: `@ptrCast(&gen.state_mac_key)` points
+    // at the start of the Optional storage (tag byte on some layouts); we
+    // use it as a best-effort memory witness, not an exact payload probe.
+    const storage_ptr: [*]const u8 = @ptrCast(&gen.state_mac_key);
+    const storage_len = @sizeOf(@TypeOf(gen.state_mac_key));
+
+    gen.secureWipeMacKey();
+
+    try std.testing.expect(gen.state_mac_key == null);
+
+    // Security property: the original key bytes must not be recoverable
+    // from the Optional's backing storage. This is mode-agnostic — in
+    // Debug mode Zig overwrites the payload with the 0xAA safety pattern
+    // on the null-flip, in Release mode the `secureZero` volatile writes
+    // persist as 0x00. Either way, `0x5A` must be gone.
+    var saw_key_byte = false;
+    for (storage_ptr[0..storage_len]) |b| {
+        if (b == 0x5A) {
+            saw_key_byte = true;
+            break;
+        }
+    }
+    try std.testing.expect(!saw_key_byte);
+
+    // Idempotence: second call is a no-op and does not panic.
+    gen.secureWipeMacKey();
+    try std.testing.expect(gen.state_mac_key == null);
+}
+
+test "Generator: secureWipeMacKey is safe when no key was ever set" {
+    var gen = Generator.init();
+    try std.testing.expect(gen.state_mac_key == null);
+    gen.secureWipeMacKey(); // must not panic
+    try std.testing.expect(gen.state_mac_key == null);
+}
