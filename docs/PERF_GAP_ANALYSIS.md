@@ -1195,3 +1195,52 @@ glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed bench
 2. **`GeneratorInterfaceFor(G)` additive; vtable retained** — unchanged status. The comptime-generic wrapper does not remove `GeneratorInterface`. Call sites that hold `*Generator` directly already get zero indirection; the wrapper is targeted at generic-over-generator hot-path call sites. No further action needed unless the vtable itself becomes a proven regression source.
 
 *Phase 3 closure cycle complete — 5 closed initially, 11 closed in Group C (10 full + 1 partial), 5 closed in Group D (4 full + 1 partial SEC-P3-07). PERF-21 + PERF-31 + SEC-P3-04 + SEC-P3-08 full; SEC-P3-07 partial.*
+
+## Bench-suite follow-ups (2026-04-18)
+
+### INV-01 — V7 mutex vs lockfree "crossover" at 4T/8T is noise, not signal
+
+**Origin.** The initial benchmark baseline (`benchmarks/results/baseline_contention.json`, commit `12c6a4c`) showed the lockfree V7 path winning at 2T (1.19×) and 16T (1.05×) but losing at 4T (0.96×) and tying at 8T (1.02×). The non-monotonic shape was flagged as a perf-investigation candidate.
+
+**Method.** `perf stat -e cache-misses,LLC-load-misses` was unavailable (`kernel.perf_event_paranoid = 3` on this host blocks raw event access without `CAP_PERFMON` / root). Pivoted to a statistical-significance analysis: re-ran `zig build bench-contention` three additional times (each is the standard 7-run × median-of-6 with stddev) and compared ratios.
+
+**Data.** `lockfree ops_per_s / mutex ops_per_s` across four independent captures:
+
+| Capture | 2T | 4T | 8T | 16T |
+|---|---|---|---|---|
+| baseline (`12c6a4c`) | 1.192 | 0.955 | 1.022 | 1.050 |
+| re-run 1 | 0.978 | 1.015 | 0.984 | 1.017 |
+| re-run 2 | 1.018 | 1.064 | 1.053 | 1.014 |
+| re-run 3 | 0.835 | 0.918 | 1.012 | 1.085 |
+| **range** | **0.835 → 1.192** | **0.918 → 1.064** | **0.984 → 1.053** | **1.014 → 1.085** |
+| **swing** | ±21% | ±8% | ±4% | ±4% |
+
+Per-row stddev was 4–12 % at 2T/4T, 3–8 % at 8T/16T — the observed cross-run variance is inside each row's own noise envelope, so the median-of-6 isn't taming variance at the lower thread counts. The 16T row is the only one where the lockfree path consistently wins (4/4 captures, 1–9 %).
+
+**Conclusion.** There is no real mutex-vs-lockfree crossover at 4T/8T — the original baseline landed in the lower tail of an ~20 %-wide distribution for those thread counts. The useful signal is that lockfree **consistently** outperforms mutex at 16T and higher; at 2T–8T the two paths are statistically indistinguishable on this host's bench harness. No code change; the default (mutex) stays correct.
+
+**Recommendations for bench-reliability (not urgent).**
+
+- Capture perf counters on a CI runner with `kernel.perf_event_paranoid ≤ 1` (or root) to confirm the cache-miss profile matches the hypothesis.
+- Pin bench threads to dedicated cores (`taskset -c 2-17`) and disable CPU frequency scaling (`cpupower frequency-set -g performance`) for the `bench-contention` step.
+- Widen the 7-run × median-of-6 pattern to 15-run × median-of-10 for the contention scenarios specifically — the extra cost (~60 s added) is acceptable since the suite is already gated to manual / main-only.
+- Record `lockfree_fallbacks` count in the regression gate as a secondary signal (spike correlates with contention, so a change in its slope is a leading indicator of a real shift).
+
+**Status.** ✅ Closed — noise confirmed, no optimization action.
+
+### INV-02 — Cross-architecture baseline capture (CI-infra dependent)
+
+**Ask.** `benchmarks/results/baseline*.json` is currently captured on a single x86_64 host. The library ships to Linux / macOS / Windows on both x86_64 and aarch64 (see the `check-cross` job in `.gitlab-ci.yml`), and the lockfree V7 path exercises atomic-ordering semantics (`.acquire` / `.release` / `.acq_rel`) whose cost profile differs between x86's TSO and ARM's weaker memory model. A perf regression that shows up only on ARM wouldn't be caught by the current single-arch gate.
+
+**Proposed work (separate branch / PR).**
+
+1. Add a second set of baselines under `benchmarks/results/aarch64/baseline*.json` captured on an ARM64 runner (e.g., Graviton in GitLab SaaS or a self-hosted arm64 Linux runner).
+2. Extend `compare.zig --all` to scope the walk by arch (via `runner.arch` or `uname -m`): a candidate arm64 run compares against `benchmarks/results/aarch64/baseline*.json`, x86_64 against `benchmarks/results/baseline*.json`.
+3. Wire a second `.gitlab-ci.yml` job (`bench-regression-arm64`) that only runs when a runner with `tags: [arm64, bench]` is available. Skip gracefully (not fail) when no such runner is registered.
+
+**Blockers.**
+
+- No arm64 bench runner is currently tagged in the GitLab CI configuration.
+- Requires a stable, isolated runner (see INV-01 recommendations) to avoid arm64 "regressions" that are actually cold-runner noise.
+
+**Status.** ⏸ Tracked — requires CI infrastructure decision (self-hosted vs SaaS arm64 runner); no code work needed in this repo until a runner is available.
