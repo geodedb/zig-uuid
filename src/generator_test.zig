@@ -1227,3 +1227,33 @@ test "GeneratorInterfaceFor wraps default_generator (PERF-31)" {
     try std.testing.expectEqual(Version.v4, u.version());
     try std.testing.expectEqual(Variant.rfc9562, u.variant());
 }
+
+// PERF-34: lock in the cache-line isolation between the V7 and V1/V6
+// state clusters.  Zig's field-reorder optimisation is free to pack
+// small-aligned fields into padding gaps; an earlier [0]u8 align(64)
+// separator failed to hold the boundary, so the invariant is now
+// enforced by nested align(64) structs AND by this test.  If the
+// layout regresses, the build fails here — no runtime perf debugging
+// required.
+test "PERF-34: V7 and V1V6 clusters occupy distinct cache lines" {
+    const cache_line: usize = 64;
+    const v7_start = @offsetOf(Generator, "v7") / cache_line;
+    const v7_end = (@offsetOf(Generator, "v7") + @sizeOf(@FieldType(Generator, "v7")) - 1) / cache_line;
+    const v1v6_start = @offsetOf(Generator, "v1v6") / cache_line;
+
+    // Every byte of the V7 cluster must be below the V1V6 cluster's
+    // first line.  The inequality is strict: even the last byte of
+    // v7 must not share a line with the first byte of v1v6.
+    try std.testing.expect(v7_end < v1v6_start);
+
+    // Inside the V7 cluster, mono_seq must live on the same line as
+    // the v7.mutex — otherwise the writer under the mutex touches a
+    // different line than the hot field it protects (a different
+    // false-sharing hazard).
+    const v7_mutex_line = (@offsetOf(Generator, "v7") +
+        @offsetOf(@FieldType(Generator, "v7"), "mutex")) / cache_line;
+    const v7_mono_seq_line = (@offsetOf(Generator, "v7") +
+        @offsetOf(@FieldType(Generator, "v7"), "mono_seq")) / cache_line;
+    try std.testing.expectEqual(v7_mutex_line, v7_mono_seq_line);
+    _ = v7_start; // currently unused — future assertions may read it
+}
