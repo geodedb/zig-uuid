@@ -222,6 +222,16 @@ pub fn build(b: *std.Build) void {
     const compare_step = b.step("bench-compare", "Compare two benchmark result JSONs (regression gate)");
     compare_step.dependOn(&run_compare.step);
 
+    // bench-compare-all walks benchmarks/results/ and pairs every
+    // baseline*.json with its sibling latest*.json, aggregating failures.
+    // Typical CI flow: `zig build bench-all` produces latest*.json files,
+    // then `zig build bench-compare-all` gates the whole suite in one step.
+    const run_compare_all = b.addRunArtifact(compare_exe);
+    run_compare_all.addArgs(&.{"--all"});
+    if (b.args) |args| run_compare_all.addArgs(args);
+    const compare_all_step = b.step("bench-compare-all", "Walk benchmarks/results/ and compare every baseline<->latest pair");
+    compare_all_step.dependOn(&run_compare_all.step);
+
     // Compile-only check for every bench executable (PERF-15: used by CI to
     // verify the benchmark sources compile without running them).
     const bench_check_step = b.step("bench-check", "Compile-only check for every benchmark executable");
