@@ -453,6 +453,81 @@ millisecond timestamp field, so UUIDs remain monotonically sortable across threa
 rates exceeding 4 M/sec with strict per-generator monotonicity, use `newV7AtTime` with V8
 for the extra sub-millisecond bits.
 
+## Benchmarks
+
+The repo ships a structured JSON benchmark suite under `benchmarks/`
+modelled after the devnw/zig/thread-pool harness. Runs produce
+results/latest*.json; committed baselines under
+`benchmarks/results/baseline*.json` gate the CI regression job.
+
+### Running benchmarks
+
+```bash
+# Single-thread hot-path scenarios (v4, v7, parse, format, eql, …).
+# ~90s at ReleaseFast, 23 scenarios.
+zig build bench -Doptimize=ReleaseFast -- \
+    --output benchmarks/results/latest.json
+
+# Multi-thread V7 contention matrix (mutex vs lockfree × 2/4/8/16 T).
+# ~60s at ReleaseFast.  15-run median-of-10 for low noise (INV-01).
+zig build bench-contention -Doptimize=ReleaseFast -- \
+    --output benchmarks/results/latest_contention.json
+
+# State persistence (saveState/loadState, v2 vs v3-HMAC vs wrong-key).
+zig build bench-state -Doptimize=ReleaseFast -- \
+    --output benchmarks/results/latest_state.json
+
+# Latency-percentile micro-benchmarks.
+zig build bench-micro-parse  -Doptimize=ReleaseFast -- --output ...
+zig build bench-micro-format -Doptimize=ReleaseFast -- --output ...
+zig build bench-micro-hash   -Doptimize=ReleaseFast -- --output ...
+
+# Everything at once.
+zig build bench-all -Doptimize=ReleaseFast
+```
+
+### Regression gating
+
+```bash
+# Single-pair compare (baseline vs candidate file).
+zig build bench-compare -- \
+    --baseline benchmarks/results/baseline.json \
+    --candidate benchmarks/results/latest.json \
+    --threshold 0.15
+
+# Walker mode — auto-pairs every baseline*.json with its latest*.json
+# sibling and aggregates failures.  Used by CI.
+zig build bench-compare-all -- --threshold 0.15
+```
+
+The regression gate uses `max(threshold, 3×stddev)` per-row — so a
+noisy row gets a wider effective gate but a quiet row cannot sneak
+through below the hard 15% floor. Contention scenarios additionally
+emit a `WARN` line (non-fatal) when `lockfree_fallbacks` drifts by
+more than 50% from baseline — a leading indicator of real contention
+changes that throughput-only gates may miss.
+
+### CI integration
+
+The `bench-regression` job in `.gitlab-ci.yml` pins both `bench` and
+`bench-contention` to dedicated cores via `taskset -c 2-N` on runners
+with ≥4 cores (INV-01), so CI machinery on cores 0-1 does not perturb
+contention scenarios. `BENCH_PIN_CORES=0` disables pinning explicitly.
+
+### Regenerating baselines
+
+When an intentional perf change lands, regenerate baselines and commit:
+
+```bash
+zig build bench -Doptimize=ReleaseFast -- --output benchmarks/results/baseline.json
+zig build bench-contention -Doptimize=ReleaseFast -- --output benchmarks/results/baseline_contention.json
+zig build bench-state -Doptimize=ReleaseFast -- --output benchmarks/results/baseline_state.json
+zig build bench-micro-parse -Doptimize=ReleaseFast -- --output benchmarks/results/baseline_micro_parse.json
+zig build bench-micro-format -Doptimize=ReleaseFast -- --output benchmarks/results/baseline_micro_format.json
+zig build bench-micro-hash -Doptimize=ReleaseFast -- --output benchmarks/results/baseline_micro_hash.json
+git add benchmarks/results/baseline*.json && git commit
+```
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
