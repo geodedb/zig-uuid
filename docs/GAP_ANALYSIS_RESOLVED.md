@@ -3,13 +3,14 @@
 > Mirror of resolved items that were previously tracked in `docs/GAP_ANALYSIS.md`
 > and the GitLab issue tracker. The issue tracker is authoritative.
 >
-> Last updated: 2026-04-18 (Group C closure round — 11 additional resolutions appended; cumulative 52)
+> Last updated: 2026-04-18 (Group D closure round — 5 additional resolutions appended; cumulative 60; 4 full + 1 partial this round)
 
 ## Summary
 
 - **25 prior tracker items** (Cycles 12–13): resolved in-code; still marked open on the GitLab tracker; closure queued in the Phase-3 `glab` block in `docs/GAP_ANALYSIS.md`.
 - **16 Phase-3 initial closure-cycle items** (2026-04-18): see "Phase 3 Closure Cycle" section. Docs-tracked only.
 - **11 Group C closure-round items** (2026-04-18, HEAD `5bee3e7`): 10 full closures + 1 partial (PERF-31 doc mitigation). See "Group C Closure Round" section. Docs-tracked only.
+- **5 Group D closure-round items** (2026-04-18, HEAD `f77e7da`): 4 full closures (PERF-21, PERF-31 promoted, SEC-P3-04, SEC-P3-08) + 1 partial (SEC-P3-07 — 3 human-input TODOs). See "Group D Closure Round" section. Docs-tracked only.
 
 Evidence for each resolution is pinned to a concrete file:line, commit SHA, or test output.
 
@@ -561,3 +562,81 @@ recorded under "Phase 3 Closure Cycle" below.
 - Accompanying style commit: `5bee3e7` (`zig fmt` nit after PERF-22; not gap-tracked).
 - Remaining open across all domains: **5** — PERF-31 (partial), PERF-21 (Group D), SEC-P3-04 (Group D), SEC-P3-08 (Group D), SEC-P3-07 (blocked).
 - Cumulative closures this project: **52** (25 prior tracker + 16 Phase-3 initial + 11 Group C).
+
+---
+
+## Group D Closure Round (2026-04-18)
+
+> HEAD at closure: `f77e7da` (pushed). Test state: all unit + integration suites green.
+> Docs-tracked only — no dedicated GitLab work items. 4 full closures + 1 partial
+> (SEC-P3-07 — `security.txt`, CVSS v4.0, and safe-harbor skeleton landed; full
+> closure blocked on three human-input TODOs: PGP fingerprint publication, CNA
+> choice, safe-harbor legal review). PERF-31 — previously partial in Group C —
+> is promoted to Closed this round via an additive comptime-generic wrapper.
+
+### Performance — Group D (2 closed)
+
+### PERF-31: `GeneratorInterface` vtable blocks inlining [RESOLVED — promoted from partial]
+
+- **Issue:** tracked in docs only
+- **Category:** Performance (P3, suspected → confirmed post-fix)
+- **Resolution:** Added **additive** comptime-generic `GeneratorInterfaceFor(comptime G: type)` wrapper alongside the existing runtime-vtable `GeneratorInterface`. Every method on the comptime-generic wrapper is an `inline` direct call through `self.g.*`; LLVM inlines through at ReleaseFast — zero indirection on the hot path. The existing vtable `GeneratorInterface` is **retained unchanged** for runtime-polymorphism call sites (DI, fakes, metric wrappers). No existing call site breaks.
+- **Evidence:** `src/generator.zig` (`GeneratorInterfaceFor(G)` declaration + `inline` methods), `src/generator_test.zig` (direct-equivalence tests against both wrappers).
+- **Commit:** `7c91b41`
+- **Resolved date:** 2026-04-18
+
+### PERF-21: V7 mutex serialises every call — opt-in lock-free CAS path [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Performance (P0, suspected → confirmed)
+- **Resolution:** Opt-in lock-free V7 path landed via `InitOptions.v7_lockfree = true`. When enabled, `newV7`/`newV7AtTime` use a packed `u64 = (ms<<12) | seq` CAS over `v7_atomic_state` instead of the `v7_mutex` critical section. The **default remains the mutex path** (correctness-authoritative). The 2-byte `seq` CSPRNG draw is inside the CAS retry loop by design — worst case on a CAS miss is a re-draw; noted in-code. A per-process saturation-fallback path keeps same-ms overflow waits bounded.
+- **Evidence:** `src/generator.zig` (`newV7Atomic`, `v7_atomic_state`, `InitOptions.v7_lockfree`), `src/generator_test.zig` (single-thread equivalence, multi-thread stress, saturation-fallback tests), `bench/main.zig` (`benchV7ContentionOnce` exercises both paths). Multi-thread bench at 32 threads: **~34% higher ops/s** vs mutex (982k vs 730k). Monotonicity stress test: 10/10 consecutive passes.
+- **Commit:** `f77e7da`
+- **Resolved date:** 2026-04-18
+
+---
+
+### Security — Group D (2 closed, 1 partial)
+
+### SEC-P3-08: Global CSPRNG substitution risk [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Security / CWE-670, CWE-345
+- **Severity:** Medium (Risk 8, confidence::suspected → confirmed post-fix)
+- **Resolution:** Added `Generator.InitOptions.random: ?std.Random` — when non-null, this overrides the mutable-global `std.Io.Threaded.global_single_threaded` capture. `Generator.initOptions(opts)` is the new entry point. The default (null `random`) remains the freshly-seeded `std.crypto.random` path — identical runtime behaviour to before for all existing call sites. Every `Generator.init` call site continues to work unchanged. A PoC test overrides the random source with a deterministic PRNG and asserts V4 output is driven by the override (substitution attack is now explicit and caller-consented, not implicit and global).
+- **Evidence:** `src/generator.zig` (`InitOptions`, `initOptions`, `InitOptions.random`), `src/generator_test.zig` (deterministic-PRNG substitution proof).
+- **Commit:** `7e70fd5`
+- **Resolved date:** 2026-04-18
+
+### SEC-P3-04: State file lacks MAC/signature [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Security / CWE-345, CWE-353
+- **Severity:** Medium (Risk 9, confidence::confirmed)
+- **Resolution:** Added state-file **wire-format v3** with an appended HMAC-SHA256 tag computed over header + payload using the new caller-supplied `Generator.state_mac_key: ?[32]u8`. `loadState` rejects on tag mismatch with the new `Error.StateMacMismatch`; comparison is **timing-safe** (`std.crypto.timing_safe.eql`). **Backward-compatible**: v1/v2 state files still load read-only when `state_mac_key == null`; v3 is written only when a key is set. Migration path: a caller sets `state_mac_key` once, then on next save the file is upgraded to v3 transparently.
+- **Evidence:** `src/generator.zig` (`saveState` v3 writer, `loadState` v3 reader, `StateMacMismatch`), `src/generator_state_test.zig` (v1/v2 BC tests, v3 round-trip, tampered-tag rejection, timing-safe assertion).
+- **Commit:** `3f34a96`
+- **Resolved date:** 2026-04-18
+
+### SEC-P3-07: SECURITY.md missing PGP / CVE path / safe-harbor / security.txt [PARTIALLY RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Security / CWE-1059 (process)
+- **Severity:** Low (Risk 4, confidence::confirmed)
+- **Resolution (partial):** Landed the mechanical portions that do not require human legal / cryptographic input: (a) `/.well-known/security.txt` published per RFC 9116 with contact, preferred-languages, and expiration; (b) CVSS v4.0 severity statement section added to `SECURITY.md`; (c) safe-harbor language skeleton (Disclose.io-derived) added to `SECURITY.md` as a draft awaiting legal review.
+- **Blocked on (human input, 3 TODOs):**
+  1. Publish a PGP key + fingerprint (block: key generation + publication).
+  2. Choose + register a CNA path (MITRE vs GitLab CNA vs project-own).
+  3. Legal review to approve the safe-harbor language (Disclose.io template) and remove the draft notice.
+- **Evidence:** `/.well-known/security.txt`, `SECURITY.md` (CVSS v4.0 section, safe-harbor draft with `<!-- TODO -->` markers for the three human-input items).
+- **Commit:** `6ffe052`
+- **Resolved date (partial):** 2026-04-18
+
+---
+
+### Group D Closure Round — Tally
+
+- Full closures: **4** (PERF-31 promoted from partial, PERF-21, SEC-P3-08, SEC-P3-04).
+- Partial closure: **1** (SEC-P3-07 — mechanical parts landed; 3 human-input TODOs remain).
+- Remaining open across all domains: **0** (SEC-P3-07 Partial is flagged with explicit unblock steps — no other outstanding items).
+- Cumulative closures this project: **60** (25 prior tracker + 16 Phase-3 initial + 11 Group C + 5 Group D of which 1 partial). Won't-Do retained: 4.

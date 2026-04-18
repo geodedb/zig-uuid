@@ -652,7 +652,7 @@ Status: ✅ Closed (2026-04-18, commit `be5788f`) — explicit `.mode = 0o600` +
 **4. SEC-P3-04** (Medium, CWE-345 / CWE-353, Risk 9, confidence::confirmed) — State file lacks MAC/signature.
 Evidence: `src/generator.zig:604, 626-686` — format is magic(8) + version(1) + len(4) + payload; integrity bounded by struct size only. A local attacker who can write the state file can set arbitrary `node_id`, `clock_seq`, `last_v1_ts`, `last_ms`.
 Remediation: append BLAKE3/HMAC-SHA256 tag computed over header+payload using a caller-supplied 32-byte key (new field on `SaveStateOptions`). Reject on tag mismatch.
-Status: Open.
+Status: ✅ Closed (2026-04-18, commit `3f34a96`) — HMAC-SHA256 wire-format v3 + timing-safe compare (`std.crypto.timing_safe.eql`); backward-compatible with v1/v2 reads when `state_mac_key == null`; `Error.StateMacMismatch` on tag mismatch. Full body in `docs/GAP_ANALYSIS_RESOLVED.md` (Group D).
 
 **5. SEC-P3-05** (Low-Medium, CWE-327 / CWE-347, Risk 6, confidence::confirmed) — V3/V5 namespace-abuse vector.
 Evidence: `src/versions.zig:25-37` (`newV3`/`newV5` accept arbitrary `ns: UUID`); `src/namespace.zig:15-34` (fixed RFC namespaces are compile-time constants, but API allows any UUID). Callers feeding attacker-controlled `ns` or `name` can craft collisions/forgeries under MD5 (V3) and weakened SHA-1 (V5).
@@ -667,13 +667,13 @@ Status: Won't Do (intentional; re-confirmed, see SEC-R12-01).
 **7. SEC-P3-07** (Low, CWE-1059, Risk 4, confidence::confirmed) — SECURITY.md missing PGP fingerprint, CVE path, safe-harbor, security.txt.
 Evidence: `SECURITY.md:13-40` — reporting section lists email only; no PGP key fingerprint, no CVE assignment path, no safe-harbor clause, no `/.well-known/security.txt`.
 Remediation: add PGP fingerprint, MITRE/GitLab CNA routing, CVSS v4.0 statement, safe-harbor language (Disclose.io template), publish `security.txt`.
-Status: Open.
+Status: ⚠️ Partially Closed (2026-04-18, commit `6ffe052`) — `security.txt` (RFC 9116), CVSS v4.0 section, and safe-harbor skeleton (Disclose.io-derived) landed. **Blocked on 3 human-input TODOs:** (1) PGP key + fingerprint publication, (2) CNA choice (MITRE / GitLab CNA / project-own), (3) legal review of safe-harbor language.
 
-**8. SEC-P3-08** (Medium, CWE-670 / CWE-345, Risk 8, confidence::suspected) — Global CSPRNG substitution risk.
+**8. SEC-P3-08** (Medium, CWE-670 / CWE-345, Risk 8, confidence::suspected → confirmed post-fix) — Global CSPRNG substitution risk.
 Evidence: `src/generator.zig:25` captures `std.Io.Threaded.global_single_threaded` which is a `pub var` in stdlib; a sibling linked translation-unit can overwrite this pointer before `Generator.init` runs.
 How to confirm: write a test that overrides `std.Io.Threaded.global_single_threaded` with a deterministic PRNG and observes V4 output convergence.
 Remediation: accept an explicit `std.Random` in `Generator.InitOptions`; default to a freshly-seeded `std.crypto.random` rather than the mutable global.
-Status: Open (suspected; needs PoC test).
+Status: ✅ Closed (2026-04-18, commit `7e70fd5`) — `Generator.InitOptions.random: ?std.Random` added via `Generator.initOptions(opts)`. Default (`null`) preserves existing behaviour; substitution is now explicit and caller-consented. PoC test asserts deterministic-PRNG override drives V4 output.
 
 ### Retained Phase-2 Tradeoffs (still tracked)
 
@@ -710,10 +710,10 @@ _Last updated: 2026-04-18 — Phase 3 complete. 8 new findings (5 Medium confirm
 
 ## Phase 3 Closure Cycle (2026-04-18)
 
-> 4 of the 8 Phase-3 SEC findings landed in-tree this cycle (Group C closure round, HEAD `5bee3e7`).
-> 0 findings remain Deferred — pending user sign-off (Group C).
-> 2 findings are Deferred (high-risk) — require explicit approval before implementation (Group D).
-> 1 finding is Blocked on external input (SEC-P3-07).
+> 4 of the 8 Phase-3 SEC findings landed in Group C (HEAD `5bee3e7`): SEC-P3-01/02/03/05.
+> Group D closure round (HEAD `f77e7da`): +2 full closures (SEC-P3-04, SEC-P3-08) + 1 partial (SEC-P3-07).
+> 0 findings remain Deferred (Group C or D).
+> 0 findings remain fully Blocked — SEC-P3-07 is Partial; the mechanical portions (security.txt / CVSS v4.0 / safe-harbor skeleton) landed; 3 human-input TODOs flagged.
 > 1 finding remains Won't Do (SEC-P3-06, re-confirmed — identical to SEC-R12-01 decision).
 
 ### Closed this cycle (Group C, 4)
@@ -731,18 +731,19 @@ _Last updated: 2026-04-18 — Phase 3 complete. 8 new findings (5 Medium confirm
 
 _All Group C SEC items closed in Group C closure round (2026-04-18). Historical deferred entries moved to `docs/GAP_ANALYSIS_RESOLVED.md`._
 
-### Deferred (high-risk) — requires explicit approval (Group D, 2)
+### Group D closure round (2026-04-18, HEAD `f77e7da`) — 2 closed, 1 partial
 
-| Gap-ID | Status | Rationale | Required before implementation |
-| ------ | ------ | --------- | ------------------------------ |
-| SEC-P3-04 | ⏸️ Deferred (high-risk) | HMAC/BLAKE3 state-file v3 wire-format redesign; introduces a new caller-supplied 32-byte key and key-management surface (rotation, absence-handling, test vectors). | Explicit approval for the wire format, the key-management contract (where does the key live?), and migration path from v2 files. |
-| SEC-P3-08 | ⏸️ Deferred (high-risk) | Global CSPRNG re-architecture — replace the mutable-global `std.Io.Threaded.global_single_threaded` capture with an explicit `std.Random` in `Generator.InitOptions` defaulting to `std.crypto.random`. Touches every `Generator.init` call site. | Explicit approval for the API change + a PoC test demonstrating the substitution attack before/after. |
+> Full per-item bodies mirrored in `docs/GAP_ANALYSIS_RESOLVED.md` (Group D).
 
-### Blocked — external input required (1)
+| Gap-ID | Status | Commit | Evidence | Notes |
+| ------ | ------ | ------ | -------- | ----- |
+| SEC-P3-04 | ✅ Closed (2026-04-18) | `3f34a96` | `src/generator.zig` (`saveState` v3, `loadState` v3, `StateMacMismatch`), `src/generator_state_test.zig` | HMAC-SHA256 wire-format v3; timing-safe tag compare (`std.crypto.timing_safe.eql`); backward-compatible v1/v2 reads when `state_mac_key == null`; v3 written only when `state_mac_key` is set. |
+| SEC-P3-08 | ✅ Closed (2026-04-18) | `7e70fd5` | `src/generator.zig` (`InitOptions.random`, `initOptions`), `src/generator_test.zig` | `InitOptions.random: ?std.Random` via `Generator.initOptions(opts)`. Default null preserves behaviour; PoC test proves deterministic-PRNG substitution is now explicit and caller-consented. |
+| SEC-P3-07 | ⚠️ Partially Closed (2026-04-18) | `6ffe052` | `/.well-known/security.txt`, `SECURITY.md` (CVSS v4.0 + safe-harbor draft) | Mechanical parts landed. **3 human-input TODOs remain:** (1) PGP fingerprint publication, (2) CNA choice, (3) legal review of safe-harbor language. |
 
-| Gap-ID | Status | Blocker | Unblock criteria |
-| ------ | ------ | ------- | ---------------- |
-| SEC-P3-07 | 🔒 Blocked | No PGP key published; no CNA decision (MITRE vs GitLab CNA vs project-own); no legal safe-harbor review completed. | (1) Publish a PGP key + fingerprint. (2) Choose + register a CNA path. (3) Legal review approves safe-harbor language (Disclose.io template). `security.txt` file and CVSS-v4.0 statement portions can land independently if the user wants a partial fix — tracked as a separate follow-up. |
+### Deferred — pending user sign-off (Group D, 0)
+
+_All Group D SEC items landed (SEC-P3-07 partial — 3 human-input TODOs flagged, not a deferral)._
 
 ### Won't Do — reconfirmed (1)
 
@@ -755,4 +756,11 @@ _All Group C SEC items closed in Group C closure round (2026-04-18). Historical 
 - **SEC-R9-02** (CI Zig hash TOFU) — Won't Do. Pipeline governance concern, not a library-code finding. MUST NOT re-open.
 - **SEC-R2-01** (unverified Zig download) — Won't Do. Pipeline governance concern. MUST NOT re-open.
 
-_Phase 3 closure cycle complete (Group C round, 2026-04-18) — 4 closed (SEC-P3-01/02/03/05), 0 deferred Group C, 2 deferred high-risk (Group D: SEC-P3-04, SEC-P3-08), 1 blocked on external input (SEC-P3-07), 1 Won't-Do reconfirmed (SEC-P3-06)._
+### Verifier follow-up (non-blocking, 2026-04-18)
+
+These items surfaced during Group D verification but are **not blockers** — they are captured here for future hardening. Neither opens a new gap in this cycle.
+
+1. **`state_mac_key` not zeroized on Generator drop** — the `Generator` struct has no `deinit`, so the 32-byte HMAC key is not wiped from memory when a `Generator` falls out of scope. This is **caller-responsibility** per the current design (the caller owns key lifecycle). Future hardening candidate: an optional `secureWipeMacKey()` helper, or introduce an explicit `Generator.deinit()` that zeroizes via `std.crypto.utils.secureZero` and nulls the field. Not landed this cycle.
+2. **2-byte `seq` CSPRNG draw inside the V7 CAS retry loop** (opt-in `v7_lockfree` path) — by design. Worst case on a CAS miss is a wasted CSPRNG draw on the next retry; this is cheaper than moving the draw outside the loop (which would force a mutex or a more complex try-commit scheme). Commented in-code at the CAS site.
+
+_Phase 3 closure cycle complete (Group D round, 2026-04-18) — 4 closed in Group C (SEC-P3-01/02/03/05), 2 closed in Group D (SEC-P3-04, SEC-P3-08), 1 partial in Group D (SEC-P3-07 — 3 human-input TODOs), 1 Won't-Do reconfirmed (SEC-P3-06)._

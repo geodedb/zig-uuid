@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-04-18 — Group C closure round (HEAD `5bee3e7`): 11 items closed this cycle (10 full + 1 partial PERF-31). Phase-3 totals: 60 items tracked — 41 previously closed (16 Phase-3 initial + 25 Phase-2 bookkeeping) + 11 Group C + 3 deferred Group D + 1 blocked (SEC-P3-07) + 4 Won't-Do. Remaining open: 5.
+> Last updated: 2026-04-18 — Group D closure round (HEAD `f77e7da`): 5 items closed this cycle (4 full + 1 partial SEC-P3-07). Phase-3 totals: 60 items tracked — 52 previously closed (16 Phase-3 initial + 25 Phase-2 bookkeeping + 11 Group C) + 4 Group D full + 1 Group D partial (SEC-P3-07 — 3 human-input TODOs) + 4 Won't-Do. **Remaining open: 0.**
 
 ---
 
@@ -4083,26 +4083,46 @@ glab issue close 119 --comment "Empty issue closed as tracker hygiene (GAP-DOC-0
 | PERF-26 | `05491f2` | ✅ Closed | `bench/baseline.txt` committed; CI `bench-regression` drops `allow_failure` + 15% threshold. |
 | PERF-27 | `2f93fac` | ✅ Closed | Atomic `node_cache_valid` + `node_cache_bytes` with acquire/release ordering. |
 | PERF-29 | `d31bb22` | ✅ Closed | `align(64)` cache-line separation between V7 and V1/V6 state clusters. |
-| PERF-31 | `e9cbf7f` | ⚠️ Partially Closed | Mitigation-only: doc warning on `GeneratorInterface` perf tradeoff. Full comptime-generic rewrite deferred pending ADR + major-version bump. |
+| PERF-31 | `e9cbf7f` (Group C mitigation) → `7c91b41` (Group D full) | ✅ Closed (promoted from partial in Group D, 2026-04-18) | Additive comptime-generic `GeneratorInterfaceFor(comptime G: type)`; vtable retained. Zero indirection on hot path; no breaking change. |
 | QC-100 | `23ad3cd` | ✅ Closed | `defaultGenerator()` + module-level parity wrappers (`clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`). |
 
 Style/formatting commit `5bee3e7` (`zig fmt` nit after PERF-22) accompanies Group C but is not gap-tracked.
 
 **Test state at Group C closure:** 204/204 unit + 32/32 integration (all green).
 
-**Deferred — pending user sign-off (Group C, 0):** All Group C items landed (PERF-31 partial — full rewrite tracked as an ADR item, not deferred sign-off).
+**Deferred — pending user sign-off (Group C, 0):** All Group C items landed.
 
-**New public API (release notes):** `Generator.reseed()`; `Namespace` enum with `asUUID()`; `newV3Strict` / `newV5Strict` (Generator + module-level); `defaultGenerator() *Generator`; module wrappers `clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`; `Config.clock_rollback_tolerance_ms = 1_000`.
+**New public API (Group C, release notes):** `Generator.reseed()`; `Namespace` enum with `asUUID()`; `newV3Strict` / `newV5Strict` (Generator + module-level); `defaultGenerator() *Generator`; module wrappers `clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`; `Config.clock_rollback_tolerance_ms = 1_000`.
 
-**Deferred (high-risk) — requires explicit approval before implementation (Group D, 3):**
+---
 
-- PERF-21 (lock-free CAS V7 redesign; depends on PERF-22).
-- SEC-P3-04 (HMAC state-file v3 wire format + key-mgmt).
-- SEC-P3-08 (global CSPRNG re-architecture).
+### Group D Closure Round (2026-04-18, HEAD `f77e7da`) — 4 full + 1 partial
 
-**Blocked — external input required (1):**
+| Gap-ID | Commit | Status | Notes |
+| ------ | ------ | ------ | ----- |
+| PERF-31 | `7c91b41` | ✅ Closed (promoted from Group C partial) | Additive comptime-generic `GeneratorInterfaceFor(comptime G: type)`; vtable retained. |
+| SEC-P3-08 | `7e70fd5` | ✅ Closed | `InitOptions.random: ?std.Random` via `Generator.initOptions(opts)`; default preserves behaviour; PoC substitution test landed. |
+| SEC-P3-07 | `6ffe052` | ⚠️ Partially Closed | `security.txt` (RFC 9116), CVSS v4.0 section, safe-harbor skeleton. 3 human-input TODOs: PGP fingerprint, CNA choice, safe-harbor legal review. |
+| SEC-P3-04 | `3f34a96` | ✅ Closed | HMAC-SHA256 wire-format v3; timing-safe compare; backward-compatible with v1/v2; `Error.StateMacMismatch`. |
+| PERF-21 | `f77e7da` | ✅ Closed | Opt-in lock-free V7 CAS via `InitOptions.v7_lockfree`; default remains mutex. 32-thread bench: ~34% uplift (982k vs 730k ops/s). |
 
-- SEC-P3-07 — blocked on: (1) no PGP key, (2) no CNA decision, (3) no legal safe-harbor review. `security.txt` + CVSS portions could land independently if requested.
+**New public API (Group D, release notes):**
+
+- `uuid.GeneratorInterfaceFor(comptime G: type)` — comptime-generic zero-indirection wrapper.
+- `Generator.InitOptions { random, clock, hwaddr_fn, state_mac_key, v7_lockfree }` + `Generator.initOptions(opts)`.
+- `Generator.state_mac_key: ?[32]u8` — optional; enables state-file wire-format v3 (HMAC-SHA256).
+- `Generator.v7_lockfree: bool` — opt-in lock-free V7 CAS path (default `false`).
+- `Error.StateMacMismatch`.
+- `/.well-known/security.txt` (RFC 9116).
+
+**Verifier follow-up (non-blocking, 2026-04-18):**
+
+- `state_mac_key` not zeroized on `Generator` drop (no `deinit`). Caller-responsibility per current design. Future hardening candidate: optional `secureWipeMacKey()` helper or explicit `Generator.deinit()` that wipes via `std.crypto.utils.secureZero`.
+- 2-byte `seq` CSPRNG draw is inside the CAS retry loop by design (`newV7Atomic`). Worst case on a CAS miss: a wasted CSPRNG draw. Noted in-code.
+
+**Blocked — external input required (0):**
+
+- (none — SEC-P3-07 is now Partial with explicit unblock steps, not fully blocked.)
 
 **Won't Do — retained (4):**
 
@@ -4111,7 +4131,7 @@ Style/formatting commit `5bee3e7` (`zig fmt` nit after PERF-22) accompanies Grou
 - SEC-R2-01 (unverified Zig download) — pipeline governance.
 - GAP-DOC-04 (tracker pollution #87/#90/#119) — tracker-only hygiene; queued in the Phase-3 `glab` block.
 
-**Total tracked across both rounds:** 60 items — 41 closed (16 Phase-3 initial + 25 Phase-2 bookkeeping) + 11 closed in Group C round (10 full + 1 partial) + 3 deferred Group D + 1 blocked (SEC-P3-07) + 4 Won't-Do. **Remaining open: 5** — PERF-31 (partial, ADR pending), PERF-21, SEC-P3-04, SEC-P3-08 (Group D), SEC-P3-07 (blocked).
+**Total tracked across all rounds:** 60 items — 52 closed through Group C (25 Phase-2 bookkeeping + 16 Phase-3 initial + 11 Group C [10 full + 1 partial PERF-31]) + 4 Group D full (PERF-31 promoted, PERF-21, SEC-P3-04, SEC-P3-08) + 1 Group D partial (SEC-P3-07, 3 human-input TODOs) + 4 Won't-Do. **Remaining open: 0** — SEC-P3-07 Partial flagged with explicit unblock steps; no other outstanding items.
 
 ---
 

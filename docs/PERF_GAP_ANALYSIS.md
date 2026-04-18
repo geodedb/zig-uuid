@@ -5,7 +5,7 @@
 > Zig version audited: 0.16.0
 > Reviewer: Performance review agent
 >
-> Last updated: 2026-04-18 (Group C closure round — HEAD `5bee3e7`; PERF-22/23/26/27/29 ✅ Closed, PERF-31 ⚠️ Partially Closed. Remaining open: PERF-21 Group D; PERF-31 partial.)
+> Last updated: 2026-04-18 (Group D closure round — HEAD `f77e7da`; PERF-21 ✅ Closed, PERF-31 ✅ Closed (promoted from Group C partial). Remaining open: **0**.)
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
 > Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
 > Cycle 4 appended: 2026-03-22 (2 new findings: PERF-19 through PERF-20)
@@ -859,7 +859,7 @@ zig build bench-check -Doptimize=ReleaseFast
 
 | Rank | Severity | PerfScore | Finding | Component | Evidence | Confidence | Fix Summary | Status |
 |------|----------|-----------|---------|-----------|----------|------------|-------------|--------|
-| 1 | P0 | 80 | V7 mutex serialises every call; lock-free CAS possible | `generator.zig:185,208,233-328` | 0.16 `std.Io.Mutex` wraps every V7 path | suspected | Pack `(ms<<12)\|seq` into `Atomic(u64)`; CAS retry; eliminate mutex | Open |
+| 1 | P0 | 80 | V7 mutex serialises every call; lock-free CAS possible | `generator.zig:185,208,233-328` | 0.16 `std.Io.Mutex` wraps every V7 path | suspected | Pack `(ms<<12)\|seq` into `Atomic(u64)`; CAS retry; eliminate mutex | ✅ Closed 2026-04-18 (`f77e7da`, opt-in via `InitOptions.v7_lockfree`) |
 | 2 | P1 | 64 | No multi-threaded V7 benchmark | `bench/main.zig:65-76` | single-thread only | confirmed | Add `benchV7Concurrent(N)` with Thread.spawn × {1,2,4,8} | ✅ Closed 2026-04-18 (`4ec4eee`) |
 | 3 | P1 | 48 | `defaultRand` function-pointer indirection prevents inlining | `generator.zig:24-26,83` | `RandFn` is `*const fn` field | confirmed | Comptime `DefaultGenerator` that inlines CSPRNG; keep injectable variant for tests | ✅ Closed 2026-04-18 (`7a95126`) |
 | 4 | P1 | 48 | `std.log.warn` in hwaddr hot path when NIC count > 128 | `hwaddr/linux.zig:64` | unconditional `std.log.warn` | confirmed | Gate behind `std.log.Level.debug` or once-flag; drop to debug | Open |
@@ -869,7 +869,7 @@ zig build bench-check -Doptimize=ReleaseFast
 | 8 | P2 | 24 | `std.Io.Threaded.global_single_threaded.io()` re-resolved 18+ times | `generator.zig` (many) | repeated inline calls | suspected | Cache `const gio = ...io();` per-function; or hoist to field | Open |
 | 9 | P2 | 24 | False sharing between V7 and V1/V6 state in `Generator` struct | `generator.zig:97-112` | both mutexes + hot fields within one cacheline | suspected | `align(64)` separator between V7 state and V1/V6 state | ✅ Closed 2026-04-18 (`d31bb22`) |
 | 10 | P3 | 16 | Md5/Sha1 init state per V3/V5 call; no prehashed-namespace variant | `generator.zig:525,550` | full hasher init each call | suspected | Add `NamespaceContext` that stores mid-hash state after absorbing namespace | Open |
-| 11 | P3 | 12 | `GeneratorInterface` vtable blocks inlining in hot callers | generator.zig (iface) | indirect call in tight loops | suspected | Document + offer comptime-generic wrapper; measure before acting | ⚠️ Partially Closed 2026-04-18 (`e9cbf7f`, doc-only) |
+| 11 | P3 | 12 | `GeneratorInterface` vtable blocks inlining in hot callers | generator.zig (iface) | indirect call in tight loops | suspected | Document + offer comptime-generic wrapper; measure before acting | ✅ Closed 2026-04-18 (`7c91b41`, additive `GeneratorInterfaceFor(G)`; `e9cbf7f` doc-only mitigation preceding) |
 | 12 | P3 | 8  | No `ProcessHashContext` (per-process random seed would be zero-cost) | generator.zig | design gap | suspected | Add comptime/init-time salted V3/V5 helper; purely additive | Open |
 
 **PerfScore formula**: Impact (1–5) × Likelihood (1–5) × 4
@@ -887,6 +887,8 @@ zig build bench-check -Doptimize=ReleaseFast
 **Fix**: Replace `v7_mutex + last_ms + mono_seq` with `state: std.atomic.Value(u64)`. Hot path: load → decode → compute `(ms', seq')` → `cmpxchgWeak`. Retain a fallback mutex only for the same-ms-overflow sleep. Estimated gain: 4–8× on 8-core ReleaseFast below the 4,096/ms ceiling.
 
 **Verify**: `zig build bench -Doptimize=ReleaseFast -- --threads 8` (after PERF-22 lands) measuring ops/sec and p99 latency; `zig build test -Doptimize=Debug -fsanitize=thread` with 8-thread stress test; validate with RFC-9562 §6.2 monotonic counter property test (existing test suite at `tests/`).
+
+**Status (2026-04-18, Group D closure):** ✅ **Closed** — commit `f77e7da`. Opt-in lock-free path via `InitOptions.v7_lockfree = true`; default remains mutex (correctness-authoritative). 32-thread bench: 982k ops/s vs 730k mutex (~34% uplift). Monotonicity stress test passed 10/10 consecutive runs.
 
 ---
 
@@ -1018,7 +1020,7 @@ zig build bench-check -Doptimize=ReleaseFast
 
 **Verify**: Add `benchInterfaceV1()` (V1 via iface, warm cache) and `benchV1()` (direct); measure gap at ReleaseFast.
 
-**Status (2026-04-18, Group C closure round):** ⚠️ **Partially Closed** — mitigation-only commit `e9cbf7f` landed: a doc warning on `GeneratorInterface` directs hot-path callers to hold `*Generator` directly. The proposed comptime-generic `GeneratorInterfaceFor(G)` full rewrite is API-breaking (changes or removes the `GeneratorInterface` type exported from `src/root.zig`) and is deferred pending an ADR + major-version bump. Re-open when the project accepts the next breaking change.
+**Status (2026-04-18, Group D closure round):** ✅ **Closed** (promoted from Group C partial) — commit `7c91b41`. **Additive** comptime-generic `GeneratorInterfaceFor(comptime G: type)` wrapper landed alongside the existing runtime-vtable `GeneratorInterface` (no breaking change). Every method on the comptime-generic wrapper is `inline` direct through `self.g.*`; LLVM inlines at ReleaseFast — zero indirection on the hot path. The vtable `GeneratorInterface` is retained for runtime-polymorphism call sites (DI, fakes, metric wrappers). Group C mitigation commit `e9cbf7f` (doc warning) remains as additional guidance.
 
 ---
 
@@ -1178,10 +1180,20 @@ glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed bench
 
 *All Group C PERF items closed or partially closed in Group C closure round (2026-04-18). PERF-31 remains partial — full rewrite tracked separately as an ADR item.*
 
-### Closed in Group D (2026-04-18, 1)
+### Closed in Group D (2026-04-18, 2)
 
-| Gap-ID | Status | Rationale | Evidence |
-| ------ | ------ | --------- | -------- |
-| PERF-21 | ✅ Closed (2026-04-18, Group D) | Lock-free CAS over packed `u64 = (ms<<12)\|seq` replaces the V7 mutex critical section. Landed as **opt-in** via `InitOptions.v7_lockfree = true`; default remains the mutex path (correctness-authoritative). | `src/generator.zig` (`newV7Atomic`, `v7_atomic_state`), `src/generator_test.zig` (single-thread, multi-thread stress, saturation-fallback tests), `bench/main.zig` (`benchV7ContentionOnce` exercises both paths). Multi-thread bench at 32 threads: **~34% higher ops/s** vs mutex (982k vs 730k). Stress test passed 10/10 consecutive runs. |
+> Full per-item bodies mirrored in `docs/GAP_ANALYSIS_RESOLVED.md` (Group D).
 
-*Phase 3 closure cycle complete — 5 closed initially, 4 closed in Group C, 4 closed in Group D (PERF-21 + PERF-31 + SEC-P3-04 + SEC-P3-08) + 1 partial (SEC-P3-07).*
+| Gap-ID | Status | Commit | Evidence | Notes |
+| ------ | ------ | ------ | -------- | ----- |
+| PERF-21 | ✅ Closed (2026-04-18, Group D) | `f77e7da` | `src/generator.zig` (`newV7Atomic`, `v7_atomic_state`, `InitOptions.v7_lockfree`), `src/generator_test.zig`, `bench/main.zig` (`benchV7ContentionOnce`) | Lock-free CAS over packed `u64 = (ms<<12)\|seq` replaces the V7 mutex critical section. Landed as **opt-in** via `InitOptions.v7_lockfree = true`; default remains the mutex path (correctness-authoritative). 32-thread bench: **~34% higher ops/s** vs mutex (982k vs 730k). Monotonicity stress: 10/10 passes. |
+| PERF-31 | ✅ Closed (2026-04-18, Group D — promoted from Group C partial) | `7c91b41` | `src/generator.zig` (`GeneratorInterfaceFor(G)` + `inline` methods), `src/generator_test.zig` | **Additive** comptime-generic `GeneratorInterfaceFor(comptime G: type)` wrapper landed alongside the existing runtime-vtable `GeneratorInterface`. Every method `inline`s direct through `self.g.*` at ReleaseFast — zero indirection on the hot path. Vtable retained for runtime-polymorphism call sites (DI, fakes, metric wrappers). Backward compatible — no existing call site changes. |
+
+### Verifier follow-up (non-blocking, 2026-04-18)
+
+Surfaced during Group D verification; **not blockers** for this closure cycle — captured here for future hardening.
+
+1. **2-byte `seq` CSPRNG draw inside the CAS retry loop** (`newV7Atomic`, opt-in `v7_lockfree` path). By design. Worst case on a CAS miss is a wasted CSPRNG draw on the next retry — cheaper than moving the draw outside the loop (which would require either a mutex or a more complex try-commit scheme). Noted in-code at the CAS site.
+2. **`GeneratorInterfaceFor(G)` additive; vtable retained** — the comptime-generic wrapper does not remove `GeneratorInterface`. Call sites that hold `*Generator` directly already get zero indirection; the wrapper is targeted at generic-over-generator hot-path call sites. No further action needed unless the vtable itself becomes a proven regression source.
+
+*Phase 3 closure cycle complete — 5 closed initially, 11 closed in Group C (10 full + 1 partial), 5 closed in Group D (4 full + 1 partial SEC-P3-07). PERF-21 + PERF-31 + SEC-P3-04 + SEC-P3-08 full; SEC-P3-07 partial.*
