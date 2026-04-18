@@ -192,6 +192,43 @@ pub const Generator = struct {
         self.node_cache = null;
     }
 
+    /// SEC-P3-01 (CWE-331 / CWE-665): clear all CSPRNG-derived cached state
+    /// and the V1/V6/V7 monotonicity counters so the next UUID generation
+    /// re-samples fresh random bytes from the current CSPRNG.
+    ///
+    /// **Intended use — post-fork():** On POSIX, `fork(2)` duplicates the
+    /// parent's entire address space, including any cached CSPRNG state
+    /// held by this Generator (clock_seq, mono_seq, node_cache).  Two
+    /// processes that proceed to mint UUIDs from identical cached state
+    /// will collide with each other until those caches naturally roll
+    /// over.  Zig 0.16's standard library does NOT expose a portable
+    /// `pthread_atfork` hook, and Windows has no fork at all — so the
+    /// library cannot register an automatic handler.  Callers that fork
+    /// must invoke `reseed()` from the child process before any UUID
+    /// generation.
+    ///
+    /// **Thread safety:** acquires both mutexes in the library's
+    /// canonical order (v7 first, then v1v6).  Safe to call from any
+    /// thread, but post-fork the child is single-threaded so contention
+    /// is a non-issue.
+    ///
+    /// **Does NOT** touch `self.clock` / `self.rand` / `self.hwaddr_fn`
+    /// injection points — those remain pointer-stable across fork by
+    /// virtue of being code addresses.
+    pub fn reseed(self: *Generator) void {
+        self.v7_mutex.lockUncancelable(gio());
+        defer self.v7_mutex.unlock(gio());
+        self.v1v6_mutex.lockUncancelable(gio());
+        defer self.v1v6_mutex.unlock(gio());
+        self.clock_seq = 0;
+        self.clock_seq_initialized = false; // forces CSPRNG re-sample on next V1/V6
+        self.last_v1_ts = 0;
+        self.last_ms = 0;
+        self.mono_seq = 0;
+        self.node_cache = null; // forces node re-fetch (and re-randomise if default)
+        self.last_node = null;
+    }
+
     /// Generate a UUIDv4 (random).
     ///
     /// All 122 non-version/variant bits are filled from the CSPRNG source.

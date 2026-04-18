@@ -291,6 +291,13 @@ protecting the stored clock state and cached node ID from other local users. The
 written atomically (write-then-rename) to prevent torn state on crash or signal. Do not
 store the state file in a world-readable directory.
 
+### Forked Processes
+
+After `fork(2)` on POSIX, the child inherits the parent's cached CSPRNG-derived state
+(`clock_seq`, `mono_seq`, `node_cache`), which can cause colliding UUIDs. Call
+`Generator.reseed()` in the child before generating any UUIDs. See
+[SECURITY.md](SECURITY.md) (Forked processes) for the full rationale and example.
+
 ## Performance Notes
 
 ### V7 Throughput Ceiling (PERF-13)

@@ -489,6 +489,51 @@ test "Generator.loadState: saved_ms >= current_ms forces mono_seq overflow (QC-1
     try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
 }
 
+// --- SEC-P3-01: Generator.reseed() resets CSPRNG-derived cached state ---
+
+test "Generator.reseed: clears clock_seq / mono_seq / node_cache (SEC-P3-01)" {
+    // SEC-P3-01 (CWE-331 / CWE-665): after fork(), the child's duplicated
+    // Generator has stale cached state (clock_seq, mono_seq, node_cache)
+    // identical to the parent.  reseed() must zero those fields and drop
+    // clock_seq_initialized so the next V1/V6/V7 call re-samples from the
+    // CSPRNG and the child process never collides with the parent on
+    // cached state.
+    var gen = Generator.init();
+    // Pre-populate every cached field the way an active generator would.
+    gen.clock_seq = 0x1234;
+    gen.clock_seq_initialized = true;
+    gen.last_v1_ts = 0xDEAD_BEEF;
+    gen.last_ms = 1_700_000_000_000;
+    gen.mono_seq = 0x0ABC;
+    gen.node_cache = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+    gen.last_node = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+
+    gen.reseed();
+
+    try std.testing.expectEqual(@as(u14, 0), gen.clock_seq);
+    try std.testing.expect(!gen.clock_seq_initialized);
+    try std.testing.expectEqual(@as(u60, 0), gen.last_v1_ts);
+    try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen.mono_seq);
+    try std.testing.expect(gen.node_cache == null);
+    try std.testing.expect(gen.last_node == null);
+}
+
+test "Generator.reseed: subsequent V4/V7 calls still succeed (SEC-P3-01)" {
+    // After reseed, the generator must still function — no latent state
+    // corruption that breaks generation.
+    var gen = Generator.init();
+    gen.clock_seq = 0x1234;
+    gen.clock_seq_initialized = true;
+    gen.reseed();
+
+    const uv4 = try gen.newV4();
+    try std.testing.expectEqual(@import("uuid.zig").Version.v4, uv4.version());
+
+    const uv7 = try gen.newV7();
+    try std.testing.expectEqual(@import("uuid.zig").Version.v7, uv7.version());
+}
+
 // --- SEC-P3-02: loadState rejects future-dated state (clock-rollback guard) ---
 
 test "Generator.loadState: rejects last_ms beyond NTP tolerance (SEC-P3-02)" {

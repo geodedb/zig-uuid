@@ -112,6 +112,40 @@ This project implements:
    regardless of where bytes first differ.  `UUID.eql()` remains correct and efficient for
    the typical case where UUIDs are public identifiers.
 
+### Forked processes (SEC-P3-01, CWE-331 / CWE-665)
+
+On POSIX, `fork(2)` duplicates the parent's entire address space, including any cached
+CSPRNG-derived state held by a `Generator`:
+
+- `clock_seq` (V1/V6 clock sequence initialised from the CSPRNG on first use)
+- `mono_seq` (V7 12-bit monotonic counter seeded from the CSPRNG on each new millisecond)
+- `node_cache` (the random multicast node ID when `hwaddr_fn` is unset)
+- `last_ms` / `last_v1_ts` (monotonicity high-water marks)
+
+If both the parent and the child continue minting UUIDs from that shared cached state,
+they will emit identical or colliding UUIDs until the caches naturally roll over. Zig
+0.16's standard library does **not** expose a portable `pthread_atfork` hook, and Windows
+has no `fork(2)`, so the library cannot register an automatic post-fork handler.
+
+**Mitigation:** call `Generator.reseed()` from the child process immediately after
+`fork()` and before any UUID generation. `reseed()` zeroes `clock_seq`, `mono_seq`,
+`last_ms`, `last_v1_ts`, `node_cache`, and `last_node`, and drops
+`clock_seq_initialized`, so the next V1/V6/V7 call re-samples CSPRNG output.
+
+```zig
+const pid = try std.posix.fork();
+if (pid == 0) {
+    // Child process: clear stale CSPRNG-derived cache before generating UUIDs.
+    my_generator.reseed();
+    // ... child work ...
+}
+```
+
+Applications using the package-level convenience functions (`uuid.newV4()`, `uuid.newV7()`,
+...) operate on the shared `default_generator`; retrieve a pointer to it and call
+`reseed()` on the returned `*Generator` in the child. Processes that never call
+`fork()` can ignore this guidance.
+
 ### Dependency Security
 
 The external `json` dependency is pinned to a specific git commit SHA and verified by the
