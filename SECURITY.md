@@ -112,6 +112,42 @@ This project implements:
    regardless of where bytes first differ.  `UUID.eql()` remains correct and efficient for
    the typical case where UUIDs are public identifiers.
 
+### Random source injection (SEC-P3-08)
+
+The default `Generator.init()` sources UUID entropy from
+`std.Io.Threaded.global_single_threaded.io().random()` — the process-global
+`std.Io` handle.  For most applications this is correct and efficient.
+However, the resolution runs through a module-level var, which means a
+library co-resident in the same address space could in principle
+substitute that var and poison every consumer of `Generator.init()`.
+
+Callers concerned about this library-composition attack can supply an
+explicit `std.Random` via `Generator.initOptions`:
+
+```zig
+// Build a CSPRNG bound to an Io handle the caller controls.
+var chacha = std.Random.ChaCha.init(seed_bytes);
+const csprng = chacha.random();
+
+var gen = uuid.Generator.initOptions(.{ .random = csprng });
+const u = try gen.newV4();
+```
+
+The injected `std.Random` is used for every V4 / V7 entropy read, bypassing
+the global entirely.  `Generator.withRand(fn)` remains available for
+callback-style injection; when both are present, `initOptions.random`
+wins.
+
+Properties:
+
+- **Default path (`Generator.init()`):** global `std.Io` CSPRNG.
+  Fastest, but trusts the process-global module state.
+- **Explicit injection (`initOptions(.{ .random = r })`):** no global
+  read on the hot path; the supplied `std.Random` is the sole entropy
+  source.  Use this for hardened deployments.
+- **Backward compatibility:** existing `init()` / `withClock` / `withRand`
+  / `withHWAddr` constructors continue to work unchanged.
+
 ### Forked processes (SEC-P3-01, CWE-331 / CWE-665)
 
 On POSIX, `fork(2)` duplicates the parent's entire address space, including any cached

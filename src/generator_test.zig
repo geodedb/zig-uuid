@@ -959,6 +959,87 @@ test "GeneratorInterfaceFor(Generator): full method surface (PERF-31)" {
     try std.testing.expectEqual(Variant.rfc9562, v8.variant());
 }
 
+// =============================================================================
+// SEC-P3-08: explicit std.Random injection via InitOptions.
+// Verify:
+//   (a) Generator.initOptions(.{ .random = r }) uses the supplied std.Random
+//       for V4 / V7 entropy (proven by deterministic byte observation).
+//   (b) Generator.initOptions(.{}) still produces valid UUIDs (default path).
+//   (c) Generator.init() (legacy) still produces valid UUIDs.
+// =============================================================================
+
+test "Generator.initOptions: explicit std.Random used for V4 entropy (SEC-P3-08)" {
+    // Seeded ChaCha so every byte of the V4 output (except version/variant
+    // nibbles, which setVersion/setVariant overwrite) is deterministic.
+    var chacha = std.Random.ChaCha.init([_]u8{0} ** 32);
+    const rand = chacha.random();
+
+    var gen = Generator.initOptions(.{ .random = rand });
+    try std.testing.expect(gen.rand_impl != null);
+    try std.testing.expect(gen.rand == null);
+
+    const u = try gen.newV4();
+    try std.testing.expectEqual(Version.v4, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+
+    // Proof that the injected CSPRNG was actually consulted: a second
+    // generator with the same seed must yield the same byte sequence
+    // (version/variant nibbles aside).  If the default global path had
+    // been taken, the bytes would instead be unpredictable.
+    var chacha2 = std.Random.ChaCha.init([_]u8{0} ** 32);
+    const rand2 = chacha2.random();
+    var gen2 = Generator.initOptions(.{ .random = rand2 });
+    const u_b = try gen2.newV4();
+    try std.testing.expect(u.eql(u_b));
+}
+
+test "Generator.initOptions: explicit std.Random used for V7 entropy (SEC-P3-08)" {
+    // Fixed clock so the timestamp bytes match across two runs.
+    const fixed_clock = struct {
+        fn clock() i128 {
+            return 1_700_000_000_000 * 1_000_000;
+        }
+    };
+    var chacha = std.Random.ChaCha.init([_]u8{1} ** 32);
+    const rand = chacha.random();
+
+    var gen = Generator.initOptions(.{ .random = rand, .clock = fixed_clock.clock });
+    const u = try gen.newV7();
+    try std.testing.expectEqual(Version.v7, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+
+    // Same seed + same clock ⇒ same bytes.
+    var chacha2 = std.Random.ChaCha.init([_]u8{1} ** 32);
+    const rand2 = chacha2.random();
+    var gen2 = Generator.initOptions(.{ .random = rand2, .clock = fixed_clock.clock });
+    const u_b = try gen2.newV7();
+    try std.testing.expect(u.eql(u_b));
+}
+
+test "Generator.initOptions: empty options equivalent to init() (SEC-P3-08)" {
+    // `initOptions(.{})` with no explicit fields must still produce valid
+    // UUIDs via the default global CSPRNG path.
+    var gen = Generator.initOptions(.{});
+    try std.testing.expect(gen.rand_impl == null);
+    const u = try gen.newV4();
+    try std.testing.expectEqual(Version.v4, u.version());
+    try std.testing.expectEqual(Variant.rfc9562, u.variant());
+}
+
+test "Generator.init() + initOptions coexist on same process (SEC-P3-08)" {
+    // Parallel generators — one default, one injected — do not interfere.
+    var chacha = std.Random.ChaCha.init([_]u8{2} ** 32);
+    const rand = chacha.random();
+
+    var gen_default = Generator.init();
+    var gen_injected = Generator.initOptions(.{ .random = rand });
+
+    const a = try gen_default.newV4();
+    const b = try gen_injected.newV4();
+    // Two UUIDs produced by two independent sources must not collide.
+    try std.testing.expect(!a.eql(b));
+}
+
 test "GeneratorInterfaceFor wraps default_generator (PERF-31)" {
     // The wrapper should also work against the process-global default
     // generator — this is the recommended hot-path shape for callers that

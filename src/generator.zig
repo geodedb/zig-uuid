@@ -127,6 +127,15 @@ pub const Generator = struct {
     clock: ?ClockFn = null,
     rand: ?RandFn = null,
 
+    /// SEC-P3-08: explicit CSPRNG source supplied via `InitOptions.random`.
+    /// When non-null, `randCall` fills the destination buffer by invoking
+    /// `rand_impl.?.bytes(buf)` (wrapping `std.Random.bytes`), bypassing
+    /// both the module-level global `std.Io` and any `rand` RandFn that a
+    /// prior `withRand` call would have set.  `rand_impl` has priority
+    /// over `rand`, which has priority over the global default — giving
+    /// callers who inject at construction time the strongest guarantee.
+    rand_impl: ?std.Random = null,
+
     /// Optional hardware-address function (F-1). When null (the default), V1
     /// and V6 UUIDs use a random multicast node ID, protecting privacy per
     /// RFC-9562 §8.  Set this field (or use withHWAddr) to opt in to
@@ -194,10 +203,21 @@ pub const Generator = struct {
         return if (self.clock) |f| f() else defaultClock();
     }
 
-    /// PERF-23 hot-path: resolve the rand function.  Same rationale as
-    /// `clockCall` — the default path reaches the CSPRNG without a
-    /// pointer indirection.
+    /// PERF-23 / SEC-P3-08 hot-path: resolve the rand source.  Priority:
+    ///   1. `rand_impl` (explicit `std.Random` from `InitOptions.random`).
+    ///   2. `rand` (RandFn from `withRand`).
+    ///   3. `defaultRand` (global `std.Io` CSPRNG).
+    /// The default path reaches the CSPRNG without a pointer indirection;
+    /// the injected paths dispatch through the stored source with the
+    /// same cost as a direct call.
     inline fn randCall(self: *Generator, buf: []u8) anyerror!void {
+        if (self.rand_impl) |r| {
+            // std.Random.bytes never fails — it is a straight fill-fn
+            // call — so map it into the library's RandFn signature with a
+            // noop on the error side.  Preserves the RandFn contract.
+            r.bytes(buf);
+            return;
+        }
         if (self.rand) |f| {
             return f(buf);
         } else {
@@ -233,10 +253,65 @@ pub const Generator = struct {
         self.node_cache_valid.store(false, .release);
     }
 
+    /// Options for `Generator.init(opts)` (SEC-P3-08).
+    ///
+    /// Every field is optional; `.{}` is equivalent to the historical
+    /// `init()` with all defaults.
+    ///
+    /// ### `random` — explicit CSPRNG injection (SEC-P3-08)
+    ///
+    /// When non-null, the supplied `std.Random` instance is used for every
+    /// V4 / V7 entropy read the generator performs, replacing the default
+    /// path through `std.Io.Threaded.global_single_threaded.io().random()`.
+    ///
+    /// **Why this matters:** the default path resolves the process-global
+    /// `std.Io` at every call.  A hostile library loaded into the same
+    /// address space could in principle substitute that module-level var
+    /// to poison every consumer of `Generator.init(.{})`.  Passing a
+    /// caller-owned `std.Random` bound to a vetted CSPRNG (e.g. a
+    /// `std.Random.ChaCha` reseeded from `std.Io.randomSecure`, or a
+    /// `std.Random.IoSource` wrapping an `std.Io` the caller controls)
+    /// defeats that attack vector by removing the global from the hot
+    /// path entirely.
+    ///
+    /// The supplied `std.Random` is stored as a flat interface value
+    /// inside the Generator; callers must ensure the backing storage
+    /// outlives the Generator.  `std.Random` is already a trivially-
+    /// copyable `{ ptr, fillFn }` pair, so storing it by value is safe.
+    pub const InitOptions = struct {
+        /// SEC-P3-08: explicit CSPRNG source.  Null means fall back to the
+        /// global I/O handle (the historical behaviour).
+        random: ?std.Random = null,
+
+        /// Optional override for the monotonic / wall clock.  Matches the
+        /// same field on `withClock` — callers that want both a custom
+        /// clock and explicit random injection can set both fields here.
+        clock: ?ClockFn = null,
+
+        /// Optional override for the hardware-address source used to
+        /// derive V1 / V6 node IDs.  Matches the same field on
+        /// `withHWAddr`.
+        hwaddr_fn: ?HWAddrFn = null,
+    };
+
     /// Create a new generator with default clock (std.time.nanoTimestamp),
-    /// CSPRNG (std.crypto.random), and random multicast node ID.
+    /// CSPRNG (std.Io.random), and random multicast node ID.
+    ///
+    /// This is equivalent to `initOptions(.{})`.  The zero-arg form is
+    /// retained for source compatibility with the historical API.
     pub fn init() Generator {
         return .{};
+    }
+
+    /// SEC-P3-08: create a generator with caller-specified options.  See
+    /// `InitOptions` for the individual fields and the rationale behind
+    /// explicit `std.Random` injection.
+    pub fn initOptions(options: InitOptions) Generator {
+        return .{
+            .clock = options.clock,
+            .rand_impl = options.random,
+            .hwaddr_fn = options.hwaddr_fn,
+        };
     }
 
     /// Create a generator with a custom clock function, useful for testing
