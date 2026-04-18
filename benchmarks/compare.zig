@@ -87,7 +87,18 @@ const PairStats = struct {
     failures: usize = 0,
     missing: usize = 0,
     rows_compared: usize = 0,
+    warnings: usize = 0,
 };
+
+/// INV-01 secondary signal: alert when `lockfree_fallbacks` drifts by more
+/// than this fraction from baseline.  Fallback count spikes correlate with
+/// real contention shifts (slower thread scheduling, cache ping-pong) that
+/// a throughput-only gate might miss.  This is a *warning* — it does NOT
+/// fail the process; it just prints a highlighted line so reviewers notice.
+const fallback_drift_threshold: f64 = 0.50;
+/// Absolute floor so small scenarios don't trip the relative gate.  Baseline
+/// fallback counts below this are treated as zero for drift purposes.
+const fallback_drift_floor: u64 = 100;
 
 fn runWalker(allocator: std.mem.Allocator, io: std.Io, results_dir: []const u8, threshold: f64) !void {
     const stderr = std.Io.File.stderr();
@@ -166,11 +177,11 @@ fn runWalker(allocator: std.mem.Allocator, io: std.Io, results_dir: []const u8, 
         pairs_ran += 1;
     }
 
-    var summary_buf: [256]u8 = undefined;
+    var summary_buf: [320]u8 = undefined;
     const summary = try std.fmt.bufPrint(
         &summary_buf,
-        "\nbench-compare --all: {d} pair(s) compared, {d} skipped, {d} row(s), {d} failure(s), {d} missing baseline row(s)\n",
-        .{ pairs_ran, pairs_skipped, total.rows_compared, total.failures, total.missing },
+        "\nbench-compare --all: {d} pair(s) compared, {d} skipped, {d} row(s), {d} failure(s), {d} warning(s), {d} missing baseline row(s)\n",
+        .{ pairs_ran, pairs_skipped, total.rows_compared, total.failures, total.warnings, total.missing },
     );
     try stderr.writeStreamingAll(io, summary);
 
@@ -242,6 +253,30 @@ fn comparePair(
             );
             try stderr.writeStreamingAll(io, dup_line);
             stats.failures += 1;
+        }
+
+        // INV-01 secondary signal: lockfree_fallbacks drift.
+        // Only meaningful when baseline had a non-trivial fallback count
+        // (the `fallback_drift_floor` filter); otherwise relative drift
+        // is dominated by noise.  Emit a WARN line only — no exit-code
+        // impact.  A consistent upward drift across captures is a cheap
+        // leading indicator of real contention changes.
+        if (baseline.lockfree_fallbacks >= fallback_drift_floor) {
+            const base_fb: f64 = @floatFromInt(baseline.lockfree_fallbacks);
+            const cand_fb: f64 = @floatFromInt(row.lockfree_fallbacks);
+            const delta = cand_fb - base_fb;
+            const rel = if (base_fb > 0) delta / base_fb else 0.0;
+            const abs_rel = if (rel < 0) -rel else rel;
+            if (abs_rel > fallback_drift_threshold) {
+                const fb_sign: []const u8 = if (rel < 0) "-" else "+";
+                const warn_line = try std.fmt.bufPrint(
+                    &buf,
+                    "    WARN: lockfree_fallbacks drifted {s}{d:.1}% (baseline={d}, candidate={d}; gate {d:.0}% beyond floor {d})\n",
+                    .{ fb_sign, abs_rel * 100.0, baseline.lockfree_fallbacks, row.lockfree_fallbacks, fallback_drift_threshold * 100.0, fallback_drift_floor },
+                );
+                try stderr.writeStreamingAll(io, warn_line);
+                stats.warnings += 1;
+            }
         }
     }
 }
