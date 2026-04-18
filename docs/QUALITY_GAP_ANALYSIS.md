@@ -2361,3 +2361,37 @@ The boundary between injected-clock (`withClock`) and system-clock code paths fo
 - **Strategic (>5d):** QC-100 + 3 doc-gap items (ADR, hwaddr README, self-ceiling)
 
 _Last updated: 2026-03-22 — Cycle 12 complete. 16 new findings (QC-76–QC-92, QC-89 merged into QC-80): 1 High, 1 Medium, 12 Low, 2 Info. All 16 closed. 91 total issues tracked (89 closed, 2 Won't Do, 0 open)._
+
+---
+
+## Phase 3 Closure Cycle (2026-04-18)
+
+> 9 of the 10 Cycle-13 findings landed in-tree this cycle (verifier-approved).
+> QC-100 is held open pending user sign-off on `default_generator` parity scope.
+> Resolution evidence mirrored in `docs/GAP_ANALYSIS_RESOLVED.md`.
+
+### Closed this cycle (9)
+
+| Gap-ID | Status | Commit | Evidence (file:line) | Notes |
+| ------ | ------ | ------ | -------------------- | ----- |
+| QC-93 (GAP-DOC-01) | ✅ Closed | `ec99ed2` | `build.zig.zon:5`, `README.md:4`, `src/root.zig:23`, `CHANGELOG.md` | MSRV copy bumped to Zig 0.16.0 across README badge, `minimum_zig_version`, `src/root.zig` doc header, and CHANGELOG note. |
+| QC-94 | ✅ Closed | `b068dc7` | `README.md` (Quick Start) | README Quick Start updated for `std.Io.Writer` contract on Zig 0.16. |
+| QC-95 | ✅ Closed | `54a087a` | `src/generator.zig` (`newV7Locked`) | Early-return branches refactored to a single-acquire + `defer` unlock; manual unlocks removed. |
+| QC-96 (ties PERF-28) | ✅ Closed | `bbfad76` | `src/generator.zig` | `std.Io.Threaded.global_single_threaded.io()` hoisted to a per-function/field constant; 23 inline sites collapsed. |
+| QC-97 | ✅ Closed | `0a919ea` | `src/uuid.zig:382-414` | 5 `*Alloc` helpers collapsed into a single generic helper parameterised by formatter/length. |
+| QC-98 | ✅ Closed | `828e80a` | `src/hwaddr/common.zig` (new), `src/hwaddr/{linux,macos,windows}.zig` | `isUsableMac` predicate hoisted into shared module. |
+| QC-99 | ✅ Closed | `cafa0b0` | `src/generator.zig:626,704` | `saveState`/`loadState` signatures tightened to `Error!void`; error set documented. |
+| QC-101 | ✅ Closed | `f2a1bc6` | `src/generator_state_test.zig` | Table test added covering v1→v2 upgrade + fast-restart branches. |
+| QC-102 | ✅ Closed | `4591a9b` | `src/uuid.zig:382-414` | `*Alloc` doc rewritten to describe the allocator parameter; fixed-allocator bench moved to a separate note. |
+
+### Deferred — pending user sign-off (1)
+
+| Gap-ID | Status | Blocker | Unblock criteria |
+| ------ | ------ | ------- | ---------------- |
+| QC-100 | ⏸️ Deferred — pending user sign-off | `default_generator` parity audit touches public surface; scope needs explicit approval before landing convenience wrappers or documented omissions. | User confirms parity scope (add wrappers vs. document omissions) and whether any break is acceptable on pre-1.0. |
+
+### Doc gaps reconfirmed
+
+The three Cycle-13 doc gaps (ADR for split-mutex design; `src/hwaddr/README.md`; 800-line self-ceiling in `CLAUDE.md`/`CONTRIBUTING`) remain open and are tracked via `docs/GAP_ANALYSIS.md`.
+
+_Phase 3 closure cycle complete — 9 closed, 1 deferred pending sign-off._

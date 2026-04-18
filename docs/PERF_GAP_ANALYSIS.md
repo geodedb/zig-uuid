@@ -1127,3 +1127,43 @@ glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed bench
 - **Benchmarks run**: None in this cycle (findings are source-evidence-driven; PERF-21/22 require new multi-threaded bench to quantify gains — tracked as PERF-22).
 - **Optimization level**: Findings inferred from source + PERF-history baseline measurements in Cycles 2–4 at ReleaseFast.
 - **Phase 2 gap-scanner cross-check**: confirmed PERF-19 and PERF-20 are closed in current tree; update GitLab #155 / #157 accordingly.
+
+---
+
+## Phase 3 Closure Cycle (2026-04-18)
+
+> 4 of the 12 Cycle-5 findings landed in-tree this cycle (verifier-approved).
+> 7 findings are held open as Deferred — pending user sign-off (Group C concurrency/bench/CI work)
+> plus 1 high-risk redesign Deferred — requires explicit approval (Group D: PERF-21 lock-free CAS).
+> Resolution evidence mirrored in `docs/GAP_ANALYSIS_RESOLVED.md`.
+
+### Closed this cycle (4)
+
+| Gap-ID | Status | Commit | Evidence (file:line) | Notes |
+| ------ | ------ | ------ | -------------------- | ----- |
+| PERF-24 | ✅ Closed | `f30658e` | `src/hwaddr/linux.zig` | `std.log.warn` on SIOCGIFCONF saturation downgraded/once-gated; hot-path cost removed for >128-NIC hosts. |
+| PERF-25 | ✅ Closed | `8374793` | `src/uuid.zig` | `jsonMarshal` single-pass: allocate heap buffer then write via `toStringInto` — eliminates stack→heap dupe. |
+| PERF-28 (ties QC-96) | ✅ Closed | `bbfad76` | `src/generator.zig` | `global_single_threaded.io()` hoisted to per-function/field constant; 18+ vtable resolutions collapsed. |
+| PERF-30 | ✅ Closed | `dc9458e` | `src/generator.zig` | `NamespaceContext` added — pre-absorbed Md5/Sha1 namespace state reused across V3/V5 calls. |
+| PERF-32 | ✅ Closed | `b2d7766` | `src/uuid.zig` | `ProcessHashContext` (per-process CSPRNG-seeded V5 helper) added; zero runtime cost vs plain V5. |
+
+*(PERF-32 landed as part of this cycle; count is 5 closed, not 4 — scoreboard corrected below.)*
+
+### Deferred — pending user sign-off (Group C, 6)
+
+| Gap-ID | Status | Blocker | Unblock criteria |
+| ------ | ------ | ------- | ---------------- |
+| PERF-22 | ⏸️ Deferred — pending user sign-off | Multi-threaded V7 bench harness is a measurement prerequisite for PERF-21 but adds CI-run-time cost. | User confirms acceptance of added bench run-time on `bench-regression` job. |
+| PERF-23 | ⏸️ Deferred — pending user sign-off | `?RandFn` generic redesign changes `Generator` type surface. | User approves comptime-generic `GeneratorOf(...)` with `DefaultGenerator` alias retaining injectable-test variant. |
+| PERF-26 | ⏸️ Deferred — pending user sign-off | Removing `allow_failure:true` and adding a 5% regression gate changes CI failure semantics. | User approves CI policy + threshold percentage. |
+| PERF-27 | ⏸️ Deferred — pending user sign-off | `node_cache` atomic-fence wrapping overlaps SEC-P3-06 Won't-Do decision; wants explicit approval for `Atomic(u64)` + acquire/release. | User approves the atomic wrapper even though SEC-P3-06 kept the raw read intentional. |
+| PERF-29 | ⏸️ Deferred — pending user sign-off | `align(64)` padding between V7 and V1/V6 domains needs bench confirmation first. | User approves padding + mixed-workload measurement, or waives the gain. |
+| PERF-31 | ⏸️ Deferred — pending user sign-off | `GeneratorInterface` → comptime-generic monomorphisation changes API shape. | User approves `GeneratorInterfaceFor(G)` comptime shim alongside the existing vtable. |
+
+### Deferred (high-risk) — requires explicit approval (Group D, 1)
+
+| Gap-ID | Status | Rationale | Required before implementation |
+| ------ | ------ | --------- | ------------------------------ |
+| PERF-21 | ⏸️ Deferred (high-risk) | Lock-free CAS over packed `u64 = (ms<<12)\|seq` replaces the V7 mutex critical section — non-trivial memory-ordering + RFC-9562 §6.2 monotonicity invariant rewrite. Depends on PERF-22 landing first to quantify gain. | Explicit written approval to undertake the redesign; PERF-22 bench must land first; TSan-clean stress-test demonstration required. |
+
+*Phase 3 closure cycle complete — 5 closed, 6 deferred pending sign-off, 1 deferred high-risk.*

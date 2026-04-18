@@ -4046,12 +4046,53 @@ glab issue close 119 --comment "Empty issue closed as tracker hygiene (GAP-DOC-0
 
 | Gap-ID | Title | Severity | Status | Evidence (file:line) | Next action |
 |--------|-------|----------|--------|----------------------|-------------|
-| QC-80 | README `.hash` placeholder still present | Medium | OPEN (regression) | `README.md:28` | `glab issue reopen 166` |
-| GAP-DOC-01 | MSRV drift 0.15.2 → 0.16.0 | High | OPEN (new) | `build.zig.zon:5`, `README.md:4`, `.gitlab-ci.yml:27` | Create issue + bump MSRV |
-| GAP-DOC-02 | REQUIREMENTS.md stale / Geode paths | Medium | OPEN (new) | `docs/REQUIREMENTS.md:3,13-24` | Create issue + refresh doc |
-| GAP-DOC-03 | Review doc headers say 0.15.2 | Low | OPEN (new) | `docs/QUALITY_GAP_ANALYSIS.md:5`, `docs/PERF_GAP_ANALYSIS.md:499,691`, `docs/SECURITY_REVIEW_NOTES.md:83` | Create issue + patch headers |
-| GAP-DOC-04 | Empty tracker issues #87, #90, #119 | Low | OPEN (new) | GitLab work items | Create issue + close empties |
+| QC-80 | README `.hash` placeholder still present | Medium | ✅ Closed (Phase-3 closure cycle 2026-04-18) | `README.md:28` (hash line removed — see `b2bc924`) | See `docs/GAP_ANALYSIS_RESOLVED.md` |
+| GAP-DOC-01 (QC-93) | MSRV drift 0.15.2 → 0.16.0 | High | ✅ Closed (Phase-3 closure cycle 2026-04-18) | `build.zig.zon:5`, `README.md:4`, `src/root.zig:23`, `CHANGELOG.md` (`ec99ed2`) | See `docs/GAP_ANALYSIS_RESOLVED.md` |
+| GAP-DOC-02 | REQUIREMENTS.md stale / Geode paths | Medium | ✅ Closed (Phase-3 closure cycle 2026-04-18) | `docs/REQUIREMENTS.md` refreshed (`f1db8ec`) | See `docs/GAP_ANALYSIS_RESOLVED.md` |
+| GAP-DOC-03 | Review doc headers say 0.15.2 | Low | ✅ Closed (Phase-3 closure cycle 2026-04-18) | `docs/QUALITY_GAP_ANALYSIS.md:5`, `docs/PERF_GAP_ANALYSIS.md`, `docs/SECURITY_REVIEW_NOTES.md` updated (`7ca88ba`) | See `docs/GAP_ANALYSIS_RESOLVED.md` |
+| GAP-DOC-04 | Empty tracker issues #87, #90, #119 | Low | 🚫 Won't Do (tracker hygiene — tracker-only cleanup) | GitLab work items | Issues queued for closure via Phase-3 `glab` block |
 
-**25 resolved items** (mirrored in `docs/GAP_ANALYSIS_RESOLVED.md`): SEC-R12-02 (#154); SEC-R13-01 (#156), SEC-R13-03 (#158), SEC-R13-04 (#159), SEC-R13-06 (#161), SEC-R13-07 (#164), SEC-R13-08 (#167); PERF-19 (#155), PERF-20 (#157); QC-76 (#160), QC-77 (#162), QC-78 (#163), QC-79 (#165), QC-81 (#168), QC-82 (#169), QC-83 (#170), QC-84 (#171), QC-85 (#172), QC-86 (#173), QC-87 (#174), QC-88 (#175), QC-90 (#176), QC-91 (#177), QC-92 (#178).
+**Originally 25 resolved items** (mirrored in `docs/GAP_ANALYSIS_RESOLVED.md`): SEC-R12-02 (#154); SEC-R13-01 (#156), SEC-R13-03 (#158), SEC-R13-04 (#159), SEC-R13-06 (#161), SEC-R13-07 (#164), SEC-R13-08 (#167); PERF-19 (#155), PERF-20 (#157); QC-76 (#160), QC-77 (#162), QC-78 (#163), QC-79 (#165), QC-81 (#168), QC-82 (#169), QC-83 (#170), QC-84 (#171), QC-85 (#172), QC-86 (#173), QC-87 (#174), QC-88 (#175), QC-90 (#176), QC-91 (#177), QC-92 (#178).
+
+---
+
+### Phase 3 Closure Cycle (2026-04-18) — Results
+
+> 16 gaps closed this cycle (verifier-approved). HEAD at closure: `b2d7766`.
+> Full per-item evidence (commit SHA, file:line, tests) is mirrored in
+> `docs/GAP_ANALYSIS_RESOLVED.md`. Domain-scoped closure blocks have also been
+> appended to `docs/QUALITY_GAP_ANALYSIS.md`, `docs/PERF_GAP_ANALYSIS.md`, and
+> `docs/SECURITY_REVIEW_NOTES.md`.
+
+**Closed this cycle (16):**
+
+- GAP-DOC-01 / QC-93 (`ec99ed2`), QC-80 (`b2bc924`), QC-94 (`b068dc7`), GAP-DOC-03 (`7ca88ba`), GAP-DOC-02 (`f1db8ec`).
+- QC-95 (`54a087a`), QC-96 / PERF-28 (`bbfad76`), QC-97 (`0a919ea`), QC-98 (`828e80a`), QC-99 (`cafa0b0`), QC-101 (`f2a1bc6`), QC-102 (`4591a9b`).
+- PERF-24 (`f30658e`), PERF-25 (`8374793`), PERF-30 (`dc9458e`), PERF-32 (`b2d7766`).
+
+**Deferred — pending user sign-off (Group C, 11):**
+
+- Quality: QC-100 (`default_generator` parity audit).
+- Performance: PERF-22, PERF-23, PERF-26, PERF-27, PERF-29, PERF-31.
+- Security: SEC-P3-01, SEC-P3-02, SEC-P3-03, SEC-P3-05.
+
+**Deferred (high-risk) — requires explicit approval before implementation (Group D, 3):**
+
+- PERF-21 (lock-free CAS V7 redesign; depends on PERF-22).
+- SEC-P3-04 (HMAC state-file v3 wire format + key-mgmt).
+- SEC-P3-08 (global CSPRNG re-architecture).
+
+**Blocked — external input required (1):**
+
+- SEC-P3-07 — blocked on: (1) no PGP key, (2) no CNA decision, (3) no legal safe-harbor review. `security.txt` + CVSS portions could land independently if requested.
+
+**Won't Do — retained (4):**
+
+- SEC-P3-06 (node_cache lockless read) — intentional PERF-05 optimisation; identical rationale to SEC-R12-01. MUST NOT re-open.
+- SEC-R9-02 (CI Zig hash TOFU) — pipeline governance.
+- SEC-R2-01 (unverified Zig download) — pipeline governance.
+- GAP-DOC-04 (tracker pollution #87/#90/#119) — tracker-only hygiene; queued in the Phase-3 `glab` block.
+
+**Total tracked this closure cycle:** 60 items (16 closed + 25 previously resolved + 11 deferred Group C + 3 deferred Group D + 1 blocked + 4 Won't-Do).
 
 ---

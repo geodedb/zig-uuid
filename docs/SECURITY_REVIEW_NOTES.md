@@ -705,3 +705,48 @@ SEC-R12-01 (node_cache data race) remains Won't Do — re-confirmed by SEC-P3-06
 - **V3/V5 MD5/SHA-1 on trusted namespaces:** SEC-P3-05 is the forgery-via-attacker-input variant only; the RFC-mandated algorithms themselves are not re-reported as vulnerabilities.
 
 _Last updated: 2026-04-18 — Phase 3 complete. 8 new findings (5 Medium confirmed, 1 Medium suspected, 1 Low-Medium, 1 Low) + 3 Phase-2 tradeoffs retained. 9 Phase-2 items recommended for tracker closure._
+
+---
+
+## Phase 3 Closure Cycle (2026-04-18)
+
+> 0 of the 8 Phase-3 SEC findings were implemented in-tree this cycle.
+> 4 findings are Deferred — pending user sign-off (Group C).
+> 2 findings are Deferred (high-risk) — require explicit approval before implementation (Group D).
+> 1 finding is Blocked on external input (SEC-P3-07).
+> 1 finding remains Won't Do (SEC-P3-06, re-confirmed — identical to SEC-R12-01 decision).
+
+### Deferred — pending user sign-off (Group C, 4)
+
+| Gap-ID | Status | Blocker | Unblock criteria |
+| ------ | ------ | ------- | ---------------- |
+| SEC-P3-01 | ⏸️ Deferred — pending user sign-off | Fork-safety remediation touches SECURITY.md, README, and optionally links libc `pthread_atfork`. | User decides whether to ship docs-only fork caveat or accept an optional libc-linked reseed hook. |
+| SEC-P3-02 | ⏸️ Deferred — pending user sign-off | Timestamp-rollback guard in `loadState` changes observable error behaviour (new `Error.StateRollback` or similar). | User approves the guard policy (hard error vs. clamp-forward) and tolerance window. |
+| SEC-P3-03 | ⏸️ Deferred — pending user sign-off | `saveState` explicit `.mode=0o600` is cross-platform sensitive (Windows has no POSIX mode). | User approves POSIX-mode behaviour + Windows fallback strategy. |
+| SEC-P3-05 | ⏸️ Deferred — pending user sign-off | `newV3Strict`/`newV5Strict` (accepting only `Namespace` enum values) plus a doc warning on permissive forms — API surface change. | User approves the `*Strict` API name + signature and agrees to keep permissive variants for interop. |
+
+### Deferred (high-risk) — requires explicit approval (Group D, 2)
+
+| Gap-ID | Status | Rationale | Required before implementation |
+| ------ | ------ | --------- | ------------------------------ |
+| SEC-P3-04 | ⏸️ Deferred (high-risk) | HMAC/BLAKE3 state-file v3 wire-format redesign; introduces a new caller-supplied 32-byte key and key-management surface (rotation, absence-handling, test vectors). | Explicit approval for the wire format, the key-management contract (where does the key live?), and migration path from v2 files. |
+| SEC-P3-08 | ⏸️ Deferred (high-risk) | Global CSPRNG re-architecture — replace the mutable-global `std.Io.Threaded.global_single_threaded` capture with an explicit `std.Random` in `Generator.InitOptions` defaulting to `std.crypto.random`. Touches every `Generator.init` call site. | Explicit approval for the API change + a PoC test demonstrating the substitution attack before/after. |
+
+### Blocked — external input required (1)
+
+| Gap-ID | Status | Blocker | Unblock criteria |
+| ------ | ------ | ------- | ---------------- |
+| SEC-P3-07 | 🔒 Blocked | No PGP key published; no CNA decision (MITRE vs GitLab CNA vs project-own); no legal safe-harbor review completed. | (1) Publish a PGP key + fingerprint. (2) Choose + register a CNA path. (3) Legal review approves safe-harbor language (Disclose.io template). `security.txt` file and CVSS-v4.0 statement portions can land independently if the user wants a partial fix — tracked as a separate follow-up. |
+
+### Won't Do — reconfirmed (1)
+
+| Gap-ID | Status | Reason |
+| ------ | ------ | ------ |
+| SEC-P3-06 | 🚫 Won't Do (reconfirmed) | Lockless `node_cache` read is the intentional PERF-05 optimisation and is covered by the SEC-R12-01 Won't-Do decision. Authoritative re-check happens under `v1v6_mutex`. MUST NOT re-open. |
+
+### Project-hygiene items reconfirmed
+
+- **SEC-R9-02** (CI Zig hash TOFU) — Won't Do. Pipeline governance concern, not a library-code finding. MUST NOT re-open.
+- **SEC-R2-01** (unverified Zig download) — Won't Do. Pipeline governance concern. MUST NOT re-open.
+
+_Phase 3 closure cycle complete — 0 closed, 4 deferred (Group C), 2 deferred high-risk (Group D), 1 blocked on external input, 1 Won't-Do reconfirmed._
