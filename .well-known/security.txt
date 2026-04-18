@@ -12,6 +12,8 @@ Contact: mailto:benji@codepros.org
 Expires: 2027-12-31T23:59:59Z
 Policy: https://gitlab.com/devnw/zig/uuid/-/blob/main/SECURITY.md
 Preferred-Languages: en
+Canonical: https://gitlab.com/devnw/zig/uuid/-/raw/main/.well-known/security.txt
+Acknowledgments: https://gitlab.com/devnw/zig/uuid/-/blob/main/SECURITY.md#acknowledgements
 
 # Encryption: TODO — publish the PGP fingerprint for the mailbox above
 #   once a disclosure key is generated.  Until then, reporters who need

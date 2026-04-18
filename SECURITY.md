@@ -282,3 +282,10 @@ the canonical long-form policy.
 ## Contact
 
 For non-security issues, see [SUPPORT.md](SUPPORT.md).
+
+## Acknowledgements
+
+We thank the reporters listed below for responsible disclosure of
+security issues. Submit a PR against this section to be added.
+
+<!-- no public reporters yet -->
