@@ -3,12 +3,13 @@
 > Mirror of resolved items that were previously tracked in `docs/GAP_ANALYSIS.md`
 > and the GitLab issue tracker. The issue tracker is authoritative.
 >
-> Last updated: 2026-04-18 (Phase 3 closure cycle — 16 new resolutions appended)
+> Last updated: 2026-04-18 (Group C closure round — 11 additional resolutions appended; cumulative 52)
 
 ## Summary
 
 - **25 prior tracker items** (Cycles 12–13): resolved in-code; still marked open on the GitLab tracker; closure queued in the Phase-3 `glab` block in `docs/GAP_ANALYSIS.md`.
-- **16 Phase-3 closure-cycle items** (2026-04-18): closed this cycle (see "Phase 3 Closure Cycle" section below). These items are tracked in docs only — they do not have dedicated GitLab work items.
+- **16 Phase-3 initial closure-cycle items** (2026-04-18): see "Phase 3 Closure Cycle" section. Docs-tracked only.
+- **11 Group C closure-round items** (2026-04-18, HEAD `5bee3e7`): 10 full closures + 1 partial (PERF-31 doc mitigation). See "Group C Closure Round" section. Docs-tracked only.
 
 Evidence for each resolution is pinned to a concrete file:line, commit SHA, or test output.
 
@@ -421,9 +422,142 @@ recorded under "Phase 3 Closure Cycle" below.
 
 ### Phase 3 Closure Cycle — Tally
 
-- Closed this cycle: **16** (5 docs/packaging, 7 quality, 4 performance).
+- Closed in initial Phase-3 round: **16** (5 docs/packaging, 7 quality, 4 performance).
+- Closed in Group C round (2026-04-18): **11** (10 full + 1 partial) — see "Group C Closure Round" below.
 - Pre-existing bookkeeping closures still on tracker: **25**.
-- Deferred — pending user sign-off (Group C): **11** — see domain docs.
+- Deferred — pending user sign-off (Group C): **0** (closed this round).
 - Deferred (high-risk) — requires explicit approval (Group D): **3** — see domain docs.
 - Blocked on external input: **1** (SEC-P3-07).
 - Won't Do — retained / reconfirmed: **4** (SEC-P3-06, SEC-R9-02, SEC-R2-01, GAP-DOC-04).
+
+---
+
+## Group C Closure Round (2026-04-18)
+
+> HEAD at closure: `5bee3e7`. Test state: 204/204 unit + 32/32 integration (all green).
+> Items are doc-tracked only (no dedicated GitLab work items). 10 full closures + 1
+> partial (PERF-31 — doc mitigation landed; full refactor deferred pending ADR).
+
+### Security — Group C (4 closed)
+
+### SEC-P3-01: Fork-unsafe CSPRNG [RESOLVED]
+
+- **Issue:** tracked in docs only (no GitLab work item)
+- **Category:** Security / CWE-331, CWE-665
+- **Severity:** Medium (Risk 9, confidence::confirmed)
+- **Resolution:** Added `Generator.reseed()` public method; callers on fork-capable platforms are directed to invoke it in the child after `fork(2)`. Fork-safety caveat documented in both `README.md` and `SECURITY.md`.
+- **Evidence:** `src/generator.zig` (`Generator.reseed`), `README.md`, `SECURITY.md`.
+- **Commit:** `275a7e3`
+- **Resolved date:** 2026-04-18
+
+### SEC-P3-02: No timestamp-rollback detection in `loadState` [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Security / CWE-367, CWE-1240
+- **Severity:** Medium (Risk 9, confidence::confirmed)
+- **Resolution:** `loadState` now rejects future-dated state beyond a 1000 ms tolerance window and clamps `last_v1_ts` / `last_ms` monotonically forward. Tolerance exposed via the new `Config.clock_rollback_tolerance_ms = 1_000` constant.
+- **Evidence:** `src/generator.zig` (`loadState`), `Config.clock_rollback_tolerance_ms`.
+- **Commit:** `94d7f9a`
+- **Resolved date:** 2026-04-18
+
+### SEC-P3-03: `saveState` does not set explicit mode [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Security / CWE-276, CWE-732
+- **Severity:** Medium (Risk 9, confidence::confirmed)
+- **Resolution:** `saveState` now passes `.mode = 0o600` to `createFileAbsolute` and additionally `fchmod(0o600)`s the file after rename (belt-and-suspenders against umask variations). POSIX test asserts `statFile().mode & 0o777 == 0o600`.
+- **Evidence:** `src/generator.zig` (`saveState`).
+- **Commit:** `be5788f`
+- **Resolved date:** 2026-04-18
+
+### SEC-P3-05: V3/V5 namespace-abuse vector [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Security / CWE-327, CWE-347
+- **Severity:** Low-Medium (Risk 6, confidence::confirmed)
+- **Resolution:** Added a `Namespace` enum (with `asUUID()`) covering the four RFC-defined namespaces; added `newV3Strict` / `newV5Strict` (Generator + module-level) that accept only `Namespace` enum values. Permissive `newV3` / `newV5` retained for interop and now carry a CWE-347 doc warning directing callers to the `*Strict` forms unless they have a justified interop need.
+- **Evidence:** `src/namespace.zig` (`Namespace` + `asUUID`), `src/versions.zig` (`newV3Strict`, `newV5Strict`), `src/generator.zig`, `src/uuid.zig` (CWE-347 warning).
+- **Commit:** `fc3b9ac`
+- **Resolved date:** 2026-04-18
+
+---
+
+### Performance — Group C (5 closed, 1 partial)
+
+### PERF-22: No multi-threaded V7 benchmark [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Performance (P1, confirmed)
+- **Resolution:** `benchV7Contention` multi-threaded measurement landed — concurrency signal now available for PERF-21 planning.
+- **Evidence:** `bench/main.zig`.
+- **Commit:** `4ec4eee`
+- **Resolved date:** 2026-04-18
+
+### PERF-23: `defaultRand` function-pointer indirection prevents inlining [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Performance (P1, confirmed)
+- **Resolution:** Changed `rand` and `clock` fields to nullable — default paths take an inlinable CSPRNG / clock implementation; test-injectable variants retained via `withRand` / `withClock`.
+- **Evidence:** `src/generator.zig`.
+- **Commit:** `7a95126`
+- **Resolved date:** 2026-04-18
+
+### PERF-26: CI `bench-regression` has `allow_failure:true` without threshold gate [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Performance / CI (P2, confirmed)
+- **Resolution:** Committed a `bench/baseline.txt` snapshot; `bench-regression` CI job dropped `allow_failure:true` and now gates on a 15% regression threshold.
+- **Evidence:** `bench/baseline.txt`, `.gitlab-ci.yml`.
+- **Commit:** `05491f2`
+- **Resolved date:** 2026-04-18
+
+### PERF-27: `node_cache` unsynchronised read outside `v1v6_mutex` [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Performance / Concurrency (P2, confirmed)
+- **Resolution:** Split `node_cache` into a `std.atomic.Value(bool) node_cache_valid` flag + raw `node_cache_bytes`; acquire/release ordering ensures TSan cleanliness while preserving the lock-free fast path. Distinct from SEC-P3-06 (Won't-Do) which covers the intentional pre-lock optimistic read.
+- **Evidence:** `src/generator.zig`.
+- **Commit:** `2f93fac`
+- **Resolved date:** 2026-04-18
+
+### PERF-29: False sharing between V7 and V1/V6 state in `Generator` [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Performance (P2, suspected → confirmed post-fix)
+- **Resolution:** Inserted `align(64)` cache-line separation between the V7 and V1/V6 state clusters in the `Generator` struct. Cross-domain false sharing eliminated.
+- **Evidence:** `src/generator.zig`.
+- **Commit:** `d31bb22`
+- **Resolved date:** 2026-04-18
+
+### PERF-31: `GeneratorInterface` vtable blocks inlining [PARTIALLY RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** Performance (P3, suspected)
+- **Resolution (partial):** Doc warning on `GeneratorInterface` directs hot-path callers to hold `*Generator` directly (mitigation-only). Full comptime-generic rewrite (`GeneratorInterfaceFor(G)`) deferred pending an ADR + major-version bump (API-breaking).
+- **Evidence:** `src/generator.zig` (doc warning on `GeneratorInterface`).
+- **Commit:** `e9cbf7f`
+- **Resolved date:** 2026-04-18 (partial; full closure tracked as an ADR follow-up)
+
+---
+
+### Quality — Group C (1 closed)
+
+### QC-100: `default_generator` parity asymmetry [RESOLVED]
+
+- **Issue:** tracked in docs only
+- **Category:** API contract
+- **Severity:** Medium (Score 18, suspected → confirmed post-fix)
+- **Resolution:** Added `defaultGenerator() *Generator` to `src/root.zig` plus module-level parity wrappers: `clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`. The module surface now mirrors the `Generator` surface, resolving the divergence.
+- **Evidence:** `src/root.zig`.
+- **Commit:** `23ad3cd`
+- **Resolved date:** 2026-04-18
+
+---
+
+### Group C Closure Round — Tally
+
+- Full closures: **10** (SEC-P3-01, SEC-P3-02, SEC-P3-03, SEC-P3-05, PERF-22, PERF-23, PERF-26, PERF-27, PERF-29, QC-100).
+- Partial closure: **1** (PERF-31 — doc mitigation landed; full rewrite ADR pending).
+- Accompanying style commit: `5bee3e7` (`zig fmt` nit after PERF-22; not gap-tracked).
+- Remaining open across all domains: **5** — PERF-31 (partial), PERF-21 (Group D), SEC-P3-04 (Group D), SEC-P3-08 (Group D), SEC-P3-07 (blocked).
+- Cumulative closures this project: **52** (25 prior tracker + 16 Phase-3 initial + 11 Group C).

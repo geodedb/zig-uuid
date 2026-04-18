@@ -637,17 +637,17 @@ Risk = Impact (1–5) x Likelihood (1–5). All Risk values below are the raw pr
 **1. SEC-P3-01** (Medium, CWE-331 / CWE-665, Risk 9, confidence::confirmed) — Fork-unsafe CSPRNG.
 Evidence: `src/generator.zig:24-25` (`std.Io.Threaded.global_single_threaded` captured once); `src/uuid.zig:255` (random consumption); `SECURITY.md` silent on fork semantics. After `fork(2)` parent+child share CSPRNG state until next reseed, producing colliding V4/V7/node-id/clock-seq.
 Remediation: document fork caveat in SECURITY.md + README; optionally register `pthread_atfork` reseed for hosts linking libc.
-Status: Open.
+Status: ✅ Closed (2026-04-18, commit `275a7e3`) — `Generator.reseed()` landed; README + SECURITY.md updated.
 
 **2. SEC-P3-02** (Medium, CWE-367 / CWE-1240, Risk 9, confidence::confirmed) — No timestamp-rollback detection in `loadState`.
 Evidence: `src/generator.zig:764-766, 774-783` — saved `last_v1_ts` / `last_ms` loaded verbatim; no guard against `clock() < saved`. A restored older state file (or NTP step-back) lets V1/V6/V7 re-emit timestamps already used.
 Remediation: on load, `self.last_v1_ts = @max(saved.last_v1_ts, fromUnixNano(self.clock()));` analog for `last_ms`; record monotonic counter + refuse load if wall clock regressed beyond tolerance.
-Status: Open.
+Status: ✅ Closed (2026-04-18, commit `94d7f9a`) — `loadState` rejects future-dated state > `Config.clock_rollback_tolerance_ms = 1_000`; clamps `last_v1_ts`.
 
 **3. SEC-P3-03** (Medium, CWE-276 / CWE-732, Risk 9, confidence::confirmed) — `saveState` does not set explicit mode.
 Evidence: `src/generator.zig:680` uses `createFileAbsolute(path, .{})` without `.mode = 0o600`; SECURITY.md claims `0o600`. Actual mode = `0o666 & ~umask`, typically `0o644` — world-readable last_v1_ts/node_id.
 Remediation: pass `.mode = 0o600`; add `chmod(0o600)` fallback after tmp rename; add test asserting `statFile().mode & 0o777 == 0o600` on POSIX.
-Status: Open.
+Status: ✅ Closed (2026-04-18, commit `be5788f`) — explicit `.mode = 0o600` + belt-and-suspenders `fchmod(0o600)` landed.
 
 **4. SEC-P3-04** (Medium, CWE-345 / CWE-353, Risk 9, confidence::confirmed) — State file lacks MAC/signature.
 Evidence: `src/generator.zig:604, 626-686` — format is magic(8) + version(1) + len(4) + payload; integrity bounded by struct size only. A local attacker who can write the state file can set arbitrary `node_id`, `clock_seq`, `last_v1_ts`, `last_ms`.
@@ -657,7 +657,7 @@ Status: Open.
 **5. SEC-P3-05** (Low-Medium, CWE-327 / CWE-347, Risk 6, confidence::confirmed) — V3/V5 namespace-abuse vector.
 Evidence: `src/versions.zig:25-37` (`newV3`/`newV5` accept arbitrary `ns: UUID`); `src/namespace.zig:15-34` (fixed RFC namespaces are compile-time constants, but API allows any UUID). Callers feeding attacker-controlled `ns` or `name` can craft collisions/forgeries under MD5 (V3) and weakened SHA-1 (V5).
 Remediation: add doc warning + `newV3Strict`/`newV5Strict` that accept only `Namespace` enum values; keep permissive form for interop but flag it.
-Status: Open (docs-first).
+Status: ✅ Closed (2026-04-18, commit `fc3b9ac`) — `Namespace` enum + `asUUID()`, `newV3Strict`/`newV5Strict` (Generator + module-level), CWE-347 doc warning on permissive variants.
 
 **6. SEC-P3-06** (Low, CWE-362, Risk 4, confidence::confirmed) — `node_cache` lockless read.
 Evidence: `src/generator.zig` ~line 450, ~line 486 — optimistic read before mutex. Benign on x86/ARM64 (aligned 64-bit loads tear-free); authoritative re-check under mutex. This is the PERF-05 / SEC-R12-01 optimization.
@@ -710,20 +710,26 @@ _Last updated: 2026-04-18 — Phase 3 complete. 8 new findings (5 Medium confirm
 
 ## Phase 3 Closure Cycle (2026-04-18)
 
-> 0 of the 8 Phase-3 SEC findings were implemented in-tree this cycle.
-> 4 findings are Deferred — pending user sign-off (Group C).
+> 4 of the 8 Phase-3 SEC findings landed in-tree this cycle (Group C closure round, HEAD `5bee3e7`).
+> 0 findings remain Deferred — pending user sign-off (Group C).
 > 2 findings are Deferred (high-risk) — require explicit approval before implementation (Group D).
 > 1 finding is Blocked on external input (SEC-P3-07).
 > 1 finding remains Won't Do (SEC-P3-06, re-confirmed — identical to SEC-R12-01 decision).
 
-### Deferred — pending user sign-off (Group C, 4)
+### Closed this cycle (Group C, 4)
 
-| Gap-ID | Status | Blocker | Unblock criteria |
-| ------ | ------ | ------- | ---------------- |
-| SEC-P3-01 | ⏸️ Deferred — pending user sign-off | Fork-safety remediation touches SECURITY.md, README, and optionally links libc `pthread_atfork`. | User decides whether to ship docs-only fork caveat or accept an optional libc-linked reseed hook. |
-| SEC-P3-02 | ⏸️ Deferred — pending user sign-off | Timestamp-rollback guard in `loadState` changes observable error behaviour (new `Error.StateRollback` or similar). | User approves the guard policy (hard error vs. clamp-forward) and tolerance window. |
-| SEC-P3-03 | ⏸️ Deferred — pending user sign-off | `saveState` explicit `.mode=0o600` is cross-platform sensitive (Windows has no POSIX mode). | User approves POSIX-mode behaviour + Windows fallback strategy. |
-| SEC-P3-05 | ⏸️ Deferred — pending user sign-off | `newV3Strict`/`newV5Strict` (accepting only `Namespace` enum values) plus a doc warning on permissive forms — API surface change. | User approves the `*Strict` API name + signature and agrees to keep permissive variants for interop. |
+> Full per-item resolution bodies are mirrored in `docs/GAP_ANALYSIS_RESOLVED.md` (Group C section, 2026-04-18). One-line stubs retained here for cross-reference.
+
+| Gap-ID | Status | Commit | Evidence | Notes |
+| ------ | ------ | ------ | -------- | ----- |
+| SEC-P3-01 | ✅ Closed (2026-04-18) | `275a7e3` | `src/generator.zig` (`Generator.reseed()`), `README.md`, `SECURITY.md` | Fork-safety: `Generator.reseed()` added + docs direct callers to invoke it post-`fork(2)`. |
+| SEC-P3-02 | ✅ Closed (2026-04-18) | `94d7f9a` | `src/generator.zig` (`loadState`), `Config.clock_rollback_tolerance_ms = 1_000` | `loadState` rejects future-dated state > 1000 ms tolerance; clamps `last_v1_ts` monotonically. |
+| SEC-P3-03 | ✅ Closed (2026-04-18) | `be5788f` | `src/generator.zig` (`saveState`) | `saveState` passes `.mode = 0o600` + belt-and-suspenders `fchmod(0o600)` post-rename. |
+| SEC-P3-05 | ✅ Closed (2026-04-18) | `fc3b9ac` | `src/namespace.zig`, `src/versions.zig`, `src/uuid.zig` | `Namespace` enum + `asUUID()`, `newV3Strict` / `newV5Strict` (Generator + module-level), CWE-347 doc warning on permissive `newV3` / `newV5`. |
+
+### Deferred — pending user sign-off (Group C, 0)
+
+_All Group C SEC items closed in Group C closure round (2026-04-18). Historical deferred entries moved to `docs/GAP_ANALYSIS_RESOLVED.md`._
 
 ### Deferred (high-risk) — requires explicit approval (Group D, 2)
 
@@ -749,4 +755,4 @@ _Last updated: 2026-04-18 — Phase 3 complete. 8 new findings (5 Medium confirm
 - **SEC-R9-02** (CI Zig hash TOFU) — Won't Do. Pipeline governance concern, not a library-code finding. MUST NOT re-open.
 - **SEC-R2-01** (unverified Zig download) — Won't Do. Pipeline governance concern. MUST NOT re-open.
 
-_Phase 3 closure cycle complete — 0 closed, 4 deferred (Group C), 2 deferred high-risk (Group D), 1 blocked on external input, 1 Won't-Do reconfirmed._
+_Phase 3 closure cycle complete (Group C round, 2026-04-18) — 4 closed (SEC-P3-01/02/03/05), 0 deferred Group C, 2 deferred high-risk (Group D: SEC-P3-04, SEC-P3-08), 1 blocked on external input (SEC-P3-07), 1 Won't-Do reconfirmed (SEC-P3-06)._

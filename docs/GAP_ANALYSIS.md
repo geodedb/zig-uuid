@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-03-22 — Full codebase audit Cycle 2: Security Cycle 14 (4 new, 3 closed, 1 open Info), Quality Cycle 13 (7 new, all closed), Performance Cycle 5 (6 new, 5 closed, 1 Won't Do). Grand totals: 175 findings across all domains — 166 closed, 6 Won't Do, 1 FP, 1 open (Info).
+> Last updated: 2026-04-18 — Group C closure round (HEAD `5bee3e7`): 11 items closed this cycle (10 full + 1 partial PERF-31). Phase-3 totals: 60 items tracked — 41 previously closed (16 Phase-3 initial + 25 Phase-2 bookkeeping) + 11 Group C + 3 deferred Group D + 1 blocked (SEC-P3-07) + 4 Won't-Do. Remaining open: 5.
 
 ---
 
@@ -4070,11 +4070,29 @@ glab issue close 119 --comment "Empty issue closed as tracker hygiene (GAP-DOC-0
 - QC-95 (`54a087a`), QC-96 / PERF-28 (`bbfad76`), QC-97 (`0a919ea`), QC-98 (`828e80a`), QC-99 (`cafa0b0`), QC-101 (`f2a1bc6`), QC-102 (`4591a9b`).
 - PERF-24 (`f30658e`), PERF-25 (`8374793`), PERF-30 (`dc9458e`), PERF-32 (`b2d7766`).
 
-**Deferred — pending user sign-off (Group C, 11):**
+**Group C closure round — 2026-04-18, HEAD `5bee3e7` (11 items: 10 full + 1 partial):**
 
-- Quality: QC-100 (`default_generator` parity audit).
-- Performance: PERF-22, PERF-23, PERF-26, PERF-27, PERF-29, PERF-31.
-- Security: SEC-P3-01, SEC-P3-02, SEC-P3-03, SEC-P3-05.
+| Gap-ID | Commit | Status | Notes |
+| ------ | ------ | ------ | ----- |
+| SEC-P3-01 | `275a7e3` | ✅ Closed | `Generator.reseed()` + fork-safety docs (README + SECURITY.md). |
+| SEC-P3-02 | `94d7f9a` | ✅ Closed | `loadState` rejects future-dated state beyond 1000 ms tolerance; clamps `last_v1_ts`. |
+| SEC-P3-03 | `be5788f` | ✅ Closed | `saveState` explicit `.mode = 0o600` + belt-and-suspenders `fchmod`. |
+| SEC-P3-05 | `fc3b9ac` | ✅ Closed | `Namespace` enum + `newV3Strict` / `newV5Strict` + CWE-347 doc warning on permissive variants. |
+| PERF-22 | `4ec4eee` | ✅ Closed | `benchV7Contention` multi-threaded benchmark. |
+| PERF-23 | `7a95126` | ✅ Closed | Nullable `rand` / `clock` for inlinable default CSPRNG path. |
+| PERF-26 | `05491f2` | ✅ Closed | `bench/baseline.txt` committed; CI `bench-regression` drops `allow_failure` + 15% threshold. |
+| PERF-27 | `2f93fac` | ✅ Closed | Atomic `node_cache_valid` + `node_cache_bytes` with acquire/release ordering. |
+| PERF-29 | `d31bb22` | ✅ Closed | `align(64)` cache-line separation between V7 and V1/V6 state clusters. |
+| PERF-31 | `e9cbf7f` | ⚠️ Partially Closed | Mitigation-only: doc warning on `GeneratorInterface` perf tradeoff. Full comptime-generic rewrite deferred pending ADR + major-version bump. |
+| QC-100 | `23ad3cd` | ✅ Closed | `defaultGenerator()` + module-level parity wrappers (`clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`). |
+
+Style/formatting commit `5bee3e7` (`zig fmt` nit after PERF-22) accompanies Group C but is not gap-tracked.
+
+**Test state at Group C closure:** 204/204 unit + 32/32 integration (all green).
+
+**Deferred — pending user sign-off (Group C, 0):** All Group C items landed (PERF-31 partial — full rewrite tracked as an ADR item, not deferred sign-off).
+
+**New public API (release notes):** `Generator.reseed()`; `Namespace` enum with `asUUID()`; `newV3Strict` / `newV5Strict` (Generator + module-level); `defaultGenerator() *Generator`; module wrappers `clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`; `Config.clock_rollback_tolerance_ms = 1_000`.
 
 **Deferred (high-risk) — requires explicit approval before implementation (Group D, 3):**
 
@@ -4093,6 +4111,26 @@ glab issue close 119 --comment "Empty issue closed as tracker hygiene (GAP-DOC-0
 - SEC-R2-01 (unverified Zig download) — pipeline governance.
 - GAP-DOC-04 (tracker pollution #87/#90/#119) — tracker-only hygiene; queued in the Phase-3 `glab` block.
 
-**Total tracked this closure cycle:** 60 items (16 closed + 25 previously resolved + 11 deferred Group C + 3 deferred Group D + 1 blocked + 4 Won't-Do).
+**Total tracked across both rounds:** 60 items — 41 closed (16 Phase-3 initial + 25 Phase-2 bookkeeping) + 11 closed in Group C round (10 full + 1 partial) + 3 deferred Group D + 1 blocked (SEC-P3-07) + 4 Won't-Do. **Remaining open: 5** — PERF-31 (partial, ADR pending), PERF-21, SEC-P3-04, SEC-P3-08 (Group D), SEC-P3-07 (blocked).
+
+---
+
+### Group C Closure Cycle (2026-04-18) — glab command block (documentation only)
+
+> The Group C items (SEC-P3-01/02/03/05, PERF-22/23/26/27/29/31, QC-100) were tracked in docs only and do **not** have pre-existing GitLab work items. No `glab issue` actions are needed for this round — the block below is documentation-only for future reference if the project decides to retroactively file tracker issues.
+>
+> To emit matching tracker issues later, adapt the Cycle-5 block above by changing `--title` to include `[RESOLVED]` and the commit SHA, or skip entirely.
+
+```bash
+# Group C round (2026-04-18, HEAD 5bee3e7) — no glab actions required.
+# Items were doc-tracked only. If retroactive tracker issues are desired later,
+# create them with --title "<Gap-ID>: <short>" and immediately close with the
+# evidence comment (commit SHA + file:line), e.g.:
+#
+# glab issue create --title "SEC-P3-01: Fork-unsafe CSPRNG" \
+#   --description "Closed 2026-04-18 via commit 275a7e3 — Generator.reseed() + fork-safety docs." \
+#   && glab issue close $(glab issue list --search "SEC-P3-01" --output json | jq -r '.[0].iid') \
+#     --comment "Closed via Group C gap-closure cycle. Evidence: commit 275a7e3."
+```
 
 ---

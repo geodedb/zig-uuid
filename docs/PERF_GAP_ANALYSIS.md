@@ -5,7 +5,7 @@
 > Zig version audited: 0.16.0
 > Reviewer: Performance review agent
 >
-> Last updated: 2026-04-18
+> Last updated: 2026-04-18 (Group C closure round — HEAD `5bee3e7`; PERF-22/23/26/27/29 ✅ Closed, PERF-31 ⚠️ Partially Closed. Remaining open: PERF-21 Group D; PERF-31 partial.)
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
 > Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
 > Cycle 4 appended: 2026-03-22 (2 new findings: PERF-19 through PERF-20)
@@ -860,16 +860,16 @@ zig build bench-check -Doptimize=ReleaseFast
 | Rank | Severity | PerfScore | Finding | Component | Evidence | Confidence | Fix Summary | Status |
 |------|----------|-----------|---------|-----------|----------|------------|-------------|--------|
 | 1 | P0 | 80 | V7 mutex serialises every call; lock-free CAS possible | `generator.zig:185,208,233-328` | 0.16 `std.Io.Mutex` wraps every V7 path | suspected | Pack `(ms<<12)\|seq` into `Atomic(u64)`; CAS retry; eliminate mutex | Open |
-| 2 | P1 | 64 | No multi-threaded V7 benchmark | `bench/main.zig:65-76` | single-thread only | confirmed | Add `benchV7Concurrent(N)` with Thread.spawn × {1,2,4,8} | Open |
-| 3 | P1 | 48 | `defaultRand` function-pointer indirection prevents inlining | `generator.zig:24-26,83` | `RandFn` is `*const fn` field | confirmed | Comptime `DefaultGenerator` that inlines CSPRNG; keep injectable variant for tests | Open |
+| 2 | P1 | 64 | No multi-threaded V7 benchmark | `bench/main.zig:65-76` | single-thread only | confirmed | Add `benchV7Concurrent(N)` with Thread.spawn × {1,2,4,8} | ✅ Closed 2026-04-18 (`4ec4eee`) |
+| 3 | P1 | 48 | `defaultRand` function-pointer indirection prevents inlining | `generator.zig:24-26,83` | `RandFn` is `*const fn` field | confirmed | Comptime `DefaultGenerator` that inlines CSPRNG; keep injectable variant for tests | ✅ Closed 2026-04-18 (`7a95126`) |
 | 4 | P1 | 48 | `std.log.warn` in hwaddr hot path when NIC count > 128 | `hwaddr/linux.zig:64` | unconditional `std.log.warn` | confirmed | Gate behind `std.log.Level.debug` or once-flag; drop to debug | Open |
 | 5 | P2 | 36 | `jsonMarshal` two-pass: stack toString then `allocator.dupe` | `uuid.zig:429-432` | two copies of a 36-byte string | confirmed | Single-pass: `alloc(36)` then `toStringInto(buf)` | Open |
-| 6 | P2 | 36 | CI `bench-regression` has `allow_failure:true` with no threshold gate | `.gitlab-ci.yml:239-253` | job exits 0 on any delta | confirmed | Add percent-threshold gate; remove `allow_failure` | Open |
-| 7 | P2 | 32 | `node_cache` read outside `v1v6_mutex` (TSan hazard) | `generator.zig:450,486` | `if (self.node_cache == null)` pre-lock | confirmed | Make `node_cache` atomic-or-seqlock read; double-check inside lock | Open |
+| 6 | P2 | 36 | CI `bench-regression` has `allow_failure:true` with no threshold gate | `.gitlab-ci.yml:239-253` | job exits 0 on any delta | confirmed | Add percent-threshold gate; remove `allow_failure` | ✅ Closed 2026-04-18 (`05491f2`) |
+| 7 | P2 | 32 | `node_cache` read outside `v1v6_mutex` (TSan hazard) | `generator.zig:450,486` | `if (self.node_cache == null)` pre-lock | confirmed | Make `node_cache` atomic-or-seqlock read; double-check inside lock | ✅ Closed 2026-04-18 (`2f93fac`) |
 | 8 | P2 | 24 | `std.Io.Threaded.global_single_threaded.io()` re-resolved 18+ times | `generator.zig` (many) | repeated inline calls | suspected | Cache `const gio = ...io();` per-function; or hoist to field | Open |
-| 9 | P2 | 24 | False sharing between V7 and V1/V6 state in `Generator` struct | `generator.zig:97-112` | both mutexes + hot fields within one cacheline | suspected | `align(64)` separator between V7 state and V1/V6 state | Open |
+| 9 | P2 | 24 | False sharing between V7 and V1/V6 state in `Generator` struct | `generator.zig:97-112` | both mutexes + hot fields within one cacheline | suspected | `align(64)` separator between V7 state and V1/V6 state | ✅ Closed 2026-04-18 (`d31bb22`) |
 | 10 | P3 | 16 | Md5/Sha1 init state per V3/V5 call; no prehashed-namespace variant | `generator.zig:525,550` | full hasher init each call | suspected | Add `NamespaceContext` that stores mid-hash state after absorbing namespace | Open |
-| 11 | P3 | 12 | `GeneratorInterface` vtable blocks inlining in hot callers | generator.zig (iface) | indirect call in tight loops | suspected | Document + offer comptime-generic wrapper; measure before acting | Open |
+| 11 | P3 | 12 | `GeneratorInterface` vtable blocks inlining in hot callers | generator.zig (iface) | indirect call in tight loops | suspected | Document + offer comptime-generic wrapper; measure before acting | ⚠️ Partially Closed 2026-04-18 (`e9cbf7f`, doc-only) |
 | 12 | P3 | 8  | No `ProcessHashContext` (per-process random seed would be zero-cost) | generator.zig | design gap | suspected | Add comptime/init-time salted V3/V5 helper; purely additive | Open |
 
 **PerfScore formula**: Impact (1–5) × Likelihood (1–5) × 4
@@ -900,6 +900,8 @@ zig build bench-check -Doptimize=ReleaseFast
 
 **Verify**: `zig build bench -Doptimize=ReleaseFast`; confirm new output lines `newV7 (T=8): NNN ns/op, MM ops/sec`.
 
+**Status (2026-04-18, Group C closure):** ✅ **Closed** — commit `4ec4eee`, `benchV7Contention` landed in `bench/main.zig`.
+
 ---
 
 #### PERF-23: `defaultRand` function-pointer indirection prevents inlining (P1, confirmed)
@@ -911,6 +913,8 @@ zig build bench-check -Doptimize=ReleaseFast
 **Fix**: Introduce a comptime-generic `GeneratorOf(RandT, ClockT, HWAddrT)` with a default `DefaultGenerator` alias that binds to monomorphised CSPRNG/clock paths. Keep the function-pointer `Generator` as the test-injectable variant (do not break API).
 
 **Verify**: `zig build bench -Doptimize=ReleaseFast`; expect `newV4` 6 → 3–4 ns/op. Confirm inlining: `objdump -d zig-out/bench-*/main | grep -A20 newV4` shows no indirect call instruction.
+
+**Status (2026-04-18, Group C closure):** ✅ **Closed** — commit `7a95126`, nullable `rand` / `clock` fields enable the inlinable default CSPRNG path.
 
 ---
 
@@ -948,6 +952,8 @@ zig build bench-check -Doptimize=ReleaseFast
 
 **Verify**: Trigger a synthetic regression (e.g., add `std.Thread.sleep(1)` into `newV4`), confirm the CI job fails with a clear diff message.
 
+**Status (2026-04-18, Group C closure):** ✅ **Closed** — commit `05491f2`, `bench/baseline.txt` committed; `allow_failure:true` removed and a 15% regression threshold gate landed.
+
 ---
 
 #### PERF-27: `node_cache` unsynchronised read outside `v1v6_mutex` (P2, confirmed)
@@ -959,6 +965,8 @@ zig build bench-check -Doptimize=ReleaseFast
 **Fix**: Make `node_cache` a `std.atomic.Value(?[6]u8)` or an `Optional` behind an atomic flag. Double-check the value inside the mutex on the cold path.
 
 **Verify**: `zig build test -Doptimize=Debug -fsanitize=thread` with an 8-thread V1/V6-mix stress test — should report zero data races.
+
+**Status (2026-04-18, Group C closure):** ✅ **Closed** — commit `2f93fac`, atomic `node_cache_valid` (`std.atomic.Value(bool)`) + raw `node_cache_bytes` with acquire/release ordering.
 
 ---
 
@@ -984,6 +992,8 @@ zig build bench-check -Doptimize=ReleaseFast
 
 **Verify**: Mixed-workload benchmark (4 threads V7 + 4 threads V1) before/after padding; expect ≥ 10–15% mixed-throughput gain; `perf c2c record` confirms reduced HITM events.
 
+**Status (2026-04-18, Group C closure):** ✅ **Closed** — commit `d31bb22`, `align(64)` cache-line separation inserted between V7 and V1/V6 state clusters.
+
 ---
 
 #### PERF-30: Md5/Sha1 init per V3/V5 call — no prehashed-namespace variant (P3, suspected)
@@ -1008,7 +1018,7 @@ zig build bench-check -Doptimize=ReleaseFast
 
 **Verify**: Add `benchInterfaceV1()` (V1 via iface, warm cache) and `benchV1()` (direct); measure gap at ReleaseFast.
 
-**Status (2026-04-18, Group C Phase-3 closure):** ⏸️ **Deferred** — the proposed comptime-generic `GeneratorInterfaceFor(G)` is API-breaking (removes or changes the `GeneratorInterface` type exported from `src/root.zig`). For Group C we landed a **mitigation-only** change: a doc warning on `GeneratorInterface` directing hot-path callers to hold `*Generator` directly. Full closure requires an ADR documenting the new comptime-generic contract and a major-version bump; re-open when the project accepts the next breaking change. Commit `docs(generator): document GeneratorInterface perf tradeoff (PERF-31 mitigation)` captures the interim mitigation.
+**Status (2026-04-18, Group C closure round):** ⚠️ **Partially Closed** — mitigation-only commit `e9cbf7f` landed: a doc warning on `GeneratorInterface` directs hot-path callers to hold `*Generator` directly. The proposed comptime-generic `GeneratorInterfaceFor(G)` full rewrite is API-breaking (changes or removes the `GeneratorInterface` type exported from `src/root.zig`) and is deferred pending an ADR + major-version bump. Re-open when the project accepts the next breaking change.
 
 ---
 
@@ -1134,9 +1144,9 @@ glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed bench
 
 ## Phase 3 Closure Cycle (2026-04-18)
 
-> 4 of the 12 Cycle-5 findings landed in-tree this cycle (verifier-approved).
-> 7 findings are held open as Deferred — pending user sign-off (Group C concurrency/bench/CI work)
-> plus 1 high-risk redesign Deferred — requires explicit approval (Group D: PERF-21 lock-free CAS).
+> Initial Phase-3 round: 5 of the 12 Cycle-5 findings landed (PERF-24/25/28/30/32).
+> Group C closure round (2026-04-18, HEAD `5bee3e7`): +5 full closures (PERF-22/23/26/27/29) + 1 partial (PERF-31 mitigation-only).
+> Remaining open: PERF-31 (partial — ADR pending), PERF-21 (Group D, high-risk).
 > Resolution evidence mirrored in `docs/GAP_ANALYSIS_RESOLVED.md`.
 
 ### Closed this cycle (4)
@@ -1151,16 +1161,22 @@ glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed bench
 
 *(PERF-32 landed as part of this cycle; count is 5 closed, not 4 — scoreboard corrected below.)*
 
-### Deferred — pending user sign-off (Group C, 6)
+### Group C closure round (2026-04-18) — 5 closed, 1 partial
 
-| Gap-ID | Status | Blocker | Unblock criteria |
-| ------ | ------ | ------- | ---------------- |
-| PERF-22 | ⏸️ Deferred — pending user sign-off | Multi-threaded V7 bench harness is a measurement prerequisite for PERF-21 but adds CI-run-time cost. | User confirms acceptance of added bench run-time on `bench-regression` job. |
-| PERF-23 | ⏸️ Deferred — pending user sign-off | `?RandFn` generic redesign changes `Generator` type surface. | User approves comptime-generic `GeneratorOf(...)` with `DefaultGenerator` alias retaining injectable-test variant. |
-| PERF-26 | ⏸️ Deferred — pending user sign-off | Removing `allow_failure:true` and adding a 5% regression gate changes CI failure semantics. | User approves CI policy + threshold percentage. |
-| PERF-27 | ⏸️ Deferred — pending user sign-off | `node_cache` atomic-fence wrapping overlaps SEC-P3-06 Won't-Do decision; wants explicit approval for `Atomic(u64)` + acquire/release. | User approves the atomic wrapper even though SEC-P3-06 kept the raw read intentional. |
-| PERF-29 | ⏸️ Deferred — pending user sign-off | `align(64)` padding between V7 and V1/V6 domains needs bench confirmation first. | User approves padding + mixed-workload measurement, or waives the gain. |
-| PERF-31 | ⏸️ Deferred — pending user sign-off | `GeneratorInterface` → comptime-generic monomorphisation changes API shape. | User approves `GeneratorInterfaceFor(G)` comptime shim alongside the existing vtable. |
+> HEAD at closure: `5bee3e7`. Full per-item bodies mirrored in `docs/GAP_ANALYSIS_RESOLVED.md`.
+
+| Gap-ID | Status | Commit | Evidence | Notes |
+| ------ | ------ | ------ | -------- | ----- |
+| PERF-22 | ✅ Closed (2026-04-18) | `4ec4eee` | `bench/main.zig` (`benchV7Contention`) | Multi-threaded V7 contention benchmark landed; CI now gets concurrency signal for PERF-21. |
+| PERF-23 | ✅ Closed (2026-04-18) | `7a95126` | `src/generator.zig` (nullable `rand`/`clock`) | Nullable `rand` / `clock` fields enable an inlinable default CSPRNG path; test-injectable variant retained via `withRand` / `withClock`. |
+| PERF-26 | ✅ Closed (2026-04-18) | `05491f2` | `bench/baseline.txt`, `.gitlab-ci.yml` | `bench/baseline.txt` committed; `bench-regression` job dropped `allow_failure:true` and gates on a 15% regression threshold. |
+| PERF-27 | ✅ Closed (2026-04-18) | `2f93fac` | `src/generator.zig` (atomic `node_cache_valid` + `node_cache_bytes`) | `node_cache` split into `std.atomic.Value(bool)` valid-flag + raw bytes with acquire/release ordering; TSan-clean. Distinct from SEC-P3-06 (Won't-Do) which covers the intentional pre-lock fast-path read elsewhere. |
+| PERF-29 | ✅ Closed (2026-04-18) | `d31bb22` | `src/generator.zig` | `align(64)` cache-line separator inserted between V7 and V1/V6 state clusters; false sharing eliminated. |
+| PERF-31 | ⚠️ Partially Closed (2026-04-18) | `e9cbf7f` | `src/generator.zig` (GeneratorInterface doc warning) | Mitigation-only: doc warning directs hot-path callers to hold `*Generator` directly. Full comptime-generic rewrite (`GeneratorInterfaceFor(G)`) deferred pending an ADR + major-version bump (API-breaking). |
+
+### Deferred — pending user sign-off (Group C, 0)
+
+*All Group C PERF items closed or partially closed in Group C closure round (2026-04-18). PERF-31 remains partial — full rewrite tracked separately as an ADR item.*
 
 ### Deferred (high-risk) — requires explicit approval (Group D, 1)
 
