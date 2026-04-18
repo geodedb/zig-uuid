@@ -376,6 +376,21 @@ pub const UUID = struct {
         return buf[0..45];
     }
 
+    /// QC-97: shared body for the five `toXxxAlloc` wrappers. `encode` is the
+    /// stack-encoding variant (`toURN`, `toString`, `toStringUpper`, `toHex`,
+    /// `toHexUpper`) and `N` is the fixed output byte count for that variant.
+    /// Kept `inline` so the generated code is a straight `alloc.dupe(...)`
+    /// with no indirection at ReleaseFast.
+    inline fn toAllocGeneric(
+        self: UUID,
+        alloc: std.mem.Allocator,
+        comptime N: usize,
+        comptime encode: fn (UUID, *[N]u8) []u8,
+    ) ![]u8 {
+        var buf: [N]u8 = undefined;
+        return alloc.dupe(u8, encode(self, &buf));
+    }
+
     /// Allocating URN format (F-5 / G-3). Returns heap-allocated 45-byte string; caller must free.
     /// **Hot path note:** the cost of the allocation is set by the `alloc`
     /// argument — an arena or bump allocator is effectively free, a GPA is a
@@ -383,8 +398,7 @@ pub const UUID = struct {
     /// call (see `docs/PERF_GAP_ANALYSIS.md` Cycle 3 measurements). Prefer
     /// `toURN(&buf)` (~6 ns/op) for performance-sensitive code.
     pub fn toURNAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
-        var buf: [45]u8 = undefined;
-        return alloc.dupe(u8, self.toURN(&buf));
+        return self.toAllocGeneric(alloc, 45, toURN);
     }
 
     /// Allocating canonical lowercase with dashes: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`.
@@ -393,8 +407,7 @@ pub const UUID = struct {
     /// `toURNAlloc` for the arena-vs-page_allocator comparison). Prefer
     /// `toString(&buf)` (~6 ns/op) for performance-sensitive code.
     pub fn toStringAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
-        var buf: [36]u8 = undefined;
-        return alloc.dupe(u8, self.toString(&buf));
+        return self.toAllocGeneric(alloc, 36, toString);
     }
 
     /// Allocating uppercase string (G-2). Returns heap-allocated 36-byte string; caller must free.
@@ -402,8 +415,7 @@ pub const UUID = struct {
     /// `toURNAlloc` for the arena-vs-page_allocator comparison). Prefer
     /// `toStringUpper(&buf)` (~6 ns/op) for performance-sensitive code.
     pub fn toStringUpperAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
-        var buf: [36]u8 = undefined;
-        return alloc.dupe(u8, self.toStringUpper(&buf));
+        return self.toAllocGeneric(alloc, 36, toStringUpper);
     }
 
     /// Allocating lowercase hex without dashes (QC-42). Returns heap-allocated 32-byte string; caller must free.
@@ -411,8 +423,7 @@ pub const UUID = struct {
     /// `toURNAlloc` for the arena-vs-page_allocator comparison). Prefer
     /// `toHex(&buf)` (~5 ns/op) for performance-sensitive code.
     pub fn toHexAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
-        var buf: [32]u8 = undefined;
-        return alloc.dupe(u8, self.toHex(&buf));
+        return self.toAllocGeneric(alloc, 32, toHex);
     }
 
     /// Allocating uppercase hex without dashes (QC-42). Returns heap-allocated 32-byte string; caller must free.
@@ -420,8 +431,7 @@ pub const UUID = struct {
     /// `toURNAlloc` for the arena-vs-page_allocator comparison). Prefer
     /// `toHexUpper(&buf)` (~5 ns/op) for performance-sensitive code.
     pub fn toHexUpperAlloc(self: UUID, alloc: std.mem.Allocator) ![]u8 {
-        var buf: [32]u8 = undefined;
-        return alloc.dupe(u8, self.toHexUpper(&buf));
+        return self.toAllocGeneric(alloc, 32, toHexUpper);
     }
 
     /// Format UUID as a canonical lowercase hyphenated string for use with
