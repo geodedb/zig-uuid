@@ -115,8 +115,17 @@ fn clockToMs(ns: i128) Error!i64 {
 /// For rates >4M/sec with strict per-generator monotonicity, use newV7AtTime
 /// with V8 for the extra sub-ms bits.
 pub const Generator = struct {
-    clock: ClockFn = defaultClock,
-    rand: RandFn = defaultRand,
+    /// PERF-23: `clock` and `rand` are nullable function pointers. When
+    /// they are null (the common case for untouched `Generator.init()`),
+    /// the hot paths call the default helpers directly (`defaultClock` /
+    /// `defaultRand`), which LLVM can inline through to the underlying
+    /// syscall / CSPRNG read. A non-null value still dispatches through
+    /// the pointer at the same cost as the previous design. The net
+    /// result is a cheaper fast path for the default generator without
+    /// changing observable behaviour for callers of `withClock` /
+    /// `withRand`.
+    clock: ?ClockFn = null,
+    rand: ?RandFn = null,
 
     /// Optional hardware-address function (F-1). When null (the default), V1
     /// and V6 UUIDs use a random multicast node ID, protecting privacy per
@@ -160,6 +169,25 @@ pub const Generator = struct {
 
     /// Previously-used node ID for change detection (F-4).
     last_node: ?[6]u8 = null,
+
+    /// PERF-23 hot-path: resolve the clock function.  When `clock` is null
+    /// we call `defaultClock` directly so LLVM can inline the
+    /// `clock_gettime` wrapper; when it is non-null we dispatch via the
+    /// stored pointer with the same cost as a direct call.
+    inline fn clockCall(self: *Generator) i128 {
+        return if (self.clock) |f| f() else defaultClock();
+    }
+
+    /// PERF-23 hot-path: resolve the rand function.  Same rationale as
+    /// `clockCall` — the default path reaches the CSPRNG without a
+    /// pointer indirection.
+    inline fn randCall(self: *Generator, buf: []u8) anyerror!void {
+        if (self.rand) |f| {
+            return f(buf);
+        } else {
+            return defaultRand(buf);
+        }
+    }
 
     /// PERF-27 fast-path: is the node cache populated? Acquire-loads the
     /// atomic flag so a subsequent `loadNodeCacheBytes` under the lock is
@@ -277,7 +305,7 @@ pub const Generator = struct {
     /// Returns `Error.RandomError` if the underlying random function fails.
     pub fn newV4(self: *Generator) Error!UUID {
         var u: UUID = undefined;
-        self.rand(&u.bytes) catch return Error.RandomError;
+        self.randCall(&u.bytes) catch return Error.RandomError;
         u.setVersion(.v4);
         u.setVariant(.rfc9562);
         return u;
@@ -298,7 +326,7 @@ pub const Generator = struct {
         // PERF-07: Read clock inside the mutex to use the freshest possible
         // timestamp and avoid stale-timestamp collisions under high contention.
         self.v7_mutex.lockUncancelable(gio());
-        var ms = clockToMs(self.clock()) catch |err| {
+        var ms = clockToMs(self.clockCall()) catch |err| {
             self.v7_mutex.unlock(gio());
             return err;
         };
@@ -365,7 +393,7 @@ pub const Generator = struct {
         // rand_a: 12-bit monotonic counter in low 12 bits of bytes 6-7
         std.mem.writeInt(u16, u.bytes[6..8], committed.seq, .big);
         // rand_b: 62 bits random in bytes 8-15 (outside the mutex, PERF-02)
-        self.rand(u.bytes[8..16]) catch return Error.RandomError;
+        self.randCall(u.bytes[8..16]) catch return Error.RandomError;
         u.setVersion(.v7);
         u.setVariant(.rfc9562);
         return u;
@@ -400,9 +428,9 @@ pub const Generator = struct {
             }
             // SEC-R13-01: Cache one clock reading per spin iteration. Both
             // the sleep-duration computation and the ms-advance check use
-            // ns_now, preventing divergence from two independent self.clock()
+            // ns_now, preventing divergence from two independent self.clockCall()
             // calls under non-monotonic or injected clocks.
-            const ns_now = self.clock();
+            const ns_now = self.clockCall();
 
             // SEC-R4-01: derive ms from the cached clock reading; propagate
             // InvalidTimestamp if the value is out of range.
@@ -444,7 +472,7 @@ pub const Generator = struct {
         } else {
             // New ms: seed mono_seq with random jitter (RFC-9562 §6.2).
             var rand_seq: [2]u8 = undefined;
-            self.rand(&rand_seq) catch return Error.RandomError;
+            self.randCall(&rand_seq) catch return Error.RandomError;
             self.mono_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
             seq = self.mono_seq;
             self.last_ms = ms;
@@ -461,7 +489,7 @@ pub const Generator = struct {
     fn initClockSeq(self: *Generator) Error!void {
         if (self.clock_seq_initialized) return;
         var buf: [2]u8 = undefined;
-        self.rand(&buf) catch return Error.RandomError;
+        self.randCall(&buf) catch return Error.RandomError;
         self.clock_seq = @truncate(std.mem.readInt(u16, &buf, .little) & 0x3FFF);
         self.clock_seq_initialized = true;
     }
@@ -481,7 +509,7 @@ pub const Generator = struct {
     /// Used by fetchRawNode both for the F-1 default path and hwaddr fallback. (QC-3)
     fn randomMulticastNode(self: *Generator) Error![6]u8 {
         var node: [6]u8 = undefined;
-        self.rand(&node) catch return Error.RandomError;
+        self.randCall(&node) catch return Error.RandomError;
         node[0] |= multicast_bit;
         return node;
     }
@@ -850,7 +878,7 @@ pub const Generator = struct {
     /// SEC-P3-02: NTP-skew tolerance used by `loadState` when comparing the
     /// persisted last_v1_ts / last_ms against the current wall clock. Saved
     /// timestamps more than this many milliseconds in the future relative
-    /// to `self.clock()` are treated as clock-rollback / replay and
+    /// to `self.clockCall()` are treated as clock-rollback / replay and
     /// rejected with `Error.InvalidFormat`. 1000 ms accommodates typical
     /// well-configured NTP skew without masking real rollbacks.
     pub const clock_rollback_tolerance_ms: i64 = 1_000;
@@ -1028,7 +1056,7 @@ pub const Generator = struct {
         // syscall so that the fast-restart branch is testable via clock injection.
         // Errors (negative/overflow clock) fall back to 0, which activates the
         // conservative overflow path — the safe default.
-        const current_ms: i64 = clockToMs(self.clock()) catch 0;
+        const current_ms: i64 = clockToMs(self.clockCall()) catch 0;
 
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
         self.v7_mutex.lockUncancelable(gio());

@@ -853,3 +853,42 @@ test "Generator.clearNodeCache holds mutex and generator still works (SEC-R6-01)
     // node_cache must have been repopulated.
     try std.testing.expect(gen.node_cache_valid.load(.acquire));
 }
+
+// --- PERF-23: nullable rand/clock defaults still produce valid UUIDs ---
+
+test "Generator.init default path produces valid V4 / V7 UUIDs (PERF-23)" {
+    // With the PERF-23 refactor `clock` and `rand` default to null, and
+    // the hot paths call defaultClock / defaultRand directly without the
+    // function-pointer indirection.  Prove that Generator.init() still
+    // produces UUIDs with the correct version and variant when neither
+    // withClock nor withRand is used.
+    var gen = Generator.init();
+    try std.testing.expect(gen.clock == null);
+    try std.testing.expect(gen.rand == null);
+
+    const uv4 = try gen.newV4();
+    try std.testing.expectEqual(Version.v4, uv4.version());
+    try std.testing.expectEqual(Variant.rfc9562, uv4.variant());
+
+    const uv7 = try gen.newV7();
+    try std.testing.expectEqual(Version.v7, uv7.version());
+    try std.testing.expectEqual(Variant.rfc9562, uv7.variant());
+}
+
+test "Generator.withRand overrides default rand (PERF-23)" {
+    // Override rand with a deterministic function and confirm the result
+    // reflects the injected bytes (i.e. the injected pointer is actually
+    // called, not the default).
+    const DeterministicRand = struct {
+        fn fill(buf: []u8) anyerror!void {
+            for (buf, 0..) |*b, i| b.* = @truncate(i);
+        }
+    };
+    var gen = Generator.withRand(DeterministicRand.fill);
+    try std.testing.expect(gen.rand != null);
+    const u = try gen.newV4();
+    // Version and variant are always overridden by setVersion/setVariant,
+    // but untouched bytes should reflect the deterministic fill.
+    try std.testing.expectEqual(@as(u8, 0), u.bytes[0]);
+    try std.testing.expectEqual(@as(u8, 1), u.bytes[1]);
+}
