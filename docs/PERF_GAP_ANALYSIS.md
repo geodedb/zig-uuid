@@ -869,7 +869,7 @@ zig build bench-check -Doptimize=ReleaseFast
 | 7 | P2 | 32 | `node_cache` read outside `v1v6_mutex` (TSan hazard) | `generator.zig:450,486` | `if (self.node_cache == null)` pre-lock | confirmed | Make `node_cache` atomic-or-seqlock read; double-check inside lock | ✅ Closed 2026-04-18 (`2f93fac`) |
 | 8 | P2 | 24 | `std.Io.Threaded.global_single_threaded.io()` re-resolved 18+ times | `generator.zig` (many) | repeated inline calls | suspected | Cache `const gio = ...io();` per-function; or hoist to field | Open |
 | 9 | P2 | 24 | False sharing between V7 and V1/V6 state in `Generator` struct | `generator.zig:97-112` | both mutexes + hot fields within one cacheline | suspected | `align(64)` separator between V7 state and V1/V6 state | ✅ Closed 2026-04-18 (`d31bb22`) |
-| 10 | P3 | 16 | Md5/Sha1 init state per V3/V5 call; no prehashed-namespace variant | `generator.zig:525,550` | full hasher init each call | suspected | Add `NamespaceContext` that stores mid-hash state after absorbing namespace | Open |
+| 10 | P3 | 16 | Md5/Sha1 init state per V3/V5 call; no prehashed-namespace variant | `generator.zig:525,550` | full hasher init each call | suspected | Add `PrehashedV3`/`PrehashedV5` + `initV3Namespace`/`initV5Namespace` that store mid-hash state after absorbing namespace | Open |
 | 11 | P3 | 12 | `GeneratorInterface` vtable blocks inlining in hot callers | generator.zig (iface) | indirect call in tight loops | suspected | Document + offer comptime-generic wrapper; measure before acting | ✅ Closed 2026-04-18 (`7c91b41`, additive `GeneratorInterfaceFor(G)`; `e9cbf7f` doc-only mitigation preceding) |
 | 12 | P3 | 8  | No `ProcessHashContext` (per-process random seed would be zero-cost) | generator.zig | design gap | suspected | Add comptime/init-time salted V3/V5 helper; purely additive | Open |
 
@@ -1005,7 +1005,7 @@ zig build bench-check -Doptimize=ReleaseFast
 
 **Root cause**: Each V3/V5 call calls `Md5.init()` / `Sha1.init()` then absorbs the 16-byte namespace before the name bytes. For callers generating many UUIDs under the same namespace, the namespace block (16 bytes, 1 full compression round) is redundant work.
 
-**Fix**: Add `NamespaceContext.init(namespace: UUID)` that returns a pre-absorbed Md5/Sha1 state; `newV3InNamespace(ctx, name)` clones state and finalises. Purely additive API — no breakage.
+**Fix**: Add `Generator.initV3Namespace(ns)` / `initV5Namespace(ns)` returning `PrehashedV3`/`PrehashedV5` with pre-absorbed Md5/Sha1 state; `PrehashedV*.name(name)` clones state and finalises. Purely additive API — no breakage. Implemented with the cleaner-factored names (separate types per version provide compile-time safety against passing a V5 prehash to a V3 site).
 
 **Verify**: Bench 1M V3 calls with fixed namespace: expect ~15–25 ns/op reduction (from saving one MD5 compression round per call).
 
@@ -1116,7 +1116,7 @@ glab issue create --title "PERF-29: False sharing between V7 and V1/V6 state in 
 # PERF-30 (P3, suspected)
 glab issue create --title "PERF-30: Md5/Sha1 init per V3/V5 call — add prehashed-namespace variant" \
   --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage" \
-  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-30. Files: src/generator.zig:525,550. Fix: NamespaceContext with pre-absorbed state."
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-30. Files: src/generator.zig:525,550. Fix: PrehashedV3/V5 with pre-absorbed state."
 
 # PERF-31 (P3, suspected)
 glab issue create --title "PERF-31: GeneratorInterface vtable blocks inlining in non-CSPRNG hot paths" \
@@ -1159,7 +1159,7 @@ glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed bench
 | PERF-24 | ✅ Closed | `f30658e` | `src/hwaddr/linux.zig` | `std.log.warn` on SIOCGIFCONF saturation downgraded/once-gated; hot-path cost removed for >128-NIC hosts. |
 | PERF-25 | ✅ Closed | `8374793` | `src/uuid.zig` | `jsonMarshal` single-pass: allocate heap buffer then write via `toStringInto` — eliminates stack→heap dupe. |
 | PERF-28 (ties QC-96) | ✅ Closed | `bbfad76` | `src/generator.zig` | `global_single_threaded.io()` hoisted to per-function/field constant; 18+ vtable resolutions collapsed. |
-| PERF-30 | ✅ Closed | `dc9458e` | `src/generator.zig` | `NamespaceContext` added — pre-absorbed Md5/Sha1 namespace state reused across V3/V5 calls. |
+| PERF-30 | ✅ Closed | `dc9458e` | `src/generator.zig` | `PrehashedV3`/`PrehashedV5` + `initV3Namespace`/`initV5Namespace` added — pre-absorbed Md5/Sha1 namespace state reused across V3/V5 calls. |
 | PERF-32 | ✅ Closed | `b2d7766` | `src/uuid.zig` | `ProcessHashContext` (per-process CSPRNG-seeded V5 helper) added; zero runtime cost vs plain V5. |
 
 *(PERF-32 landed as part of this cycle; count is 5 closed, not 4 — scoreboard corrected below.)*

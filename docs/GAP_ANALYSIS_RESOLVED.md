@@ -405,7 +405,7 @@ recorded under "Phase 3 Closure Cycle" below.
 
 - **Issue:** tracked in docs only
 - **Category:** Performance (P3, PerfScore 16)
-- **Resolution:** Added `NamespaceContext` with pre-absorbed Md5/Sha1 state; `newV3InNamespace`/`newV5InNamespace` clone and finalise. Purely additive API.
+- **Resolution:** Added `Generator.PrehashedV3`/`PrehashedV5` + `initV3Namespace`/`initV5Namespace` with pre-absorbed Md5/Sha1 state; `PrehashedV*.name(name)` clones and finalises. Purely additive API. (The PERF-30 design phase called this `NamespaceContext`; the shipped API uses version-specific types for better compile-time safety.)
 - **Evidence:** `src/generator.zig`.
 - **Commit:** `dc9458e`
 - **Resolved date:** 2026-04-18
