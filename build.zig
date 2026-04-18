@@ -11,15 +11,17 @@ pub fn build(b: *std.Build) void {
     const json_dep = b.dependency("json", .{ .target = target, .optimize = optimize });
     const json_module = json_dep.module("json");
 
-    // Main library module
+    // Main library module. Binding `json` via post-addModule `addImport`
+    // (rather than inline `.imports`) lets Zig's package system dedupe the
+    // import edge across multiple consumer paths — needed because uuid is
+    // instantiated by several siblings (geode, geode-client-zig,
+    // graph-storage) that each reach uuid through different graph chains.
     const module = b.addModule("uuid", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "json", .module = json_module },
-        },
     });
+    module.addImport("json", json_module);
 
     // Unit tests — reuse the public `module` so src/root.zig isn't rooted by
     // multiple module instances (would trigger "file exists in modules 'json'
