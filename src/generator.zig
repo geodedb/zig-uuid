@@ -593,6 +593,23 @@ pub const Generator = struct {
 
         var committed_ms: u64 = 0;
         var committed_seq: u12 = 0;
+
+        // Lazily-drawn seq entropy reused across retries of the clock-advance
+        // branch.  Originally the 2-byte CSPRNG draw lived inside the loop;
+        // on CAS loss the bytes were wasted.  Drawn at most ONCE per call:
+        //   - If the first iteration takes the same-ms branch (seq+1), the
+        //     draw is skipped entirely.
+        //   - If the clock-advance branch is entered and we lose CAS, most
+        //     retries fall into the same-ms branch (another thread already
+        //     committed the new ms), so the cached bytes go unused — not
+        //     leaked, the thread never emits a UUID with them.
+        //   - If the retry re-enters the clock-advance branch (clock jumps
+        //     again), reusing the same random bits is still safe: each
+        //     successful CAS emits one UUID, so the bits are published at
+        //     most once per call.
+        var rand_seq_cached: u12 = undefined;
+        var rand_seq_drawn: bool = false;
+
         while (true) : (retries += 1) {
             if (retries >= max_retries) {
                 // Pathological contention with a frozen clock — treat as
@@ -613,12 +630,18 @@ pub const Generator = struct {
             var new_seq: u12 = undefined;
             if (clock_ms_u > old_ms) {
                 // Clock advanced: seed seq from CSPRNG jitter per
-                // RFC-9562 §6.2.  Losing threads waste at most 2 bytes
-                // on retry.
+                // RFC-9562 §6.2.  Draw is cached at function scope so a
+                // CAS-lost thread that re-enters this branch does not
+                // burn more entropy (see the `rand_seq_drawn` comment
+                // above the loop).
+                if (!rand_seq_drawn) {
+                    var rand_seq: [2]u8 = undefined;
+                    self.randCall(&rand_seq) catch return Error.RandomError;
+                    rand_seq_cached = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
+                    rand_seq_drawn = true;
+                }
                 new_ms = clock_ms_u;
-                var rand_seq: [2]u8 = undefined;
-                self.randCall(&rand_seq) catch return Error.RandomError;
-                new_seq = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
+                new_seq = rand_seq_cached;
             } else {
                 // Clock at or behind old_ms — preserve old_ms for
                 // monotonicity (SEC-R14-02).  If the counter has saturated
