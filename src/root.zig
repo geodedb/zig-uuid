@@ -45,6 +45,8 @@ pub const namespace_dns = @import("namespace.zig").namespace_dns;
 pub const namespace_url = @import("namespace.zig").namespace_url;
 pub const namespace_oid = @import("namespace.zig").namespace_oid;
 pub const namespace_x500 = @import("namespace.zig").namespace_x500;
+/// SEC-P3-05: closed-set namespace enum for `newV3Strict` / `newV5Strict`.
+pub const Namespace = @import("namespace.zig").Namespace;
 
 // Generator
 pub const Generator = @import("generator.zig").Generator;
@@ -71,8 +73,10 @@ pub const GeneratorInterface = @import("generator.zig").GeneratorInterface;
 pub const newV1 = @import("versions.zig").newV1;
 pub const newV1AtTime = @import("versions.zig").newV1AtTime;
 pub const newV3 = @import("versions.zig").newV3;
+pub const newV3Strict = @import("versions.zig").newV3Strict;
 pub const newV4 = @import("versions.zig").newV4;
 pub const newV5 = @import("versions.zig").newV5;
+pub const newV5Strict = @import("versions.zig").newV5Strict;
 pub const newV6 = @import("versions.zig").newV6;
 pub const newV6AtTime = @import("versions.zig").newV6AtTime;
 pub const newV7 = @import("versions.zig").newV7;

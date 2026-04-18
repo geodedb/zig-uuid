@@ -605,6 +605,16 @@ pub const Generator = struct {
     ///
     /// V3 exists for backward compatibility with systems that already use it.
     /// Prefer V5 for new deployments.  See RFC-9562 §6.4.
+    ///
+    /// **SEC-P3-05 (CWE-327 / CWE-347) — namespace forgery:** `ns` accepts
+    /// any `UUID` per RFC-9562. If the namespace value is attacker-
+    /// controlled, the attacker can engineer `(ns, name)` pairs that
+    /// collide with a target UUID under MD5 — a forgery path that does
+    /// not require a full MD5 preimage. Treat `ns` as a trusted constant
+    /// (RFC namespace, config value, or compile-time literal) — NEVER
+    /// pass a UUID read from untrusted input. Call `newV3Strict` to let
+    /// the type system enforce this by accepting only the closed
+    /// `namespace.Namespace` enum.
     pub fn newV3(_: *Generator, ns: UUID, name: []const u8) UUID {
         var md5 = std.crypto.hash.Md5.init(.{});
         md5.update(&ns.bytes);
@@ -630,6 +640,13 @@ pub const Generator = struct {
     ///
     /// V5 is substantially safer than V3 (MD5) and is the recommended
     /// name-based UUID version for interoperability.  See RFC-9562 §6.5.
+    ///
+    /// **SEC-P3-05 (CWE-327 / CWE-347) — namespace forgery:** `ns` accepts
+    /// any `UUID` per RFC-9562. Treat it as a trusted constant — SHA-1 is
+    /// weakened and an attacker-controlled namespace enables the same
+    /// forgery path described for `newV3`. Prefer `newV5Strict` for new
+    /// code, which restricts the namespace to a closed enum of vetted
+    /// values.
     pub fn newV5(_: *Generator, ns: UUID, name: []const u8) UUID {
         var sha1 = std.crypto.hash.Sha1.init(.{});
         sha1.update(&ns.bytes);
@@ -640,6 +657,21 @@ pub const Generator = struct {
         u.setVersion(.v5);
         u.setVariant(.rfc9562);
         return u;
+    }
+
+    /// SEC-P3-05: strict V3 wrapper that accepts only the closed
+    /// `namespace.Namespace` tagged-union over the four RFC-9562 namespaces
+    /// (plus a vetted `.custom` variant).  Identical semantics to `newV3`
+    /// for the same namespace bytes; the only difference is that the type
+    /// system prevents callers from accidentally passing a UUID parsed from
+    /// untrusted input as the namespace.
+    pub fn newV3Strict(self: *Generator, ns: @import("namespace.zig").Namespace, name: []const u8) UUID {
+        return self.newV3(ns.asUUID(), name);
+    }
+
+    /// SEC-P3-05: strict V5 wrapper — see `newV3Strict`.
+    pub fn newV5Strict(self: *Generator, ns: @import("namespace.zig").Namespace, name: []const u8) UUID {
+        return self.newV5(ns.asUUID(), name);
     }
 
     // =========================================================================

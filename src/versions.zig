@@ -21,9 +21,25 @@ pub fn newV1AtTime(ts: Timestamp) Error!UUID {
 }
 
 /// Generate a Version 3 (MD5 name-based) UUID.
+///
 /// **Security:** MD5 is broken — prefer `newV5` or V8 with a modern hash.
+///
+/// **SEC-P3-05 (CWE-327 / CWE-347) — namespace forgery:** `ns` accepts any
+/// `UUID` because RFC-9562 permits it. Callers MUST treat `ns` as a trusted
+/// constant (RFC namespace, config literal, or compile-time UUID). An
+/// attacker-controlled `ns` enables `(ns, name)` collision crafting under
+/// MD5 without needing a full preimage attack. Use `newV3Strict` (closed
+/// `Namespace` enum) when the call site would otherwise accept any UUID.
 pub fn newV3(ns: UUID, name: []const u8) UUID {
     return gen_mod.default_generator.newV3(ns, name);
+}
+
+/// SEC-P3-05: strict variant of `newV3` — accepts only the closed
+/// `Namespace` enum (dns/url/oid/x500) plus the vetted `.custom` escape
+/// hatch, so callers cannot pass an attacker-controlled UUID as the
+/// namespace. Semantics are identical to `newV3` for the same bytes.
+pub fn newV3Strict(ns: @import("namespace.zig").Namespace, name: []const u8) UUID {
+    return gen_mod.default_generator.newV3Strict(ns, name);
 }
 
 /// Generate a Version 4 (random) UUID using the package-level default generator.
@@ -32,9 +48,21 @@ pub fn newV4() Error!UUID {
 }
 
 /// Generate a Version 5 (SHA-1 name-based) UUID.
+///
 /// **Security:** SHA-1 is weakened — consider V8 with SHA-256 for new systems.
+///
+/// **SEC-P3-05 (CWE-327 / CWE-347) — namespace forgery:** `ns` accepts any
+/// `UUID` because RFC-9562 permits it. Callers MUST treat `ns` as a trusted
+/// constant. An attacker-controlled namespace enables the same forgery
+/// vector described for `newV3`. Use `newV5Strict` for call sites where the
+/// compiler should reject attacker-controlled UUIDs.
 pub fn newV5(ns: UUID, name: []const u8) UUID {
     return gen_mod.default_generator.newV5(ns, name);
+}
+
+/// SEC-P3-05: strict variant of `newV5` — see `newV3Strict`.
+pub fn newV5Strict(ns: @import("namespace.zig").Namespace, name: []const u8) UUID {
+    return gen_mod.default_generator.newV5Strict(ns, name);
 }
 
 /// Generate a Version 6 (reordered Gregorian timestamp, k-sortable) UUID using the
@@ -151,4 +179,47 @@ test "top-level newV8 delegates to default_generator (QC-30)" {
     const u = newV8(a, b, c);
     try std.testing.expectEqual(uuid_mod.Version.v8, u.version());
     try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
+}
+
+// SEC-P3-05: strict namespace wrappers.
+
+test "newV3Strict(.dns, \"www.example.com\") matches RFC vector (SEC-P3-05)" {
+    const ns_mod = @import("namespace.zig");
+    const u = newV3Strict(ns_mod.Namespace.dns, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "5df41881-3aed-3515-88a7-2f4a814cf09e",
+        u.toString(&buf),
+    );
+    try std.testing.expectEqual(uuid_mod.Version.v3, u.version());
+    try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
+}
+
+test "newV5Strict(.dns, \"www.example.com\") matches RFC vector (SEC-P3-05)" {
+    const ns_mod = @import("namespace.zig");
+    const u = newV5Strict(ns_mod.Namespace.dns, "www.example.com");
+    var buf: [36]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "2ed6657d-e927-568b-95e1-2665a8aea6a2",
+        u.toString(&buf),
+    );
+    try std.testing.expectEqual(uuid_mod.Version.v5, u.version());
+    try std.testing.expectEqual(uuid_mod.Variant.rfc9562, u.variant());
+}
+
+test "newV3/newV3Strict agree on bytes for the same namespace (SEC-P3-05)" {
+    const ns_mod = @import("namespace.zig");
+    const strict = newV3Strict(ns_mod.Namespace.dns, "example.com");
+    const permissive = newV3(ns_mod.namespace_dns, "example.com");
+    try std.testing.expect(strict.eql(permissive));
+}
+
+test "newV5Strict(.custom, ...) with enum-carried bytes equals newV5 (SEC-P3-05)" {
+    const raw: [16]u8 = .{
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    };
+    const strict = newV5Strict(.{ .custom = raw }, "content-1");
+    const permissive = newV5(uuid_mod.UUID{ .bytes = raw }, "content-1");
+    try std.testing.expect(strict.eql(permissive));
 }
