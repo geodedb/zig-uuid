@@ -199,6 +199,44 @@ test "SecureHashContext.eql delegates to UUID.eql (SEC-6)" {
     try std.testing.expect(!ctx.eql(a, UUID.nil));
 }
 
+// --- PERF-32: ProcessHashContext ---
+
+test "ProcessHashContext: hash is deterministic within a process (PERF-32)" {
+    const ctx = UUID.ProcessHashContext{};
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const h1 = ctx.hash(u);
+    const h2 = ctx.hash(u);
+    try std.testing.expectEqual(h1, h2);
+    // Two independently-constructed contexts must observe the same seed
+    // inside one process (that's the point — zero per-instance state).
+    const ctx2 = UUID.ProcessHashContext{};
+    try std.testing.expectEqual(h1, ctx2.hash(u));
+}
+
+test "ProcessHashContext: distinct keys hash to distinct values (PERF-32)" {
+    const ctx = UUID.ProcessHashContext{};
+    try std.testing.expect(ctx.hash(UUID.nil) != ctx.hash(UUID.max));
+}
+
+test "ProcessHashContext.eql delegates to UUID.eql (PERF-32)" {
+    const ctx = UUID.ProcessHashContext{};
+    const a = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    const b = a;
+    try std.testing.expect(ctx.eql(a, b));
+    try std.testing.expect(!ctx.eql(a, UUID.nil));
+}
+
+test "ProcessHashContext: differs from fixed-seed HashContext (PERF-32)" {
+    // The process seed is sampled from CSPRNG; the probability it equals 0
+    // is 2^-64 ≈ 5e-20. If this test ever fires on a 2^-64 collision, the
+    // assertion will flag and we can investigate; in practice it flags a
+    // broken CSPRNG.
+    const pctx = UUID.ProcessHashContext{};
+    const hctx = UUID.HashContext{};
+    const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    try std.testing.expect(pctx.hash(u) != hctx.hash(u));
+}
+
 test "fromString: canonical format" {
     const u = try UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
     try std.testing.expectEqual(@as(u8, 0x6b), u.bytes[0]);

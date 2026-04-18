@@ -3,6 +3,52 @@
 
 const std = @import("std");
 
+// -----------------------------------------------------------------------------
+// PERF-32: Process-wide hash seed for `UUID.ProcessHashContext`.
+//
+// Sampled from CSPRNG on the first call to `processHashSeed()` and reused
+// by every subsequent call in the same process.  This gives HashDoS
+// resistance at the cost of one CSPRNG sample per process, not one per
+// HashContext instance the way `SecureHashContext` does.
+//
+// We use a small atomic state machine instead of std.once (which does not
+// exist in Zig 0.16) — see PERF-32 instruction's fallback note.
+// -----------------------------------------------------------------------------
+var process_seed: u64 = 0;
+const ProcessSeedState = enum(u8) { uninit = 0, initializing = 1, ready = 2 };
+var process_seed_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(ProcessSeedState.uninit));
+
+/// PERF-32: Return the process-wide hash seed, initialising it lazily
+/// from `std.crypto.random` on first use.  All callers in the same
+/// process observe the same value; different processes observe
+/// independently sampled seeds.  Thread-safe via cmpxchg.
+fn processHashSeed() u64 {
+    // Fast path: seed is already published.
+    if (process_seed_state.load(.acquire) == @intFromEnum(ProcessSeedState.ready)) {
+        return @atomicLoad(u64, &process_seed, .acquire);
+    }
+    // Try to claim initialisation.  Only the first thread wins the CAS;
+    // every other thread spins until the winner publishes `.ready`.
+    if (process_seed_state.cmpxchgStrong(
+        @intFromEnum(ProcessSeedState.uninit),
+        @intFromEnum(ProcessSeedState.initializing),
+        .acquire,
+        .acquire,
+    ) == null) {
+        var seed_buf: [8]u8 = undefined;
+        std.Io.Threaded.global_single_threaded.io().random(&seed_buf);
+        const seed = std.mem.readInt(u64, &seed_buf, .little);
+        @atomicStore(u64, &process_seed, seed, .release);
+        process_seed_state.store(@intFromEnum(ProcessSeedState.ready), .release);
+        return seed;
+    }
+    // Another thread is initialising; spin until it finishes.
+    while (process_seed_state.load(.acquire) != @intFromEnum(ProcessSeedState.ready)) {
+        std.atomic.spinLoopHint();
+    }
+    return @atomicLoad(u64, &process_seed, .acquire);
+}
+
 pub const Error = error{
     InvalidFormat,
     InvalidLength,
@@ -270,6 +316,39 @@ pub const UUID = struct {
         }
 
         pub fn eql(_: SecureHashContext, a: UUID, b: UUID) bool {
+            return a.eql(b);
+        }
+    };
+
+    /// PERF-32: A HashMap context that is **zero-size** (like `HashContext`)
+    /// but uses a per-process random seed sampled once from CSPRNG on first
+    /// use (like `SecureHashContext`).
+    ///
+    /// **When to pick which context:**
+    /// - `HashContext` — fixed seed of 0.  Fastest, but NO HashDoS resistance.
+    ///   Use only when keys are fully trusted (internal constants, values
+    ///   from a controlled datastore).
+    /// - `ProcessHashContext` — process-wide random seed.  Same zero-cost
+    ///   API as `HashContext` (no per-map state to carry), yet an adversary
+    ///   cannot precompute colliding keys across different runs because the
+    ///   seed differs per process.  A colluding pair of maps inside a SINGLE
+    ///   process can still be attacked jointly; use `SecureHashContext` when
+    ///   that is part of your threat model.
+    /// - `SecureHashContext` — per-instance random seed.  Strongest; even
+    ///   two maps in the same process have unrelated seeds.  Carries the
+    ///   seed as instance state so must be used with Zig's context-aware
+    ///   map APIs (`putContext`, etc.).
+    ///
+    /// The seed is lazily initialised on the first hash() call (via
+    /// `processHashSeed()`); all subsequent calls in the same process
+    /// observe the same value with one `@atomicLoad` of acquire-ordered u8.
+    pub const ProcessHashContext = struct {
+        pub fn hash(_: ProcessHashContext, key: UUID) u64 {
+            var hasher = std.hash.Wyhash.init(processHashSeed());
+            hasher.update(&key.bytes);
+            return hasher.final();
+        }
+        pub fn eql(_: ProcessHashContext, a: UUID, b: UUID) bool {
             return a.eql(b);
         }
     };
