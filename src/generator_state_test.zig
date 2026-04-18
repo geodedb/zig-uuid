@@ -374,6 +374,107 @@ test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
 }
 
+// --- QC-101: loadState v1→v2 upgrade path + fast-restart within-same-ms ---
+
+test "Generator.loadState: v1 blob with injected clock zeroes V7 state (QC-101)" {
+    // (QC-101/a) A v1 state blob contains no V7 fields (last_ms, mono_seq).
+    // loadState must leave those at the Generator.init() defaults (both 0) so
+    // that the first post-upgrade V7 call does not spin-wait on a stale
+    // timestamp.  Uses an injected clock for determinism — the v1 path should
+    // not even read the clock for V7 state, but we still pin it to avoid the
+    // wall clock influencing the test.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // Build a valid v1 (22-byte) blob.
+    var blob: [Generator.state_size_v1]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version_v1;
+    blob[5] = 0x01; // clock_seq_initialized
+    std.mem.writeInt(u16, blob[6..8], 0x0ABC, .little);
+    std.mem.writeInt(u64, blob[8..16], 0x0DEAD_BEEF_CAFE, .little);
+    @memset(blob[16..22], 0);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+    try f.writePositionalAll(io, &blob, 0);
+    f.close(io);
+
+    // Inject a clock that returns a recognisable, far-future value. If the
+    // upgrade path erroneously took the v2 fast-restart branch (saved_ms
+    // undefined → treated as 0 → current_ms > saved_ms), the clean-reset
+    // branch would still produce last_ms=0, mono_seq=0 by coincidence. The
+    // stronger assertion is that V7 state is never touched at all — both
+    // fields remain at Generator.init() defaults.
+    const injected_clock = struct {
+        fn clock() i128 {
+            return 10_000 * 1_000_000; // 10s in ns, >> any v1 saved state
+        }
+    };
+    var gen = Generator.withClock(injected_clock.clock);
+    try gen.loadState(path);
+
+    // V1/V6 state loaded from blob:
+    try std.testing.expectEqual(@as(u14, 0x0ABC), gen.clock_seq);
+    try std.testing.expect(gen.clock_seq_initialized);
+    // V7 state must be zero (no data in a v1 blob; loadState skips the
+    // version-2-only restore branch).
+    try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
+    try std.testing.expectEqual(@as(u12, 0), gen.mono_seq);
+}
+
+test "Generator.loadState: saved_ms >= current_ms forces mono_seq overflow (QC-101)" {
+    // (QC-101/b) generator.zig's loadStateImpl branches on
+    //     if (current_ms > saved_ms) { last_ms = 0; mono_seq = 0; }
+    //     else { last_ms = saved_ms; mono_seq = maxInt(u12); }
+    // The else-branch is the "fast restart within the same ms" guard: if the
+    // clock has NOT advanced past the persisted last_ms, the next V7 call
+    // must spin-wait on mono_seq overflow rather than rewinding the counter.
+    //
+    // Uses an injected clock set to EXACTLY saved_ms so the comparison
+    // `current_ms > saved_ms` is false (the documented same-ms case).
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    const saved_ms: i64 = 1_700_000_000_000; // 2023-11-14 in ms
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version;
+    blob[5] = 0x01;
+    std.mem.writeInt(u16, blob[6..8], 0, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], saved_ms, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little); // saved mono_seq irrelevant
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+    try f.writePositionalAll(io, &blob, 0);
+    f.close(io);
+
+    // Inject a clock set to EXACTLY saved_ms (same-ms case). current_ms ==
+    // saved_ms → the strict `>` comparison is false → else-branch fires.
+    const same_ms_clock = struct {
+        fn clock() i128 {
+            return @as(i128, 1_700_000_000_000) * 1_000_000; // saved_ms in ns
+        }
+    };
+    var gen = Generator.withClock(same_ms_clock.clock);
+    try gen.loadState(path);
+
+    // Fast-restart overflow branch: keep saved_ms, force counter to max.
+    try std.testing.expectEqual(saved_ms, gen.last_ms);
+    try std.testing.expectEqual(@as(u12, std.math.maxInt(u12)), gen.mono_seq);
+}
+
 // --- SEC-R11-04: loadState rejects symlinks (O_NOFOLLOW) ---
 
 test "Generator.loadState: symlink at state path is rejected (SEC-R11-04)" {
