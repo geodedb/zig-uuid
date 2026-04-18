@@ -57,12 +57,20 @@ pub fn getHWAddr() Error![6]u8 {
     // When ifc_len equals the initial buffer size, the kernel may have filled the
     // buffer completely and truncated additional interfaces.
     if (ifc.ifc_len == initial_len) {
+        // PERF-24: Buffer-full truncation is extremely rare in practice
+        // (typical hosts have far fewer than 128 interfaces). Mark the block
+        // cold so the branch predictor keeps it off the hot path, and demote
+        // the message from `warn` (visible by default) to `debug` (silent
+        // unless the caller opts in) — it is an informational "you may want
+        // to investigate" hint, not an error.
+        @branchHint(.cold);
         // SEC-R13-06 (CWE-390): Buffer was completely filled; the kernel may
-        // have truncated additional interfaces.  Log a warning so operators on
-        // hosts with large interface counts (container orchestration, VLAN
-        // deployments) are aware the node ID may be selected from an incomplete
-        // set.  We continue searching what we received.
-        std.log.warn("hwaddr: SIOCGIFCONF buffer full ({d} bytes); interface list may be truncated", .{initial_len});
+        // have truncated additional interfaces.  Log an info-level message so
+        // operators on hosts with large interface counts (container
+        // orchestration, VLAN deployments) who opt in to debug logging are
+        // aware the node ID may be selected from an incomplete set.  We
+        // continue searching what we received.
+        std.log.debug("hwaddr: SIOCGIFCONF buffer full ({d} bytes); interface list may be truncated", .{initial_len});
     }
 
     // SEC-3 / CWE-190: ifc_len is a signed c_int; a negative value (kernel
