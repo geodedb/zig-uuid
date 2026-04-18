@@ -56,6 +56,8 @@ exe.root_module.addImport("uuid", uuid.module("uuid"));
 
 ## Quick Start
 
+### Using `toString(&buf)` with `std.debug.print` (simplest)
+
 ```zig
 const std = @import("std");
 const uuid = @import("uuid");
@@ -70,12 +72,44 @@ pub fn main() !void {
     const v4 = try uuid.newV4();
     std.debug.print("V4: {s}\n", .{v4.toString(&buf)});
 
-    // Zero-alloc: no buffer needed (Zig 0.15+ {f} specifier)
+    // Zero-alloc: no buffer needed (Zig 0.16+ {f} specifier)
     std.debug.print("{f}\n", .{v7});
 
     // Parse any supported format (canonical, braced, hash, URN)
     const parsed = try uuid.UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
     std.debug.print("parsed: {s}\n", .{parsed.toString(&buf)});
+}
+```
+
+### Using `std.Io.Writer` with the `{f}` format specifier (Zig 0.16 idiomatic)
+
+`UUID.format(w: *std.Io.Writer)` lets any `std.Io.Writer` consume a UUID
+without a caller-owned buffer. Pair it with `{f}` when you are already
+working with a writer (stdout, a log sink, a `std.Io.Writer.Allocating`,
+etc.):
+
+```zig
+const std = @import("std");
+const uuid = @import("uuid");
+
+pub fn main() !void {
+    // Set up a buffered writer over stdout (Zig 0.16 std.Io pattern).
+    var out_buf: [4096]u8 = undefined;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var out = std.Io.File.stdout().writer(io, &out_buf);
+    defer out.interface.flush() catch {};
+    const w = &out.interface;
+
+    const v7 = try uuid.newV7();
+    const v4 = try uuid.newV4();
+
+    // Zero-alloc: UUID.format writes straight into the writer, no stack buffer.
+    try w.print("V7: {f}\n", .{v7});
+    try w.print("V4: {f}\n", .{v4});
+
+    // Works anywhere std.Io.Writer is expected — std.log, std.fmt.allocPrint,
+    // custom sinks, etc.
+    std.log.info("generated {f}", .{v7});
 }
 ```
 
