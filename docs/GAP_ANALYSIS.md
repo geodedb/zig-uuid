@@ -4154,3 +4154,121 @@ Style/formatting commit `5bee3e7` (`zig fmt` nit after PERF-22) accompanies Grou
 ```
 
 ---
+
+## Phase 4 follow-up audit (2026-04-18 cycle 2)
+
+> **HEAD at detection:** `bcde186`.
+> **Scope:** Second-pass gap-detector sweep after the Group D closure round. Previously-closed items remain closed — this section only tracks the 6 newly discovered gaps.
+> **Tracker status:** `glab` authentication is currently broken (see GAP-DOC-10). No GitLab mutations were performed this cycle. The `glab` block at the end of this section is documentation-only and must be re-run after `glab auth status` is green.
+
+### New Gaps (6)
+
+#### GAP-DOC-05 — README.md omits post-audit public API surface
+
+- **Issue:** (none — create once `glab` auth restored)
+- **Category:** Docs
+- **Severity:** High
+- **Status:** Not Implemented
+- **Current state (evidence):**
+  - `README.md` API reference does not mention the Group C/D additions: `Generator.reseed()`, `Namespace` enum + `newV3Strict` / `newV5Strict`, `defaultGenerator()`, `GeneratorInterfaceFor(comptime G)`, `Generator.InitOptions` (`random`, `clock`, `hwaddr_fn`, `state_mac_key`, `v7_lockfree`), `secureWipeMacKey`, module-level wrappers (`clearNodeCache`, `reseed`, `saveState`, `loadState`, `initV3Namespace`, `initV5Namespace`), `Config.clock_rollback_tolerance_ws`, `Error.StateMacMismatch`.
+- **Impact/Risk:** New users cannot discover the audit-driven API; silent feature drift between code and README.
+- **Recommended fix:** Targeted README refresh as a **follow-up PR** — Phase 2 already drafted the exhaustive symbol list; lift it directly into the API section and add the new entries under Security / Performance / Generator subsections. Do **not** block this audit cycle on the PR.
+
+#### GAP-DOC-06 — README.md missing `benchmarks/` and `zig build bench*` docs
+
+- **Issue:** (none — create once `glab` auth restored)
+- **Category:** Docs
+- **Severity:** Medium
+- **Status:** Not Implemented
+- **Current state (evidence):**
+  - `bench/` and `bench/baseline.txt` exist and are wired into CI via the `bench-regression` job (PERF-26 closure), but `README.md` has no "Benchmarks" section and no mention of `zig build bench`, `zig build bench-regression`, or the 15% threshold.
+- **Impact/Risk:** Contributors unknowingly regress the baseline; reviewers cannot locate the perf harness.
+- **Recommended fix:** Bundle with the README refresh described in GAP-DOC-05 — a single follow-up PR lifting Phase 2's drafted symbol list and adding a short "Benchmarks" subsection.
+
+#### GAP-DOC-07 — `NamespaceContext` stale references in CHANGELOG and 2 docs
+
+- **Issue:** (none — **cheap-close candidate**)
+- **Category:** Docs
+- **Severity:** Medium
+- **Status:** Not Implemented (will be closed in this same audit via a trailing commit)
+- **Current state (evidence):**
+  - Three files still reference `NamespaceContext` after the SEC-P3-05 rename to the `Namespace` enum: `CHANGELOG.md`, plus two `docs/` files (to be pinpointed in the trailing commit).
+- **Impact/Risk:** Stale symbol names mislead readers and break grep-based discovery.
+- **Recommended fix:** In-band find-and-replace `NamespaceContext` → `Namespace` across CHANGELOG and the two drift docs, close the gap in the **same audit cycle** via a trailing commit. Skipped in the `glab` block below since it will not outlive this commit window.
+
+#### GAP-DOC-08 — `tests/integration.zig` has zero black-box coverage of new API
+
+- **Issue:** (none — create once `glab` auth restored)
+- **Category:** Test
+- **Severity:** High
+- **Status:** Not Implemented
+- **Current state (evidence):**
+  - `tests/integration.zig` exercises pre-Group-C surface only. No integration coverage for: `Generator.reseed()`, `newV3Strict` / `newV5Strict`, `defaultGenerator()`, `GeneratorInterfaceFor`, `Generator.initOptions(…)` with custom `random`/`clock`, `state_mac_key` wire-format v3 round-trip, `v7_lockfree`, `secureWipeMacKey`.
+  - Unit tests exist (204/204 pass) but do not exercise the public module through `@import("uuid")` the way a downstream consumer would.
+- **Impact/Risk:** Downstream-facing regressions can slip through CI; unit tests alone cannot catch module-boundary contract drift.
+- **Recommended fix:** Add a `tests/integration.zig` block per new public symbol; target 1–2 assertions per entry point. Separate PR — not a blocker for this audit cycle.
+
+#### GAP-DOC-09 — CVSS v3.1 vs v4.0 drift across 3 doc files
+
+- **Issue:** (none — **Low doc-only**, skipping tracker entry)
+- **Category:** Docs
+- **Severity:** Low
+- **Status:** Partial
+- **Current state (evidence):**
+  - SEC-P3-07 (Group D) landed a CVSS **v4.0** section in `SECURITY.md`, but three other docs still cite v3.1 vectors/tables. Re-scoring + consistent vector notation needed.
+- **Impact/Risk:** Readers get conflicting severity vectors for the same findings.
+- **Recommended fix:** Pick one canonical version (v4.0, per SEC-P3-07) and update the three docs in a single sweep. Low priority — fold into the next security-review cycle.
+
+#### GAP-DOC-10 — `glab` auth broken; tracker cross-reference unavailable
+
+- **Issue:** (none — self-referential)
+- **Category:** CI-CD
+- **Severity:** Medium
+- **Status:** Not Implemented
+- **Current state (evidence):**
+  - `glab auth status` fails with an expired/invalid token this cycle. All GitLab mutations for this audit are **suppressed**; the `glab` block below is documentation-only.
+- **Impact/Risk:** Tracker drifts from doc source-of-truth; duplicate-detection workflow (title prefix / Gap-ID description match) cannot run.
+- **Recommended fix:** Rotate the `glab` personal access token (or GitLab CI token), re-run `glab auth status` until green, then replay the block below to create GAP-DOC-05 / -06 / -08 / -10. Re-open GAP-DOC-07 only if it has not already been in-band closed.
+
+### Ready-to-run `glab` commands (documentation only — DO NOT execute; token broken)
+
+> **Prerequisite:** `glab auth status` must report green first. See GAP-DOC-10.
+> Skipped from this block: **GAP-DOC-07** (in-band close via trailing commit this same audit) and **GAP-DOC-09** (Low doc-only; folded into next security cycle).
+
+```bash
+# Pre-requisite for future audits — confirm auth is healthy before mutating.
+glab auth status
+
+# GAP-DOC-05 — High — README drift: post-audit public API surface.
+glab issue create \
+  --title "GAP-DOC-05: README.md missing post-audit public API surface" \
+  --label "quality,category::docs,severity::high,confidence::confirmed,status::triage"
+
+# GAP-DOC-06 — Medium — README drift: benchmarks/ and zig build bench*.
+glab issue create \
+  --title "GAP-DOC-06: README.md missing benchmarks/ and zig build bench* docs" \
+  --label "quality,category::docs,severity::medium,confidence::confirmed,status::triage"
+
+# GAP-DOC-08 — High — tests/integration.zig has zero coverage of new public API.
+glab issue create \
+  --title "GAP-DOC-08: tests/integration.zig zero black-box coverage of new API" \
+  --label "quality,category::test,severity::high,confidence::confirmed,status::triage"
+
+# GAP-DOC-10 — Medium — glab auth broken; tracker cross-reference unavailable.
+glab issue create \
+  --title "GAP-DOC-10: glab auth broken — tracker cross-reference unavailable" \
+  --label "quality,category::ci-cd,severity::medium,confidence::confirmed,status::triage"
+```
+
+### Phase 4 Follow-up Summary
+
+| Gap-ID | Title | Category | Severity | Status | Next action |
+|--------|-------|----------|----------|--------|-------------|
+| GAP-DOC-05 | README.md omits post-audit public API surface | Docs | High | Not Implemented | Follow-up PR; Phase 2 drafted symbol list |
+| GAP-DOC-06 | README.md missing `benchmarks/` and `zig build bench*` docs | Docs | Medium | Not Implemented | Bundle with GAP-DOC-05 follow-up PR |
+| GAP-DOC-07 | `NamespaceContext` stale refs (CHANGELOG + 2 docs) | Docs | Medium | Not Implemented | In-band close via trailing commit this cycle |
+| GAP-DOC-08 | `tests/integration.zig` zero black-box coverage of new API | Test | High | Not Implemented | Separate PR — new integration suite |
+| GAP-DOC-09 | CVSS v3.1 vs v4.0 drift across 3 doc files | Docs | Low | Partial | Fold into next security-review cycle |
+| GAP-DOC-10 | `glab` auth broken — tracker cross-reference unavailable | CI-CD | Medium | Not Implemented | Rotate token; replay `glab` block above |
+
+---
