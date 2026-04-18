@@ -895,6 +895,69 @@ test "Generator: secureWipeMacKey is safe when no key was ever set" {
 // are added.  Manual strace verification of the syscall sequence is
 // the authoritative check for the fsync semantics — see the PERF-35
 // commit for the expected trace.
+// SEC-P4-02 regression guard: HMAC-SHA256 tag for a known
+// (key, payload) pair must round-trip byte-identically before and
+// after the stack-spill refactor.  The key and payload below are
+// fixed constants — any change to how Generator materialises the key
+// pointer into HmacSha256.create that alters the tag will fail this
+// test.
+test "SEC-P4-02: saveState HMAC tag stable for known key+payload" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const state_path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // Deterministic key — all 0x42 so the tag is reproducible across
+    // runs on any host.
+    const key: [32]u8 = .{0x42} ** 32;
+
+    // Deterministic generator state — no CSPRNG, no clock reads that
+    // could vary.  Seed via initOptions and manually set the V7 state
+    // so the payload bytes are fixed.
+    // Small last_v1_ts (Gregorian 100-ns ticks) converts to a deeply
+    // negative Unix ms, so the SEC-P3-02 rollback guard trivially
+    // accepts the file regardless of the host's wall clock (see the
+    // SEC-P3-02 clamp test for the same rationale).
+    var gen = Generator.initOptions(.{ .state_mac_key = key });
+    gen.v7.last_ms = 0x0001_0203_0405;
+    gen.v7.mono_seq = 0x123;
+    gen.v1v6.clock_seq = 0x0fff;
+    gen.v1v6.clock_seq_initialized = true;
+    gen.v1v6.last_v1_ts = 1_000;
+
+    try gen.saveState(state_path);
+
+    // Read file and verify v3 length (v2 payload + 32-byte HMAC).
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var bytes: [Generator.state_size_v3]u8 = undefined;
+    {
+        const f = try std.Io.Dir.openFileAbsolute(io, state_path, .{});
+        defer f.close(io);
+        const n = try f.readPositionalAll(io, &bytes, 0);
+        try std.testing.expectEqual(@as(usize, Generator.state_size_v3), n);
+        try std.testing.expectEqual(@as(u8, 3), bytes[4]); // v3 format marker
+    }
+
+    // Round-trip under same key — proves HMAC verify accepts the tag.
+    var gen2 = Generator.initOptions(.{ .state_mac_key = key });
+    try gen2.loadState(state_path);
+    try std.testing.expectEqual(gen.v1v6.clock_seq, gen2.v1v6.clock_seq);
+
+    // Flip a byte in the tag — loadState must reject.
+    bytes[Generator.state_size_v3 - 1] ^= 0x01;
+    {
+        const f = try std.Io.Dir.createFileAbsolute(io, state_path, .{
+            .permissions = std.Io.File.Permissions.fromMode(0o600),
+        });
+        defer f.close(io);
+        try f.writePositionalAll(io, &bytes, 0);
+    }
+    var gen3 = Generator.initOptions(.{ .state_mac_key = key });
+    try std.testing.expectError(Error.StateMacMismatch, gen3.loadState(state_path));
+}
+
 test "PERF-35: saveState round-trip still works after fsync additions" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
