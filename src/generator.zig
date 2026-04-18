@@ -1228,16 +1228,29 @@ pub const Generator = struct {
     /// set — the file is unauthenticated), v3 requires `state_mac_key` to
     /// be set and the HMAC to verify with `std.crypto.timing_safe.eql`.
     pub const state_magic: [4]u8 = "UUID".*;
+    /// Legacy V1/V6-only state format (22 bytes, unauthenticated).
+    /// Accepted by `loadState` for backward compatibility; never written.
     pub const state_format_version_v1: u8 = 1;
+    /// V1/V6 + V7 state format (32 bytes, unauthenticated). Current default
+    /// when `state_mac_key` is null. Written by `saveState` and accepted by
+    /// `loadState`.
     pub const state_format_version_v2: u8 = 2;
+    /// V2 payload + 32-byte HMAC-SHA256 trailer (64 bytes, authenticated).
+    /// Written by `saveState` iff `state_mac_key != null`; `loadState`
+    /// verifies the MAC with `std.crypto.timing_safe.eql` (SEC-P3-04).
     pub const state_format_version_v3: u8 = 3; // SEC-P3-04
     /// Default write version when no `state_mac_key` is configured.
     /// Retained under the historical name for ABI/source compatibility.
     pub const state_format_version: u8 = state_format_version_v2;
+    /// Wire size (in bytes) of a v1 state file payload: magic(4) + version(1)
+    /// + V1/V6 state(17).
     pub const state_size_v1: usize = 22;
+    /// Wire size (in bytes) of a v2 state file payload: v1 payload + V7
+    /// state(10). Also the base payload size for v3 (HMAC trailer excluded).
     pub const state_size: usize = 32;
     /// SEC-P3-04: v3 adds a 32-byte HMAC-SHA256 trailer to the v2 payload.
     pub const state_mac_size: usize = 32;
+    /// Wire size (in bytes) of a v3 state file: v2 payload + HMAC trailer.
     pub const state_size_v3: usize = state_size + state_mac_size;
 
     /// SEC-P3-02: NTP-skew tolerance used by `loadState` when comparing the
@@ -1760,8 +1773,26 @@ const generator_vtable = GeneratorInterface.VTable{
 // newV5, newV8) so the two interfaces are drop-in compatible at call sites.
 // =============================================================================
 
-/// PERF-31: comptime-generic, inlinable generator interface. See the comment
-/// block above this declaration for the trade-off versus `GeneratorInterface`.
+/// PERF-31: comptime-generic, zero-indirection generator wrapper.
+///
+/// `GeneratorInterfaceFor(G)` captures the concrete generator type `G` at
+/// compile time and dispatches every method via a direct `self.g.<method>`
+/// call. LLVM inlines through the call at ReleaseFast, so a single-type
+/// call site pays no per-method overhead relative to calling the concrete
+/// method directly.
+///
+/// Prefer this wrapper when the generator's concrete type is known at the
+/// call site and the hot path would benefit from inlining. Use the vtable
+/// `GeneratorInterface` instead when runtime polymorphism is required
+/// (dependency injection in tests, metric-wrapping middlewares, functions
+/// that must accept either a real `Generator` or a fake without
+/// recompiling). See the banner comment block above this declaration for
+/// the full trade-off matrix.
+///
+/// The returned type exposes the same method surface as
+/// `GeneratorInterface` (`newV4`, `newV7`, `newV7AtTime`, `newV1`,
+/// `newV1AtTime`, `newV6`, `newV6AtTime`, `newV3`, `newV5`, `newV8`) so
+/// the two interfaces are drop-in compatible at call sites.
 ///
 /// ```zig
 /// var gen = Generator.init();

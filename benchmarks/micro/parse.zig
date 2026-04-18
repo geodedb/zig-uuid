@@ -104,6 +104,11 @@ fn parseLoop(slices: [pool_size][]const u8, latencies: []u64) common.RunResult {
     var lat_idx: usize = 0;
     while (i < total_iters) : (i += 1) {
         const t0 = common.nowNs();
+        // Invariant: `slices` is populated by the setup phase above with
+        // freshly-formatted canonical UUID strings via `UUID.toString`; the
+        // inverse `fromString` therefore cannot fail on valid pool entries.
+        // If the setup ever stops producing canonical strings, this bench is
+        // broken regardless, so `unreachable` is the correct signal.
         const parsed = uuid.UUID.fromString(slices[@as(usize, @intCast(i % pool_size))]) catch unreachable;
         const t1 = common.nowNs();
         sink ^= parsed.bytes[0];

@@ -1,10 +1,10 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-04-18 (Group D closure round — HEAD `f77e7da`; no new Quality gaps this round. All 10 Cycle-13 findings remain Closed; 0 open.)
+> **Last updated:** 2026-04-18 (Phase 4 follow-up audit, cycle 2 — HEAD `bcde186`; 10 new findings QC-103..QC-112; 3 closed in-band this session (QC-104, QC-105, QC-109); 7 remain open.)
 > **Zig version audited:** 0.16.0
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
-> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102)
+> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102), Phase 4 follow-up cycle 2 (QC-103–QC-112)
 
 ---
 
@@ -2399,5 +2399,169 @@ _QC-100 closed in the Group C closure round. No Quality items remain deferred._
 ### Doc gaps reconfirmed
 
 The three Cycle-13 doc gaps (ADR for split-mutex design; `src/hwaddr/README.md`; 800-line self-ceiling in `CLAUDE.md`/`CONTRIBUTING`) remain open and are tracked via `docs/GAP_ANALYSIS.md`.
+
+---
+
+## Phase 4 follow-up audit (2026-04-18, cycle 2)
+
+> **HEAD:** `bcde186`. Zig 0.16.0. Fresh quality-reviewer pass after Phase 3 closure.
+> 10 new findings (QC-103..QC-112), stack-ranked by PriorityScore = Impact × Likelihood × 4.
+> 3 closed in-band this session (QC-104, QC-105, QC-109); 7 remain open and have ready-to-run `glab` commands below.
+> Cross-cutting SECURITY overlap: QC-103 is also tracked as SEC-P4-01 in `docs/GAP_ANALYSIS.md`.
+
+### Stack-ranked findings
+
+| Rank | QC | Sev | Score | Category | Finding | File:Line | Recommended fix | Confidence | Status |
+| ---- | --- | --- | ----- | -------- | ------- | --------- | --------------- | ---------- | ------ |
+| 1 | QC-103 | High | 24 | api-contract | `loadState` silently accepts v2 payload when `state_mac_key` is set (v3→v2 downgrade). Cross-cuts SEC-P4-01. | `src/generator.zig:1463-1470` | When `state_mac_key != null`, reject v1/v2 files with `Error.StateMacMismatch` (or a new `Error.StateUnauthenticated`); keep log line. | confirmed | Open |
+| 2 | QC-104 | Medium | 18 | docs | `state_format_version_v1/v2/v3`, `state_size_v1/size/size_v3`, `state_mac_size` lacked per-decl `///` doc comments. | `src/generator.zig:1231-1241` | Add one-line `///` to each constant describing wire role + size. | confirmed | ✅ Closed in-band (this session) |
+| 3 | QC-105 | Medium | 18 | docs | `GeneratorInterfaceFor` `///` doc delegated to the `//` banner above the decl; zig-doc tool ingests only `///`. | `src/generator.zig:1763-1771` | Expand the `///` block to stand alone (trade-off, inlining, surface parity, example). | confirmed | ✅ Closed in-band (this session) |
+| 4 | QC-106 | Medium | 16 | maintainability | `src/generator.zig` = 1831 LoC, 2.3× the 800-line self-ceiling called out in `src/uuid.zig:670`. | `src/generator.zig` (file-level) | Minimum viable split: extract `state_codec.zig` (~450 LoC v1/v2/v3 (de)serialize) + `state_hmac.zig` (~80 LoC HMAC compute/verify) to drop generator.zig to ~1300. Defer cosmetic 5-module split. | confirmed | Open |
+| 5 | QC-107 | Medium | 16 | maintainability | `benchmarks/bench_contention.zig` has 8 near-identical `runMutex{2,4,8,16}` / `runLockfree{2,4,8,16}` shims. | `benchmarks/bench_contention.zig:165-188` | Replace with a comptime `makeRunner(thread_count, lockfree)` factory; collapse to a table-driven harness. | confirmed | Open |
+| 6 | QC-108 | Medium | 16 | maintainability | `benchmarks/micro/hash.zig` has 8 near-identical V3/V5 scenario functions. | `benchmarks/micro/hash.zig:68-275` | Introduce a comptime-generic `runHash(comptime version, comptime len, variant)` and register via table. | confirmed | Open |
+| 7 | QC-109 | Low | 12 | readability | `benchmarks/micro/parse.zig` used `catch unreachable` with no invariant comment, making the assumption opaque. | `benchmarks/micro/parse.zig:107` | Add a comment naming the invariant (`slices` populated by setup with canonical UUIDs; inverse cannot fail). | confirmed | ✅ Closed in-band (this session) |
+| 8 | QC-110 | Low | 12 | api-contract | Error-naming inconsistency: `NoHWAddressFound` is verbose and `RandomError` is bare, both diverge from the `Invalid*`/`State*` families. | `src/uuid.zig` (Error set) | Rename to `HWAddressUnavailable` + `RandomReadFailed` (or similar) in a single breaking-change commit with CHANGELOG entry. | confirmed | Open |
+| 9 | QC-111 | Low | 9 | architecture | `ProcessHashContext` init spin (CAS sound) has no timeout/fallback — latent DoS if the initializer traps. | `src/uuid.zig:46-48` | Add bounded spin (e.g. `std.atomic.spinLoopHint` ×N then `std.Thread.yield`); optionally surface a diagnostic on exceeding budget. | suspected | Open |
+| 10 | QC-112 | Low | 9 | docs | `default_generator` is `pub var` at `generator.zig:1577` — mutable process-global; doc comment does not cover thread-safety + lifetime contract. | `src/generator.zig:1577` | Extend the existing `///` block: note all methods are thread-safe (split mutex), forbid reassignment, and state that `saveState`/`loadState` must agree on path across the process. | confirmed | Open |
+
+### Recommended integration tests (top 3–5)
+
+Surfaced during review; not numbered as QC- findings but tracked alongside QC-101 follow-up:
+
+1. **HMAC round-trip + tamper detect** — write v3, flip one byte of payload/trailer, assert `Error.StateMacMismatch`.
+2. **Downgrade-resistance** (QC-103 regression) — write v3, truncate trailer, reload with `state_mac_key` set, assert hard reject.
+3. **Lockfree V7 cross-thread monotonicity witness** — N threads calling `newV7`; assert strict monotonic order per thread and uniqueness across threads.
+4. **Reseed boundary** — clock rollback within tolerance vs past-tolerance; assert accept/reject + reseed triggered.
+5. **Version-length mismatch** — v2 magic + v3-size file, v3 magic + v2-size file; assert `Error.InvalidFormat` for each.
+
+### In-band closures this session (3)
+
+| QC | Commit | Evidence |
+| -- | ------ | -------- |
+| QC-104 | (this commit) | `src/generator.zig:1231-1252` — per-decl `///` added to each state constant. |
+| QC-105 | (this commit) | `src/generator.zig:1763-1790` — `GeneratorInterfaceFor` `///` block rewritten to be self-contained. |
+| QC-109 | (this commit) | `benchmarks/micro/parse.zig:107-112` — invariant comment added ahead of `catch unreachable`. |
+
+### Ready-to-run `glab` commands (QC-103, QC-106..QC-108, QC-110..QC-112)
+
+> Copy/paste at the repo root. Labels `quality`, `severity::*`, `category::*`, `confidence::*`, `status::triage` already exist from prior cycles (see Cycle 12/13). Each body is ASCII-safe and uses a HEREDOC.
+
+```bash
+# QC-103 — loadState v3->v2 downgrade
+glab issue create --title "QC-103: loadState silently accepts v2 when state_mac_key set (v3->v2 downgrade)" \
+  --label "quality,severity::high,category::api-contract,confidence::confirmed,status::triage" \
+  --description "$(cat <<'EOF'
+Summary: When `state_mac_key` is non-null, loadState warns but still accepts an unauthenticated v1/v2 payload (src/generator.zig:1463-1470). An attacker with write access to the state path can strip the v3 HMAC trailer and downgrade to v2; loader will proceed.
+
+Why it matters: Breaks the SEC-P3-04 integrity contract. Cross-cuts SEC-P4-01.
+
+Evidence: src/generator.zig:1463-1470 (else-if branch logs warn and falls through).
+
+Recommended change: When `state_mac_key != null`, reject v1/v2 with `Error.StateMacMismatch` (or new `Error.StateUnauthenticated`). Keep log line for operator visibility.
+
+Acceptance: Downgrade regression test (write v3, truncate trailer, reload with key set) fails loudly. Existing v1/v2 loads without key still succeed.
+
+Verification: `zig build test --summary all`.
+
+Effort: S
+EOF
+)"
+
+# QC-106 — generator.zig size ceiling
+glab issue create --title "QC-106: generator.zig at 1831 LoC exceeds 800-line self-ceiling (extract state_codec.zig + state_hmac.zig)" \
+  --label "quality,severity::medium,category::maintainability,confidence::confirmed,status::triage" \
+  --description "$(cat <<'EOF'
+Summary: src/generator.zig is 1831 lines; the repo's stated ceiling (src/uuid.zig:670 comment) is 800.
+
+Recommended change: Minimum viable split — extract `src/generator/state_codec.zig` (~450 LoC, v1/v2/v3 serialize + parse) and `src/generator/state_hmac.zig` (~80 LoC, HMAC compute/verify). Drops generator.zig to ~1300. Defer cosmetic 5-module split.
+
+Acceptance: `wc -l src/generator.zig` <= 1350; no public API surface change; `zig build test` green.
+
+Effort: M
+EOF
+)"
+
+# QC-107 — bench_contention shims
+glab issue create --title "QC-107: Collapse 8 bench_contention runMutex/runLockfree shims via comptime factory" \
+  --label "quality,severity::medium,category::maintainability,confidence::confirmed,status::triage" \
+  --description "$(cat <<'EOF'
+Summary: benchmarks/bench_contention.zig:165-188 has 8 near-identical shim functions differing only by `thread_count` and the `lockfree` flag.
+
+Recommended change: `fn makeRunner(comptime threads: usize, comptime lockfree: bool) fn (...) !common.RunResult` factory; register via table.
+
+Acceptance: 8 shim fns removed; bench harness output unchanged.
+
+Verification: `zig build bench` (or `make bench`) runs clean.
+
+Effort: S
+EOF
+)"
+
+# QC-108 — micro/hash scenario fns
+glab issue create --title "QC-108: Collapse 8 V3/V5 hash scenario fns via comptime generic runHash" \
+  --label "quality,severity::medium,category::maintainability,confidence::confirmed,status::triage" \
+  --description "$(cat <<'EOF'
+Summary: benchmarks/micro/hash.zig:68-275 defines 8 near-identical V3/V5 scenario functions varying only by (version, input length, namespace variant).
+
+Recommended change: Comptime-generic `fn runHash(comptime version: u4, comptime len: usize, variant: Namespace)` + table registration.
+
+Acceptance: Scenario fn count reduced to 1 generic + table; output fields identical.
+
+Effort: S
+EOF
+)"
+
+# QC-110 — error naming inconsistency
+glab issue create --title "QC-110: Error naming inconsistency (NoHWAddressFound / RandomError) diverges from Invalid*/State* families" \
+  --label "quality,severity::low,category::api-contract,confidence::confirmed,status::triage" \
+  --description "$(cat <<'EOF'
+Summary: The Error set in src/uuid.zig mixes naming conventions: `NoHWAddressFound` (verbose negation) and `RandomError` (bare) don't match the `Invalid*` / `State*` families.
+
+Recommended change: Rename to e.g. `HWAddressUnavailable` and `RandomReadFailed`. Ship as a single breaking-change commit with CHANGELOG entry and deprecation note.
+
+Acceptance: New names used everywhere; CHANGELOG entry lists the rename; downstream migration note in README.
+
+Effort: S (mechanical) — breaking change
+EOF
+)"
+
+# QC-111 — ProcessHashContext spin fallback
+glab issue create --title "QC-111: ProcessHashContext init spin has no timeout/fallback (latent DoS if initializer traps)" \
+  --label "quality,severity::low,category::architecture,confidence::suspected,status::triage" \
+  --description "$(cat <<'EOF'
+Summary: src/uuid.zig:46-48 spins on process_seed_state until `.ready`. The CAS itself is sound, but an initializer that traps/hangs leaves all other callers spinning forever.
+
+Recommended change: Bounded spin (N iterations of `std.atomic.spinLoopHint`) then `std.Thread.yield`; optionally emit a diagnostic if the budget is exceeded.
+
+Acceptance: Contrived test with artificial initializer delay shows all waiters make forward progress (yield) rather than burning CPU.
+
+Confidence: suspected — no observed outage; concern is latent.
+
+Effort: S
+EOF
+)"
+
+# QC-112 — default_generator thread-safety doc
+glab issue create --title "QC-112: Document default_generator thread-safety, lifetime, and reassignment contract" \
+  --label "quality,severity::low,category::docs,confidence::confirmed,status::triage" \
+  --description "$(cat <<'EOF'
+Summary: `pub var default_generator: Generator = Generator.init();` at src/generator.zig:1577 is a mutable process-global. The existing `///` block explains when to create an independent instance but doesn't state the thread-safety/lifetime contract callers can rely on.
+
+Recommended change: Extend the doc: (a) all methods are thread-safe via the split mutex, (b) do not reassign `default_generator` after first use, (c) `saveState`/`loadState` must agree on path across the process.
+
+Acceptance: Doc comment covers the three points above; no code change.
+
+Effort: S
+EOF
+)"
+```
+
+### Roadmap (Phase 4 follow-up)
+
+- **Quick wins (<1d):** QC-104 ✅, QC-105 ✅, QC-109 ✅, QC-110, QC-111, QC-112 — all doc/rename/bounded-spin edits.
+- **Medium (1–5d):** QC-103 (security-adjacent correctness), QC-107, QC-108 — mechanical comptime factoring + one behavioural fix.
+- **Strategic (>5d):** QC-106 (two-file extraction from `generator.zig`); integration-test matrix covering HMAC tamper, downgrade, V7 monotonicity, reseed boundary, version/length mismatch.
+
+_Last updated: 2026-04-18 — Phase 4 follow-up cycle 2 complete. 10 new findings (QC-103–QC-112): 1 High, 5 Medium, 4 Low. 3 closed in-band (QC-104, QC-105, QC-109); 7 open. 101 total issues tracked (92 closed, 2 Won't Do, 7 open from this cycle)._
 
 _Phase 3 closure cycle complete (Group C round, 2026-04-18) — 10 closed, 0 deferred._
