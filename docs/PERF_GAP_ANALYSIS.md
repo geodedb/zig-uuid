@@ -2,12 +2,14 @@
 
 > Codebase-wide performance review of the uuid library.
 > Language: Zig | Target: UUID generation throughput + latency
+> Zig version audited: 0.16.0
 > Reviewer: Performance review agent
 >
-> Last updated: 2026-03-22
+> Last updated: 2026-04-18
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
 > Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
 > Cycle 4 appended: 2026-03-22 (2 new findings: PERF-19 through PERF-20)
+> Cycle 5 appended: 2026-04-18 (12 new findings: PERF-21 through PERF-32 — Phase 2 gap-scanner confirmed PERF-19/PERF-20 closed)
 
 ---
 
@@ -818,3 +820,310 @@ zig build bench-check -Doptimize=ReleaseFast
 
 1. ~~Open **PERF-19**~~ ✅ Closed — [#155](https://gitlab.com/devnw/zig/uuid/-/work_items/155) — Split `Generator.mutex` into `v7_mutex` and `v1v6_mutex`. All tests pass; no benchmark regressions.
 2. ~~Open **PERF-20**~~ ✅ Closed — [#157](https://gitlab.com/devnw/zig/uuid/-/work_items/157) — Added `benchToHex()` to `bench/main.zig`.
+
+---
+
+---
+
+## Performance Review Cycle 5 Findings (PERF-21–PERF-32)
+
+> Codebase-wide performance review — Cycle 5
+> Reviewer: Performance review agent (Phase 3 deep analysis)
+> Date: 2026-04-18
+> Zig version audited: **0.16.0** (post-`std.Io` migration; `std.Thread.Mutex` → `std.Io.Mutex`)
+>
+> **Phase 2 gap-scanner confirms PERF-19 and PERF-20 are Closed**: `v7_mutex`/`v1v6_mutex` split is live at `src/generator.zig:97,102`; `benchToHex()` is present in `bench/main.zig`. The GitLab work-items (#155, #157) may be safely closed if still open.
+
+---
+
+### Summary (Cycle 5)
+
+**12 new findings** (1 P0, 3 P1, 5 P2, 3 P3) — all Open.
+
+| Severity | Count | Confidence mix |
+|----------|-------|----------------|
+| P0 | 1  | suspected×1 |
+| P1 | 3  | confirmed×3 |
+| P2 | 5  | confirmed×3, suspected×2 |
+| P3 | 3  | suspected×3 |
+
+**Top 3 risks:**
+
+1. **PERF-21 (P0)**: `v7_mutex` serialises every `newV7`/`newV7AtTime` call on 0.16 — a lock-free CAS over a packed `u64 = (ms<<12) | seq` could unlock 4–8× on 8-core machines before hitting the RFC-9562 4,096/ms ceiling.
+2. **PERF-22 (P1)**: No multi-threaded V7 benchmark exists; PERF-21's gain cannot be measured or regression-tracked.
+3. **PERF-24 (P1)**: `std.log.warn` call on every `hwaddr.node()` invocation on hosts with >128 NICs is a measurable hot-path hazard in container/VLAN deployments.
+
+---
+
+### Stack-Ranked Findings (Cycle 5)
+
+| Rank | Severity | PerfScore | Finding | Component | Evidence | Confidence | Fix Summary | Status |
+|------|----------|-----------|---------|-----------|----------|------------|-------------|--------|
+| 1 | P0 | 80 | V7 mutex serialises every call; lock-free CAS possible | `generator.zig:185,208,233-328` | 0.16 `std.Io.Mutex` wraps every V7 path | suspected | Pack `(ms<<12)\|seq` into `Atomic(u64)`; CAS retry; eliminate mutex | Open |
+| 2 | P1 | 64 | No multi-threaded V7 benchmark | `bench/main.zig:65-76` | single-thread only | confirmed | Add `benchV7Concurrent(N)` with Thread.spawn × {1,2,4,8} | Open |
+| 3 | P1 | 48 | `defaultRand` function-pointer indirection prevents inlining | `generator.zig:24-26,83` | `RandFn` is `*const fn` field | confirmed | Comptime `DefaultGenerator` that inlines CSPRNG; keep injectable variant for tests | Open |
+| 4 | P1 | 48 | `std.log.warn` in hwaddr hot path when NIC count > 128 | `hwaddr/linux.zig:64` | unconditional `std.log.warn` | confirmed | Gate behind `std.log.Level.debug` or once-flag; drop to debug | Open |
+| 5 | P2 | 36 | `jsonMarshal` two-pass: stack toString then `allocator.dupe` | `uuid.zig:429-432` | two copies of a 36-byte string | confirmed | Single-pass: `alloc(36)` then `toStringInto(buf)` | Open |
+| 6 | P2 | 36 | CI `bench-regression` has `allow_failure:true` with no threshold gate | `.gitlab-ci.yml:239-253` | job exits 0 on any delta | confirmed | Add percent-threshold gate; remove `allow_failure` | Open |
+| 7 | P2 | 32 | `node_cache` read outside `v1v6_mutex` (TSan hazard) | `generator.zig:450,486` | `if (self.node_cache == null)` pre-lock | confirmed | Make `node_cache` atomic-or-seqlock read; double-check inside lock | Open |
+| 8 | P2 | 24 | `std.Io.Threaded.global_single_threaded.io()` re-resolved 18+ times | `generator.zig` (many) | repeated inline calls | suspected | Cache `const gio = ...io();` per-function; or hoist to field | Open |
+| 9 | P2 | 24 | False sharing between V7 and V1/V6 state in `Generator` struct | `generator.zig:97-112` | both mutexes + hot fields within one cacheline | suspected | `align(64)` separator between V7 state and V1/V6 state | Open |
+| 10 | P3 | 16 | Md5/Sha1 init state per V3/V5 call; no prehashed-namespace variant | `generator.zig:525,550` | full hasher init each call | suspected | Add `NamespaceContext` that stores mid-hash state after absorbing namespace | Open |
+| 11 | P3 | 12 | `GeneratorInterface` vtable blocks inlining in hot callers | generator.zig (iface) | indirect call in tight loops | suspected | Document + offer comptime-generic wrapper; measure before acting | Open |
+| 12 | P3 | 8  | No `ProcessHashContext` (per-process random seed would be zero-cost) | generator.zig | design gap | suspected | Add comptime/init-time salted V3/V5 helper; purely additive | Open |
+
+**PerfScore formula**: Impact (1–5) × Likelihood (1–5) × 4
+
+---
+
+### Detailed Findings (Cycle 5)
+
+#### PERF-21: V7 mutex serialises every call — lock-free CAS on packed u64 viable (P0, suspected)
+
+**File**: `src/generator.zig:185` (`newV7` lock), `:208` (`newV7AtTime` lock), `:233-328` (`newV7Locked` critical section).
+
+**Root cause**: On Zig 0.16, `v7_mutex` (`std.Io.Mutex`) wraps the ms/seq read-modify-write. The entire state is a `(i64 ms, u12 seq)` pair that fits in a `u64` packed as `(ms << 12) | seq`. CAS loops on a single `std.atomic.Value(u64)` make the generator lock-free for the common path; the 8-byte rand_b call is already outside the mutex (PERF-02).
+
+**Fix**: Replace `v7_mutex + last_ms + mono_seq` with `state: std.atomic.Value(u64)`. Hot path: load → decode → compute `(ms', seq')` → `cmpxchgWeak`. Retain a fallback mutex only for the same-ms-overflow sleep. Estimated gain: 4–8× on 8-core ReleaseFast below the 4,096/ms ceiling.
+
+**Verify**: `zig build bench -Doptimize=ReleaseFast -- --threads 8` (after PERF-22 lands) measuring ops/sec and p99 latency; `zig build test -Doptimize=Debug -fsanitize=thread` with 8-thread stress test; validate with RFC-9562 §6.2 monotonic counter property test (existing test suite at `tests/`).
+
+---
+
+#### PERF-22: No multi-threaded V7 bench (P1, confirmed)
+
+**File**: `bench/main.zig:65-76` (`benchV7` is single-thread).
+
+**Root cause**: Only single-threaded throughput is measured, so every concurrency-fix PR (PERF-19, PERF-21) produces no CI signal.
+
+**Fix**: Add `benchV7Concurrent(thread_count: u32)` using `std.Thread.spawn`, shared atomic counter sink, warmup phase, and run for `{1, 2, 4, 8}` threads. Report aggregate ops/sec and per-thread ns/op.
+
+**Verify**: `zig build bench -Doptimize=ReleaseFast`; confirm new output lines `newV7 (T=8): NNN ns/op, MM ops/sec`.
+
+---
+
+#### PERF-23: `defaultRand` function-pointer indirection prevents inlining (P1, confirmed)
+
+**File**: `src/generator.zig:24-26` (defaultRand body), `:83` (`rand: RandFn = defaultRand`).
+
+**Root cause**: `rand` is a `*const fn` field; LLVM cannot inline across the indirect call even in ReleaseFast. Every `newV4`/`newV7`/V3/V5 path pays the indirect branch cost (~2–5 ns).
+
+**Fix**: Introduce a comptime-generic `GeneratorOf(RandT, ClockT, HWAddrT)` with a default `DefaultGenerator` alias that binds to monomorphised CSPRNG/clock paths. Keep the function-pointer `Generator` as the test-injectable variant (do not break API).
+
+**Verify**: `zig build bench -Doptimize=ReleaseFast`; expect `newV4` 6 → 3–4 ns/op. Confirm inlining: `objdump -d zig-out/bench-*/main | grep -A20 newV4` shows no indirect call instruction.
+
+---
+
+#### PERF-24: `std.log.warn` in hwaddr hot path with > 128 interfaces (P1, confirmed)
+
+**File**: `src/hwaddr/linux.zig:64`.
+
+**Root cause**: Unconditional `std.log.warn` fires on every `hwaddr.node()` call when SIOCGIFCONF saturates the fixed 128-interface buffer. Container hosts and VLAN-heavy deployments hit this on every V1/V6 cold path and any `clearNodeCache()`-triggered refresh.
+
+**Fix**: Downgrade to `std.log.debug`, or use a once-flag (`std.Once`) to warn a single time per process, or make the initial buffer size configurable via a build option.
+
+**Verify**: Profile `hwaddr.node()` cost on a host with `ip link add type dummy` × 150 dummies: expect warn-path cost drop from ~5–50 µs (log formatting + write) to < 1 µs. Unit test: assert `std.log.warn` not emitted when scope log level is `.info`.
+
+---
+
+#### PERF-25: `jsonMarshal` two-pass — stack toString + `allocator.dupe` (P2, confirmed)
+
+**File**: `src/uuid.zig:429-432`.
+
+**Root cause**: Builds a 36-byte string on the stack via `toString(&buf)`, then `allocator.dupe` copies it to the heap — two full writes for a 36-byte payload.
+
+**Fix**: Allocate first (`const out = try allocator.alloc(u8, 36)`), then call a `toStringInto(out)` variant that writes directly to the heap buffer. Requires exposing a `toStringInto` helper (already effectively present as `toStringImpl`).
+
+**Verify**: `zig build bench -Doptimize=ReleaseFast` with a new `benchJsonMarshal()` (page_allocator + XOR sink); expect ~5–10 ns/op reduction vs current (from eliminated memcpy on the hot allocation path).
+
+---
+
+#### PERF-26: CI `bench-regression` has `allow_failure:true` without threshold gate (P2, confirmed)
+
+**File**: `.gitlab-ci.yml:239-253`.
+
+**Root cause**: The job runs but cannot fail the pipeline; no `--regression-threshold` flag and no compare-to-main logic. Regressions are invisible.
+
+**Fix**: Add a compare-against-main step (fetch `main` bench artifacts, diff JSON, fail if any metric degrades > 5%). Remove `allow_failure: true`. Publish per-run artifacts to enable trend lines.
+
+**Verify**: Trigger a synthetic regression (e.g., add `std.Thread.sleep(1)` into `newV4`), confirm the CI job fails with a clear diff message.
+
+---
+
+#### PERF-27: `node_cache` unsynchronised read outside `v1v6_mutex` (P2, confirmed)
+
+**File**: `src/generator.zig:450` (`newV1AtTime`), `:486` (`newV6AtTime`).
+
+**Root cause**: `if (self.node_cache == null)` reads `node_cache` without the lock. The concurrent writer (`resolveV1V6State`) holds `v1v6_mutex` when populating it. Benign on x86_64/aarch64 (aligned pointer writes are atomic), but TSan flags it and weakly-ordered arches could observe torn pointers.
+
+**Fix**: Make `node_cache` a `std.atomic.Value(?[6]u8)` or an `Optional` behind an atomic flag. Double-check the value inside the mutex on the cold path.
+
+**Verify**: `zig build test -Doptimize=Debug -fsanitize=thread` with an 8-thread V1/V6-mix stress test — should report zero data races.
+
+---
+
+#### PERF-28: `std.Io.Threaded.global_single_threaded.io()` re-resolved 18+ times (P2, suspected)
+
+**File**: `src/generator.zig` (multiple: `:185, :187, :208, :253, :265, :284-287, :303, :314` + V1/V6 symmetric sites).
+
+**Root cause**: Each call to `global_single_threaded.io()` resolves through the `std.Io` vtable. In hot functions that lock/unlock + sleep, this interface is materialised 2–4 times.
+
+**Fix**: Hoist a single `const gio = std.Io.Threaded.global_single_threaded.io();` at function entry in `newV7`, `newV7AtTime`, `newV7Locked`, `newV1AtTime`, `newV6AtTime`. Or store it as a `Generator` field initialised in `init()`.
+
+**Verify**: `zig build bench -Doptimize=ReleaseFast`; inspect ReleaseFast assembly for repeated vtable loads. Expect ~1–3 ns/op reduction on V7 fast path.
+
+---
+
+#### PERF-29: False sharing between V7 and V1/V6 state in `Generator` (P2, suspected)
+
+**File**: `src/generator.zig:97-112` (V7 state at :97-99, V1/V6 state at :102-109 within a single cacheline on most layouts).
+
+**Root cause**: After PERF-19's mutex split, V7-concurrent callers and V1/V6-concurrent callers still share a cacheline for `v7_mutex`/`last_ms`/`mono_seq` versus `v1v6_mutex`/`clock_seq`/`last_v1_ts`. Cross-domain false sharing negates some PERF-19 benefit under mixed workloads.
+
+**Fix**: Insert `padding: [32]u8 align(64) = undefined` (or use `@alignOf` on a sub-struct) between the two domains so they occupy independent cachelines.
+
+**Verify**: Mixed-workload benchmark (4 threads V7 + 4 threads V1) before/after padding; expect ≥ 10–15% mixed-throughput gain; `perf c2c record` confirms reduced HITM events.
+
+---
+
+#### PERF-30: Md5/Sha1 init per V3/V5 call — no prehashed-namespace variant (P3, suspected)
+
+**File**: `src/generator.zig:525` (V3 init), `:550` (V5 init).
+
+**Root cause**: Each V3/V5 call calls `Md5.init()` / `Sha1.init()` then absorbs the 16-byte namespace before the name bytes. For callers generating many UUIDs under the same namespace, the namespace block (16 bytes, 1 full compression round) is redundant work.
+
+**Fix**: Add `NamespaceContext.init(namespace: UUID)` that returns a pre-absorbed Md5/Sha1 state; `newV3InNamespace(ctx, name)` clones state and finalises. Purely additive API — no breakage.
+
+**Verify**: Bench 1M V3 calls with fixed namespace: expect ~15–25 ns/op reduction (from saving one MD5 compression round per call).
+
+---
+
+#### PERF-31: `GeneratorInterface` vtable blocks inlining (P3, suspected)
+
+**File**: `src/generator.zig` (GeneratorInterface dispatch).
+
+**Root cause**: Cycle 3 measured vtable dispatch at 6 ns/op (same as direct), but that was CSPRNG-bound. In hot inner loops that do *not* call CSPRNG (e.g., `newV1` after node-cache warm + mutex-free path), the indirect call overhead is material.
+
+**Fix**: Keep `GeneratorInterface` for heterogeneous use cases. Add a `comptime fn GeneratorInterfaceFor(G)` that returns a monomorphised shim — callers with known-type generators use the monomorphised shim, paying zero vtable cost.
+
+**Verify**: Add `benchInterfaceV1()` (V1 via iface, warm cache) and `benchV1()` (direct); measure gap at ReleaseFast.
+
+---
+
+#### PERF-32: No `ProcessHashContext` (per-process random seed; zero runtime cost) (P3, suspected)
+
+**File**: generator.zig (design gap).
+
+**Root cause**: V3/V5 namespace UUIDs are fully deterministic; there is no API for "per-process salted V3/V5" useful for adversarial-cache-miss mitigation where a user wants deterministic-within-process but not globally guessable UUIDs.
+
+**Fix**: Add `ProcessHashContext.init()` that picks a 128-bit CSPRNG seed at process start and exposes `v5InProcessNamespace(name)` which absorbs the seed + name into SHA-1. Zero runtime cost vs plain V5 (one extra absorb round, one-time seed).
+
+**Verify**: Benchmark `v5InProcessNamespace` vs `newV5`; expect identical ns/op (< 2 ns noise). Correctness: two processes return different UUIDs for the same name; same process returns stable UUIDs.
+
+---
+
+### Confirmed vs Suspected (Cycle 5)
+
+| Finding | Confidence | Evidence / what would confirm |
+|---------|-----------|------------------------------|
+| PERF-21 | suspected | Needs multi-threaded bench (PERF-22) to quantify gain |
+| PERF-22 | confirmed | source inspection `bench/main.zig:65-76` |
+| PERF-23 | confirmed | source inspection `generator.zig:24-26,83` + ReleaseFast disassembly |
+| PERF-24 | confirmed | source inspection `hwaddr/linux.zig:64` |
+| PERF-25 | confirmed | source inspection `uuid.zig:429-432` |
+| PERF-26 | confirmed | `.gitlab-ci.yml:239-253` shows `allow_failure:true` and no threshold |
+| PERF-27 | confirmed | `generator.zig:450,486` read outside `v1v6_mutex`; TSan run would flag |
+| PERF-28 | suspected | needs ReleaseFast disassembly grep for repeated `io()` vtable loads |
+| PERF-29 | suspected | needs `perf c2c` or manual struct-layout inspection |
+| PERF-30 | suspected | needs bench fixed-namespace vs varying-namespace delta |
+| PERF-31 | suspected | needs iface-vs-direct bench on non-CSPRNG path |
+| PERF-32 | suspected | design gap; no measurement yet |
+
+---
+
+### Ready-to-run `glab` commands (Cycle 5)
+
+> **DO NOT auto-push** — these are produced for the user to run manually.
+> Labels pre-created (idempotent): `performance`, `perf-severity::P0..P3`, `category::perf`, `confidence::confirmed`, `confidence::suspected`, `status::triage`.
+
+```bash
+# Label ensure (safe to re-run)
+for L in performance category::perf status::triage confidence::confirmed confidence::suspected \
+         perf-severity::P0 perf-severity::P1 perf-severity::P2 perf-severity::P3; do
+  glab label create "$L" --color '#D93F0B' 2>/dev/null || true
+done
+
+# PERF-21 (P0, suspected)
+glab issue create --title "PERF-21: V7 mutex serialises every call — lock-free CAS on packed u64 viable (4-8x on 8-core)" \
+  --label "performance,perf-severity::P0,category::perf,confidence::suspected,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-21. Files: src/generator.zig:185,208,233-328. Fix: Atomic(u64) state with CAS retry. Verify: zig build bench -Doptimize=ReleaseFast (after PERF-22)."
+
+# PERF-22 (P1, confirmed)
+glab issue create --title "PERF-22: No multi-threaded V7 benchmark" \
+  --label "performance,perf-severity::P1,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-22. Files: bench/main.zig:65-76. Fix: benchV7Concurrent(N) for N in {1,2,4,8}."
+
+# PERF-23 (P1, confirmed)
+glab issue create --title "PERF-23: defaultRand function-pointer indirection prevents inlining" \
+  --label "performance,perf-severity::P1,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-23. Files: src/generator.zig:24-26,83. Fix: comptime-generic GeneratorOf(...) with DefaultGenerator alias."
+
+# PERF-24 (P1, confirmed)
+glab issue create --title "PERF-24: std.log.warn in hwaddr hot path with >128 interfaces" \
+  --label "performance,perf-severity::P1,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-24. Files: src/hwaddr/linux.zig:64. Fix: downgrade to debug or once-flag."
+
+# PERF-25 (P2, confirmed)
+glab issue create --title "PERF-25: jsonMarshal two-pass (toString + dupe)" \
+  --label "performance,perf-severity::P2,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-25. Files: src/uuid.zig:429-432. Fix: alloc then toStringInto."
+
+# PERF-26 (P2, confirmed)
+glab issue create --title "PERF-26: CI bench-regression allow_failure:true with no threshold gate" \
+  --label "performance,perf-severity::P2,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-26. Files: .gitlab-ci.yml:239-253. Fix: add 5% regression threshold; remove allow_failure."
+
+# PERF-27 (P2, confirmed)
+glab issue create --title "PERF-27: node_cache unsynchronised read outside v1v6_mutex (TSan hazard)" \
+  --label "performance,perf-severity::P2,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-27. Files: src/generator.zig:450,486. Fix: atomic read + double-check inside lock."
+
+# PERF-28 (P2, suspected)
+glab issue create --title "PERF-28: std.Io.Threaded.global_single_threaded.io() re-resolved 18+ times" \
+  --label "performance,perf-severity::P2,category::perf,confidence::suspected,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-28. Files: src/generator.zig (many). Fix: cache const gio = ...io() per-function."
+
+# PERF-29 (P2, suspected)
+glab issue create --title "PERF-29: False sharing between V7 and V1/V6 state in Generator struct" \
+  --label "performance,perf-severity::P2,category::perf,confidence::suspected,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-29. Files: src/generator.zig:97-112. Fix: align(64) padding between domains."
+
+# PERF-30 (P3, suspected)
+glab issue create --title "PERF-30: Md5/Sha1 init per V3/V5 call — add prehashed-namespace variant" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-30. Files: src/generator.zig:525,550. Fix: NamespaceContext with pre-absorbed state."
+
+# PERF-31 (P3, suspected)
+glab issue create --title "PERF-31: GeneratorInterface vtable blocks inlining in non-CSPRNG hot paths" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-31. Fix: comptime GeneratorInterfaceFor(G) monomorphised shim."
+
+# PERF-32 (P3, suspected)
+glab issue create --title "PERF-32: Add ProcessHashContext — per-process salted V3/V5 (zero runtime cost)" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Cycle 5 PERF-32. Additive API; CSPRNG seed at init; one extra hash absorb."
+
+# Close PERF-19 / PERF-20 (Phase 2 gap-scanner confirmed)
+glab issue close 155 --comment "Phase 2 gap-scanner (2026-04-18) confirmed v7_mutex/v1v6_mutex split is live at src/generator.zig:97,102. Closing per Cycle 5."
+glab issue close 157 --comment "Phase 2 gap-scanner (2026-04-18) confirmed benchToHex() is present in bench/main.zig. Closing per Cycle 5."
+```
+
+---
+
+### Appendix: Cycle 5 Methodology
+
+- **Codebase examined**: `src/generator.zig`, `src/uuid.zig`, `src/hwaddr/linux.zig`, `bench/main.zig`, `.gitlab-ci.yml`.
+- **Zig version**: **0.16.0** (post-`std.Io` migration; `std.Thread.Mutex` now `std.Io.Mutex`; `std.Io.Threaded.global_single_threaded.io()` required at every sleep/lock site).
+- **Benchmarks run**: None in this cycle (findings are source-evidence-driven; PERF-21/22 require new multi-threaded bench to quantify gains — tracked as PERF-22).
+- **Optimization level**: Findings inferred from source + PERF-history baseline measurements in Cycles 2–4 at ReleaseFast.
+- **Phase 2 gap-scanner cross-check**: confirmed PERF-19 and PERF-20 are closed in current tree; update GitLab #155 / #157 accordingly.

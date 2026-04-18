@@ -1,10 +1,10 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-03-22 (Cycle 12 — 16 new findings, all closed)
-> **Zig version audited:** 0.15.2
+> **Last updated:** 2026-04-18 (Cycle 13 — Phase 3 quality-reviewer, 10 new findings, triage pending)
+> **Zig version audited:** 0.16.0
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
-> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80)
+> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102)
 
 ---
 
@@ -2327,5 +2327,37 @@ The boundary between injected-clock (`withClock`) and system-clock code paths fo
 | [#175](https://gitlab.com/devnw/zig/uuid/-/work_items/175) | Add test verifying V1/V6 ignore injected clock | S | Info |
 
 ---
+
+## Cycle 13 — Phase 3 quality-reviewer (2026-04-18)
+
+> Zig 0.16.0 audit. 10 new findings (QC-93–QC-102). PriorityScore = Severity × Confidence × Reach.
+> No existing open tracker issue matches any of these 10 — all are new (the 25 QC-* issues still open on GitLab are bookkeeping; the user confirmed they are resolved).
+
+### Stack-ranked findings
+
+| Rank | QC | Sev | Score | Category | Finding | File:Line | Fix | Confidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | QC-93 | High | 36 | docs | README MSRV stale vs CI (claims 0.15.x while CI/build.zig.zon require 0.16) | README.md:4,181; src/root.zig:23; build.zig.zon:5 | Bump MSRV copy to 0.16.0; add CI-pinned version matrix note | confirmed |
+| 2 | QC-95 | High | 36 | maintainability | `newV7Locked` manually unlocks mutex on 3 early-return branches — missed path leaks the lock | src/generator.zig:253,265,303,314 | Refactor to single-acquire `defer self.mutex.unlock()` or helper; remove manual unlocks | confirmed |
+| 3 | QC-94 | Medium | 27 | docs | README Quick Start silent on Zig 0.16 `std.Io.Writer` API change callers hit immediately | README.md:58-66 vs src/uuid.zig:418 | Add Quick Start note + example using new `std.Io.Writer` contract | confirmed |
+| 4 | QC-96 | Medium | 27 | readability | `std.Io.Threaded.global_single_threaded.io()` repeated 23× inline | src/generator.zig (23 sites) | Extract `const io = std.Io.Threaded.global_single_threaded.io();` constant or tiny helper | confirmed |
+| 5 | QC-99 | Medium | 27 | api-contract | `saveState`/`loadState` return bare `!void` instead of explicit `Error!void` | src/generator.zig:626,704 | Tighten signatures to `Error!void`; document error set | confirmed |
+| 6 | QC-97 | Low | 18 | maintainability | 5 `*Alloc` helpers are near-identical copy/paste | src/uuid.zig:382-414 | Collapse to single generic helper parameterised by formatter/length | confirmed |
+| 7 | QC-98 | Low | 18 | maintainability | 3× duplicated MAC-filter predicate across OS backends | src/hwaddr/linux.zig, macos.zig, windows.zig | Hoist `isUsableMac` predicate into shared `src/hwaddr/common.zig` | confirmed |
+| 8 | QC-100 | Medium | 18 | api-contract | `default_generator` asymmetry — convenience fns diverge from `Generator` surface | src/root.zig:52-68 | Audit parity; add missing convenience wrappers or document omissions | suspected |
+| 9 | QC-101 | Medium | 18 | tests | `loadState` v1→v2 upgrade + fast-restart branches lack coverage | src/generator_state_test.zig; src/generator.zig:774-783 | Add table test covering v1→v2 upgrade and fast-restart branches | confirmed |
+| 10 | QC-102 | Low | 12 | docs | `*Alloc` doc comments claim "page_allocator ~1800 ns" but fn accepts any allocator | src/uuid.zig:388-413 | Rewrite doc: describe allocator parameter; move fixed-allocator bench to separate note | confirmed |
+
+### Doc gaps (not scored, tracked separately)
+
+- No ADR covering V1/V6 vs V7 split-mutex design rationale.
+- No `src/hwaddr/README.md` describing platform backends.
+- 800-line per-file self-ceiling is undocumented (CLAUDE.md/CONTRIBUTING).
+
+### Roadmap
+
+- **Quick wins (<1d):** QC-93, QC-94, QC-96, QC-99, QC-102
+- **Medium (1–5d):** QC-95, QC-97, QC-98, QC-101
+- **Strategic (>5d):** QC-100 + 3 doc-gap items (ADR, hwaddr README, self-ceiling)
 
 _Last updated: 2026-03-22 — Cycle 12 complete. 16 new findings (QC-76–QC-92, QC-89 merged into QC-80): 1 High, 1 Medium, 12 Low, 2 Info. All 16 closed. 91 total issues tracked (89 closed, 2 Won't Do, 0 open)._

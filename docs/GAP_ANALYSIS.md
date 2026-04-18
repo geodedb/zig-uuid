@@ -3901,3 +3901,157 @@ SEC-R14-03 (saveState TOCTOU DoS window, Info severity) remains open — existin
 (O_EXCL, pre-delete) are acknowledged as reasonable; the residual DoS-only risk is accepted.
 
 ---
+
+## Phase 3 Gap-Detector Sync (2026-04-18)
+
+25 tracker items have been resolved in-code but remain open on the GitLab tracker.
+Full resolution evidence is in `docs/GAP_ANALYSIS_RESOLVED.md`. Closure on the
+tracker is pending review; see the end of this section for the proposed `glab`
+close commands.
+
+Five new open gaps were identified in this sync (1 regression + 4 doc/drift).
+
+### Open Regressions
+
+#### QC-80 (REGRESSED) — README `.hash = "<hash printed by zig fetch>"` placeholder still present
+
+- **Issue:** [#166](https://gitlab.com/devnw/zig/uuid/-/work_items/166) — tracker says Closed but code regressed
+- **Category:** Docs / Packaging
+- **Severity:** Medium
+- **Current state (evidence):**
+  - `README.md:28` — literal string `.hash = "<hash printed by zig fetch>"` is present in the install block.
+- **Impact/Risk:** Blocks first-time installation.
+- **Recommended fix:** Remove the `.hash = "..."` line and instruct readers to run `zig fetch --save`, or pin a real known hash for the tagged `v0.1.0` release.
+
+### New Documentation-Drift Gaps
+
+#### GAP-DOC-01 — MSRV drift: README/build.zig.zon claim Zig 0.15.2, code requires 0.16.0
+
+- **Issue:** (none — create)
+- **Category:** Docs / Packaging
+- **Severity:** High
+- **Current state (evidence):**
+  - `build.zig.zon:5` — `.minimum_zig_version = "0.15.2"`.
+  - `README.md:4` — `Zig-0.15.2+` badge.
+  - `.gitlab-ci.yml:27` — `ZIG_VERSION: "0.16.0"`.
+  - Recent commits `fb55af6`, `cfdfb46`, `1ab52ea`, `a918dd8` migrate examples/tests/bench to 0.16-only APIs (`std.Io.File`, removal of `tmp.dir.realpath`, removal of `std.time.nanoTimestamp`).
+  - `zig build test` — 172/172 pass on 0.16.0; fails on 0.15.2.
+- **Impact/Risk:** Silent breakage for downstream projects pinning the advertised MSRV.
+- **Recommended fix:** Bump `minimum_zig_version` to `0.16.0`; update README badge; add CHANGELOG entry.
+
+#### GAP-DOC-02 — `docs/REQUIREMENTS.md` stale and references non-existent Geode paths
+
+- **Issue:** (none — create)
+- **Category:** Docs
+- **Severity:** Medium
+- **Current state (evidence):**
+  - `docs/REQUIREMENTS.md:3` — `Last updated: 2026-03-21` (stale).
+  - `docs/REQUIREMENTS.md:13-24` — cites `src/graph_registry.zig`, `src/graph_store.zig` which do not exist in this repository.
+- **Impact/Risk:** Misleads external contributors; undermines flatfile-mirror contract.
+- **Recommended fix:** Refresh to cite only paths inside this repo; add tracker-issue table; add mirror-disclaimer footer.
+
+#### GAP-DOC-03 — Quality/Perf/Security review doc headers stuck on Zig 0.15.2
+
+- **Issue:** (none — create)
+- **Category:** Docs
+- **Severity:** Low
+- **Current state (evidence):**
+  - `docs/QUALITY_GAP_ANALYSIS.md:5` — `> **Zig version audited:** 0.15.2`.
+  - `docs/PERF_GAP_ANALYSIS.md:499,691` — measurements "on Linux x86_64 (kernel 6.17, Zig 0.15.2)".
+  - `docs/SECURITY_REVIEW_NOTES.md:83` — `- **Language:** Zig (0.15.2)`.
+- **Recommended fix:** Update the three headers to `0.16.0`.
+
+#### GAP-DOC-04 — Tracker pollution: empty issues #87, #90, #119
+
+- **Issue:** (none — cleanup)
+- **Category:** Process / Tracker hygiene
+- **Severity:** Low
+- **Current state (evidence):** GitLab work items #87, #90, #119 are empty (no description, no Gap-ID).
+- **Recommended fix:** Close each with a hygiene note.
+
+### Ready-to-run `glab` commands (review before executing)
+
+These commands are NOT executed by this sync. All IIDs are GitLab project `devnw/zig/uuid` work items.
+
+```sh
+# --- Close the 25 resolved tracker items (Phase 3 confirmed resolutions) ---
+# Security -- Cycle 12
+glab issue close 154 --comment "SEC-R12-02 closed: max_safe guard added in src/timestamp.zig:89-94. 172/172 tests pass on 0.16.0. Evidence: docs/GAP_ANALYSIS_RESOLVED.md."
+
+# Security -- Cycle 13
+glab issue close 156 --comment "SEC-R13-01 closed: single self.clock() read cached before spin-wait in V7 timestamp path (src/generator.zig)."
+glab issue close 158 --comment "SEC-R13-03 closed: SEC-R12-02 boundary seeds added to nano_corpus (src/fuzz.zig:184-197)."
+glab issue close 159 --comment "SEC-R13-04 closed: buf replaced with std.mem.zeroes in loadState (src/generator.zig:644)."
+glab issue close 161 --comment "SEC-R13-06 closed: std.log.warn replaces dead block (src/hwaddr/linux.zig:57-61)."
+glab issue close 164 --comment "SEC-R13-07 closed: SECURITY.md now has PGP channel, CVSS v3.1 table, and version-support matrix."
+glab issue close 167 --comment "SEC-R13-08 closed: clockToMs(self.clock()) cached before mutex.lock() in loadState (src/generator.zig:628-701)."
+
+# Performance -- Cycle 4
+glab issue close 155 --comment "PERF-19 closed: dual-mutex architecture implemented (src/generator.zig:89)."
+glab issue close 157 --comment "PERF-20 closed: toHex lowercase no-alloc variant added to bench/main.zig."
+
+# Quality -- Cycle 12
+glab issue close 160 --comment "QC-76 closed: doc comments added (src/generator.zig:105-118)."
+glab issue close 162 --comment "QC-77 closed: Variant enum doc comment added (src/uuid.zig:38-43)."
+glab issue close 163 --comment "QC-78 closed: Generator.newV4 doc comment added (src/generator.zig:142)."
+glab issue close 165 --comment "QC-79 closed: GeneratorInterface dispatch methods documented (src/generator.zig:755-784)."
+glab issue close 168 --comment "QC-81 closed: newV8 return type corrected to UUID (src/versions.zig:63)."
+glab issue close 169 --comment "QC-82 closed: single canonical nil export; README updated (src/root.zig:42-43)."
+glab issue close 170 --comment "QC-83 closed: Timestamp.toUnixNano now in README (src/timestamp.zig:38)."
+glab issue close 171 --comment "QC-84 closed: fromUnixNano/fromUnixMs now in README (src/timestamp.zig:78,92)."
+glab issue close 172 --comment "QC-85 closed: newV8 infallibility test added (src/generator.zig:494)."
+glab issue close 173 --comment "QC-86 closed: newV7AtTime full error set documented (src/generator.zig:172-176)."
+glab issue close 174 --comment "QC-87 closed: Timestamp.now() doc notes injectable-clock bypass (src/timestamp.zig:25)."
+glab issue close 175 --comment "QC-88 closed: test asserts newV1/newV6 bypass injected clock (src/generator_test.zig)."
+glab issue close 176 --comment "QC-90 closed: root.zig import example corrected (src/root.zig:67)."
+glab issue close 177 --comment "QC-91 closed: {any} -> {f} for NullUUID (examples/basic.zig:104-105)."
+glab issue close 178 --comment "QC-92 closed: README docs/ language corrected (README.md:202)."
+
+# --- Re-open the QC-80 regression ---
+glab issue reopen 166
+glab issue note 166 --message "QC-80 REGRESSED: README.md:28 still contains literal '.hash = \"<hash printed by zig fetch>\"'. See docs/GAP_ANALYSIS.md Open Regressions."
+
+# --- Create the 4 new doc-drift gaps ---
+glab issue create --title "GAP-DOC-01: MSRV drift -- README/build.zig.zon claim 0.15.2, code requires 0.16.0" \
+  --label "gap,priority::high,type::docs,category::packaging" \
+  --description "Gap-ID: GAP-DOC-01
+
+build.zig.zon:5 sets minimum_zig_version=0.15.2 and README.md:4 shows 0.15.2+ badge, but recent commits migrated code to 0.16-only APIs. CI pins 0.16.0; 172/172 tests pass there, fail on 0.15.2."
+
+glab issue create --title "GAP-DOC-02: docs/REQUIREMENTS.md stale, references non-existent Geode paths" \
+  --label "gap,priority::medium,type::docs" \
+  --description "Gap-ID: GAP-DOC-02
+
+docs/REQUIREMENTS.md:3 says 'Last updated: 2026-03-21' and its evidence column cites src/graph_registry.zig / src/graph_store.zig which do not exist in this repo."
+
+glab issue create --title "GAP-DOC-03: Review doc headers still claim 'Zig version audited: 0.15.2'" \
+  --label "gap,priority::low,type::docs" \
+  --description "Gap-ID: GAP-DOC-03
+
+Offending lines: docs/QUALITY_GAP_ANALYSIS.md:5, docs/PERF_GAP_ANALYSIS.md:499,691, docs/SECURITY_REVIEW_NOTES.md:83."
+
+glab issue create --title "GAP-DOC-04: Tracker hygiene -- close empty issues #87, #90, #119" \
+  --label "gap,priority::low,type::process" \
+  --description "Gap-ID: GAP-DOC-04
+
+Work items #87, #90, and #119 contain no description, Gap-ID, or acceptance criteria."
+
+# --- Optional: close the three polluted issues directly ---
+glab issue close 87 --comment "Empty issue closed as tracker hygiene (GAP-DOC-04)."
+glab issue close 90 --comment "Empty issue closed as tracker hygiene (GAP-DOC-04)."
+glab issue close 119 --comment "Empty issue closed as tracker hygiene (GAP-DOC-04)."
+```
+
+### Phase 3 Sync Summary
+
+| Gap-ID | Title | Severity | Status | Evidence (file:line) | Next action |
+|--------|-------|----------|--------|----------------------|-------------|
+| QC-80 | README `.hash` placeholder still present | Medium | OPEN (regression) | `README.md:28` | `glab issue reopen 166` |
+| GAP-DOC-01 | MSRV drift 0.15.2 → 0.16.0 | High | OPEN (new) | `build.zig.zon:5`, `README.md:4`, `.gitlab-ci.yml:27` | Create issue + bump MSRV |
+| GAP-DOC-02 | REQUIREMENTS.md stale / Geode paths | Medium | OPEN (new) | `docs/REQUIREMENTS.md:3,13-24` | Create issue + refresh doc |
+| GAP-DOC-03 | Review doc headers say 0.15.2 | Low | OPEN (new) | `docs/QUALITY_GAP_ANALYSIS.md:5`, `docs/PERF_GAP_ANALYSIS.md:499,691`, `docs/SECURITY_REVIEW_NOTES.md:83` | Create issue + patch headers |
+| GAP-DOC-04 | Empty tracker issues #87, #90, #119 | Low | OPEN (new) | GitLab work items | Create issue + close empties |
+
+**25 resolved items** (mirrored in `docs/GAP_ANALYSIS_RESOLVED.md`): SEC-R12-02 (#154); SEC-R13-01 (#156), SEC-R13-03 (#158), SEC-R13-04 (#159), SEC-R13-06 (#161), SEC-R13-07 (#164), SEC-R13-08 (#167); PERF-19 (#155), PERF-20 (#157); QC-76 (#160), QC-77 (#162), QC-78 (#163), QC-79 (#165), QC-81 (#168), QC-82 (#169), QC-83 (#170), QC-84 (#171), QC-85 (#172), QC-86 (#173), QC-87 (#174), QC-88 (#175), QC-90 (#176), QC-91 (#177), QC-92 (#178).
+
+---

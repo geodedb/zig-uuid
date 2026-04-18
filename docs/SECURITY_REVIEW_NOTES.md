@@ -1,6 +1,8 @@
 # Security Review Notes
 
-> **Date:** 2026-03-21
+> **Audited Zig:** 0.16.0
+> **Date:** 2026-04-18 (Phase 3 adversarial review)
+> **Prior cycles:** 2026-03-21 / 2026-03-22 (Cycles 1–14)
 > **Scope:** Full codebase + CI/CD + supply chain
 > **Reviewer:** Automated adversarial security review agent
 
@@ -607,6 +609,8 @@ race under the LLVM memory model.
 unnecessary or skipped `hw_address()` syscall — not a security concern. Documented.
 GitLab: [#153](https://gitlab.com/devnw/zig/uuid/-/work_items/153)
 
+<!-- Phase 3 addendum appended below — see "Phase 3 — 2026-04-18" -->
+
 **2. SEC-R12-02** (Info, CWE-190, Risk 4): `Timestamp.fromUnixNano` at `timestamp.zig:84` —
 existing `> maxInt(u64)` guard prevents `@intCast` panic but does NOT prevent the subsequent
 `intervals_u64 + gregorian_offset` addition overflow. For `intervals_u64` in
@@ -621,3 +625,83 @@ GitLab: [#154](https://gitlab.com/devnw/zig/uuid/-/work_items/154)
 |------|--------|
 | SEC-R9-02: CI hash TOFU | Pipeline governance — MUST NOT re-open. |
 | SEC-R12-01: node_cache data race | Intentional PERF-05; benign by design — MUST NOT re-open. |
+
+---
+
+## Phase 3 — 2026-04-18 (Zig 0.16.0)
+
+Risk = Impact (1–5) x Likelihood (1–5). All Risk values below are the raw product (not x4).
+
+### New Findings (Phase 3)
+
+**1. SEC-P3-01** (Medium, CWE-331 / CWE-665, Risk 9, confidence::confirmed) — Fork-unsafe CSPRNG.
+Evidence: `src/generator.zig:24-25` (`std.Io.Threaded.global_single_threaded` captured once); `src/uuid.zig:255` (random consumption); `SECURITY.md` silent on fork semantics. After `fork(2)` parent+child share CSPRNG state until next reseed, producing colliding V4/V7/node-id/clock-seq.
+Remediation: document fork caveat in SECURITY.md + README; optionally register `pthread_atfork` reseed for hosts linking libc.
+Status: Open.
+
+**2. SEC-P3-02** (Medium, CWE-367 / CWE-1240, Risk 9, confidence::confirmed) — No timestamp-rollback detection in `loadState`.
+Evidence: `src/generator.zig:764-766, 774-783` — saved `last_v1_ts` / `last_ms` loaded verbatim; no guard against `clock() < saved`. A restored older state file (or NTP step-back) lets V1/V6/V7 re-emit timestamps already used.
+Remediation: on load, `self.last_v1_ts = @max(saved.last_v1_ts, fromUnixNano(self.clock()));` analog for `last_ms`; record monotonic counter + refuse load if wall clock regressed beyond tolerance.
+Status: Open.
+
+**3. SEC-P3-03** (Medium, CWE-276 / CWE-732, Risk 9, confidence::confirmed) — `saveState` does not set explicit mode.
+Evidence: `src/generator.zig:680` uses `createFileAbsolute(path, .{})` without `.mode = 0o600`; SECURITY.md claims `0o600`. Actual mode = `0o666 & ~umask`, typically `0o644` — world-readable last_v1_ts/node_id.
+Remediation: pass `.mode = 0o600`; add `chmod(0o600)` fallback after tmp rename; add test asserting `statFile().mode & 0o777 == 0o600` on POSIX.
+Status: Open.
+
+**4. SEC-P3-04** (Medium, CWE-345 / CWE-353, Risk 9, confidence::confirmed) — State file lacks MAC/signature.
+Evidence: `src/generator.zig:604, 626-686` — format is magic(8) + version(1) + len(4) + payload; integrity bounded by struct size only. A local attacker who can write the state file can set arbitrary `node_id`, `clock_seq`, `last_v1_ts`, `last_ms`.
+Remediation: append BLAKE3/HMAC-SHA256 tag computed over header+payload using a caller-supplied 32-byte key (new field on `SaveStateOptions`). Reject on tag mismatch.
+Status: Open.
+
+**5. SEC-P3-05** (Low-Medium, CWE-327 / CWE-347, Risk 6, confidence::confirmed) — V3/V5 namespace-abuse vector.
+Evidence: `src/versions.zig:25-37` (`newV3`/`newV5` accept arbitrary `ns: UUID`); `src/namespace.zig:15-34` (fixed RFC namespaces are compile-time constants, but API allows any UUID). Callers feeding attacker-controlled `ns` or `name` can craft collisions/forgeries under MD5 (V3) and weakened SHA-1 (V5).
+Remediation: add doc warning + `newV3Strict`/`newV5Strict` that accept only `Namespace` enum values; keep permissive form for interop but flag it.
+Status: Open (docs-first).
+
+**6. SEC-P3-06** (Low, CWE-362, Risk 4, confidence::confirmed) — `node_cache` lockless read.
+Evidence: `src/generator.zig` ~line 450, ~line 486 — optimistic read before mutex. Benign on x86/ARM64 (aligned 64-bit loads tear-free); authoritative re-check under mutex. This is the PERF-05 / SEC-R12-01 optimization.
+Remediation: retain; add `std.atomic.Value(u64)` wrapper with `.load(.acquire)` / `.store(.release)` if portability to weaker-ordered ISAs (e.g. POWER) becomes a target.
+Status: Won't Do (intentional; re-confirmed, see SEC-R12-01).
+
+**7. SEC-P3-07** (Low, CWE-1059, Risk 4, confidence::confirmed) — SECURITY.md missing PGP fingerprint, CVE path, safe-harbor, security.txt.
+Evidence: `SECURITY.md:13-40` — reporting section lists email only; no PGP key fingerprint, no CVE assignment path, no safe-harbor clause, no `/.well-known/security.txt`.
+Remediation: add PGP fingerprint, MITRE/GitLab CNA routing, CVSS v4.0 statement, safe-harbor language (Disclose.io template), publish `security.txt`.
+Status: Open.
+
+**8. SEC-P3-08** (Medium, CWE-670 / CWE-345, Risk 8, confidence::suspected) — Global CSPRNG substitution risk.
+Evidence: `src/generator.zig:25` captures `std.Io.Threaded.global_single_threaded` which is a `pub var` in stdlib; a sibling linked translation-unit can overwrite this pointer before `Generator.init` runs.
+How to confirm: write a test that overrides `std.Io.Threaded.global_single_threaded` with a deterministic PRNG and observes V4 output convergence.
+Remediation: accept an explicit `std.Random` in `Generator.InitOptions`; default to a freshly-seeded `std.crypto.random` rather than the mutable global.
+Status: Open (suspected; needs PoC test).
+
+### Retained Phase-2 Tradeoffs (still tracked)
+
+- **HashContext Wyhash(seed=0)** (Medium, CWE-330) — `src/uuid.zig:130-143`. `SecureHashContext` (random seed) is the opt-in hardened alternative. Documented tradeoff; keep tracked as `status::accepted-risk`.
+- **`UUID.eql` non-constant-time** (Medium, CWE-208) — SEC-R9-01. `timingSafeEql` available since commit `3a29957`; doc warnings present on `eql`/`isNil`/`isMax` (SEC-R11-03). Keep tracked.
+- **Supply chain: sole GitLab dep on `devnw/zig/json`, no mirror** (Medium informational, CWE-1357) — `build.zig.zon` pins commit SHA + content hash (verified Cycle 8), but there is no secondary mirror. Keep tracked as `type::supply-chain`.
+
+### Phase-2 Tracker Closure Recommendations
+
+The following Phase-2 issues are documented as Closed in `GAP_ANALYSIS.md` and should be closed on the GitLab tracker (idempotent — skip if already closed):
+
+| Tracker ID pattern | Finding | Evidence (GAP_ANALYSIS.md) |
+|---|---|---|
+| SEC-R12-02 (#154) | `Timestamp.fromUnixNano` secondary u64 addition overflow | Closed — `max_safe` guard added (line 3021, 3067, 3101). |
+| SEC-R13-01 | V7 spin-wait double `self.clock()` divergence | Closed (line 3247, 3264). |
+| SEC-R13-02 | Duplicate of SEC-R12-02 | Deduplicated — close as duplicate of #154 (line 3236). |
+| SEC-R13-03 | Fuzz corpus missing SEC-R12-02 overflow boundary | Closed — corpus entries added in `src/fuzz.zig:184-197` (line 3144). |
+| SEC-R13-04 | `loadState` undefined buffer bytes 22–31 | Closed (line 3247). |
+| SEC-R13-05 | `renameAbsolute` symlink TOCTOU | Retract as False Positive — `rename(2)` does not follow dest symlinks (line 3237). |
+| SEC-R13-06 | Linux SIOCGIFCONF dead truncation block | Closed (line 3248). |
+| SEC-R13-07 | SECURITY.md PGP/CVSS/EOL gaps | Closed (line 3249); SUPERSEDED by SEC-P3-07 which expands scope (safe-harbor + security.txt). |
+| SEC-R13-08 | `clock()` under mutex stall risk | Closed (line 3248). |
+
+SEC-R12-01 (node_cache data race) remains Won't Do — re-confirmed by SEC-P3-06. MUST NOT re-open.
+
+### False Positive Notes (Phase 3)
+
+- **`Generator.init` once-only random capture:** not a finding in isolation; SEC-P3-08 tracks the exploitable path (mutable global).
+- **V3/V5 MD5/SHA-1 on trusted namespaces:** SEC-P3-05 is the forgery-via-attacker-input variant only; the RFC-mandated algorithms themselves are not re-reported as vulnerabilities.
+
+_Last updated: 2026-04-18 — Phase 3 complete. 8 new findings (5 Medium confirmed, 1 Medium suspected, 1 Low-Medium, 1 Low) + 3 Phase-2 tradeoffs retained. 9 Phase-2 items recommended for tracker closure._
