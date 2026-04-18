@@ -823,12 +823,12 @@ Remediation: in Debug builds, assert against a known-weak-PRNG fingerprint (firs
 | Gap-ID | Severity | Risk | Session plan | One-commit? |
 | ------ | -------- | ---- | ------------ | ----------- |
 | SEC-P4-01 | HIGH | 7.4 | ⚠️ Requires user sign-off (InitOptions.state_mac_policy default = .require_mac_when_keyed is a **default-behavior change**). | Separate PR; pair with migration helper + changelog entry. |
-| SEC-P4-02 | Medium | 5.1 | Implementable this session; one commit. | Yes. |
+| SEC-P4-02 | Medium | 5.1 | ✅ Closed 2026-04-18 (`6e1e37d` fix + guard `60690e6`) — pointer-capture via the optional-payload pointer syntax eliminates the 32-byte stack spill. | Yes. |
 | SEC-P4-03 | Medium | 4.6 | Implementable this session; one commit. | Yes. |
 | SEC-P4-04 | Low | 3.2 | Follow-up cycle (API addition). | No — coordinate with namespace docs. |
-| SEC-P4-05 | Low | 2.0 | Close-in-session (doc only). | Folded into SEC-P4-04 or standalone doc commit. |
-| SEC-P4-06 | Low | 2.0 | Close-in-session (file additions). | Yes. |
-| SEC-P4-07 | Low | 1.8 | Close-in-session (chmod). | Folded into SEC-P4-06 commit. |
+| SEC-P4-05 | Low | 2.0 | ✅ Closed 2026-04-18 (`cfc4753`) — CWE-347 callout + safe/unsafe example patterns in `src/namespace.zig`. | Standalone doc commit. |
+| SEC-P4-06 | Low | 2.0 | ✅ Closed 2026-04-18 (`1cf5773`) — `Canonical:` + `Acknowledgments:` in `security.txt`; `## Acknowledgements` section in `SECURITY.md`. | Yes. |
+| SEC-P4-07 | Low | 1.8 | ✅ Closed 2026-04-18 (`1cf5773`, folded with -06) — `chmod 0644` on working tree; git stores 100644 regardless. | Folded into SEC-P4-06 commit. |
 | SEC-P4-08 | Low | 1.4 | Follow-up cycle. | Yes. |
 | SEC-P4-09 | Low | 1.5 | Follow-up cycle. | Yes. |
 
