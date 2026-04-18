@@ -82,7 +82,7 @@
 
 ### Architecture
 
-- **Language:** Zig (0.15.2)
+- **Language:** Zig (0.16.0) — superseded from Zig 0.15.2 by Phase-3 header 2026-04-18
 - **Paradigm:** Zero-dependency (pure Zig stdlib); single external dep (`json`) for serialization
 - **Entrypoints:** `src/root.zig` (public API), `src/generator.zig` (core logic)
 - **Auth boundaries:** None (pure library)

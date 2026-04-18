@@ -498,7 +498,7 @@ All items closed. ✅
 - **Tools used**: Source code inspection, `zig build bench -Doptimize=ReleaseFast`, instrumented micro-benchmarks, `glab issue create`
 - **Build confirmed**: 124/124 tests pass at ReleaseFast
 - **Benchmarks run**: `zig build bench -Doptimize=ReleaseFast` (multiple runs for stability); additional micro-benchmarks in `/tmp/`
-- **Optimization level**: ReleaseFast measurements on Linux x86_64 (kernel 6.17, Zig 0.15.2)
+- **Optimization level**: ReleaseFast measurements on Linux x86_64 (kernel 6.17, Zig 0.15.2) — superseded by Phase-3 header 2026-04-18 (current audit: Zig 0.16.0)
 - **Thread model**: Single-threaded benchmark; no concurrent generator contention measured
 - **Key measured values**:
   - `Thread.yield()` (sched_yield): **124 ns/call**
@@ -690,7 +690,7 @@ All Cycle 3 findings are **confidence::confirmed**.
 - **Tools used**: Source code inspection, `zig build bench -Doptimize=ReleaseFast`, standalone micro-benchmarks in `/tmp/fbench/`
 - **Build confirmed**: All tests pass at Debug and ReleaseFast
 - **Benchmarks run**: Official `zig build bench -Doptimize=ReleaseFast` (3 runs) + focused micro-benchmarks for allocating API, vtable dispatch, `newV7AtTime`, uppercase variants, `fromString` formats
-- **Optimization level**: ReleaseFast on Linux x86_64 (kernel 6.17, Zig 0.15.2)
+- **Optimization level**: ReleaseFast on Linux x86_64 (kernel 6.17, Zig 0.15.2) — superseded by Phase-3 header 2026-04-18 (current audit: Zig 0.16.0)
 - **Thread model**: Single-threaded; concurrent contention not measured
 - **Key measured values (Cycle 3)**:
   - `toHexAlloc` (page_allocator): **~1,800–1,900 ns/op**
