@@ -43,7 +43,9 @@ test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
     gen.clock_seq = 0x1234;
     gen.clock_seq_initialized = true;
     gen.last_v1_ts = 0xDEADBEEF;
-    gen.node_cache = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+    // PERF-27: node_cache is now a split atomic-flag + bytes pair.
+    gen.node_cache_bytes = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+    gen.node_cache_valid.store(true, .release);
     // SEC-10: set V7 state that should be persisted.
     gen.last_ms = 1_700_000_000_123;
     gen.mono_seq = 0x0ABC;
@@ -57,7 +59,9 @@ test "Generator.saveState and loadState round-trip (F-9 + SEC-10)" {
     try std.testing.expectEqual(gen.clock_seq, gen2.clock_seq);
     try std.testing.expectEqual(gen.clock_seq_initialized, gen2.clock_seq_initialized);
     try std.testing.expectEqual(gen.last_v1_ts, gen2.last_v1_ts);
-    try std.testing.expectEqualSlices(u8, &(gen.node_cache.?), &(gen2.node_cache.?));
+    try std.testing.expect(gen.node_cache_valid.load(.acquire));
+    try std.testing.expect(gen2.node_cache_valid.load(.acquire));
+    try std.testing.expectEqualSlices(u8, &gen.node_cache_bytes, &gen2.node_cache_bytes);
 
     // PERF-04 + SEC-10: gen.last_ms (Nov 2023) is well in the past, so the
     // clock-advance branch fires and both V7 fields are reset to zero.
@@ -505,7 +509,9 @@ test "Generator.reseed: clears clock_seq / mono_seq / node_cache (SEC-P3-01)" {
     gen.last_v1_ts = 0xDEAD_BEEF;
     gen.last_ms = 1_700_000_000_000;
     gen.mono_seq = 0x0ABC;
-    gen.node_cache = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+    // PERF-27: node_cache is the split atomic-flag + bytes pair.
+    gen.node_cache_bytes = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+    gen.node_cache_valid.store(true, .release);
     gen.last_node = .{ 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
 
     gen.reseed();
@@ -515,7 +521,7 @@ test "Generator.reseed: clears clock_seq / mono_seq / node_cache (SEC-P3-01)" {
     try std.testing.expectEqual(@as(u60, 0), gen.last_v1_ts);
     try std.testing.expectEqual(@as(i64, 0), gen.last_ms);
     try std.testing.expectEqual(@as(u12, 0), gen.mono_seq);
-    try std.testing.expect(gen.node_cache == null);
+    try std.testing.expect(!gen.node_cache_valid.load(.acquire));
     try std.testing.expect(gen.last_node == null);
 }
 

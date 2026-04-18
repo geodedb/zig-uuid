@@ -141,11 +141,53 @@ pub const Generator = struct {
     last_v1_ts: u60 = 0,
 
     /// Cached node ID for V1/V6 generation (F-4 + F-6/G-6).
-    /// null = not yet fetched; populated on first V1/V6 call.
-    node_cache: ?[6]u8 = null,
+    ///
+    /// PERF-27 (CWE-362): the cold-path `hasNodeCache()` fast-path reads
+    /// this cache outside `v1v6_mutex` to decide whether the caller must
+    /// pre-fetch a node ID. A plain read of an `?[6]u8` in parallel with
+    /// the writer under the lock is a data race. Instead we split the
+    /// logical "cache" into a valid-flag plus a byte buffer:
+    ///   - `node_cache_valid` is a `std.atomic.Value(bool)` — readers
+    ///     acquire-load it; writers under the lock store true with
+    ///     release order AFTER populating `node_cache_bytes`.
+    ///   - `node_cache_bytes` is read only when the flag is true;
+    ///     the acquire/release pair provides the happens-before edge
+    ///     that makes the byte read safe.
+    /// Under the lock, code uses `storeNodeCache`, `loadNodeCacheBytes`,
+    /// and `clearNodeCacheLocked` helpers to keep the two fields coherent.
+    node_cache_valid: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    node_cache_bytes: [6]u8 = [_]u8{0} ** 6,
 
     /// Previously-used node ID for change detection (F-4).
     last_node: ?[6]u8 = null,
+
+    /// PERF-27 fast-path: is the node cache populated? Acquire-loads the
+    /// atomic flag so a subsequent `loadNodeCacheBytes` under the lock is
+    /// guaranteed to read the bytes written by the last storeNodeCache.
+    inline fn hasNodeCache(self: *Generator) bool {
+        return self.node_cache_valid.load(.acquire);
+    }
+
+    /// Caller MUST hold `v1v6_mutex`. Returns the cached bytes; only valid
+    /// when `hasNodeCache()` previously returned true (or the same mutex
+    /// section wrote them).
+    inline fn loadNodeCacheBytes(self: *Generator) [6]u8 {
+        return self.node_cache_bytes;
+    }
+
+    /// Caller MUST hold `v1v6_mutex`. Writes the bytes then publishes the
+    /// valid-flag with release order so that any reader that acquire-loads
+    /// `node_cache_valid == true` observes the matching bytes.
+    inline fn storeNodeCache(self: *Generator, node: [6]u8) void {
+        self.node_cache_bytes = node;
+        self.node_cache_valid.store(true, .release);
+    }
+
+    /// Caller MUST hold `v1v6_mutex`. Drops the cached node; next
+    /// `hasNodeCache()` returns false until a subsequent storeNodeCache.
+    inline fn clearNodeCacheLocked(self: *Generator) void {
+        self.node_cache_valid.store(false, .release);
+    }
 
     /// Create a new generator with default clock (std.time.nanoTimestamp),
     /// CSPRNG (std.crypto.random), and random multicast node ID.
@@ -189,7 +231,7 @@ pub const Generator = struct {
     pub fn clearNodeCache(self: *Generator) void {
         self.v1v6_mutex.lockUncancelable(gio());
         defer self.v1v6_mutex.unlock(gio());
-        self.node_cache = null;
+        self.clearNodeCacheLocked();
     }
 
     /// SEC-P3-01 (CWE-331 / CWE-665): clear all CSPRNG-derived cached state
@@ -225,7 +267,7 @@ pub const Generator = struct {
         self.last_v1_ts = 0;
         self.last_ms = 0;
         self.mono_seq = 0;
-        self.node_cache = null; // forces node re-fetch (and re-randomise if default)
+        self.clearNodeCacheLocked(); // forces node re-fetch (and re-randomise if default)
         self.last_node = null;
     }
 
@@ -465,9 +507,11 @@ pub const Generator = struct {
     }
 
     fn getNode(self: *Generator) Error![6]u8 {
-        if (self.node_cache) |n| return n;
+        // Caller holds v1v6_mutex (per resolveV1V6State); loadNodeCacheBytes
+        // is consistent with storeNodeCache under the same lock.
+        if (self.hasNodeCache()) return self.loadNodeCacheBytes();
         const node = try self.fetchRawNode();
-        self.node_cache = node;
+        self.storeNodeCache(node);
         return node;
     }
 
@@ -496,9 +540,11 @@ pub const Generator = struct {
             self.clock_seq = (self.clock_seq +% 1) & 0x3FFF;
         }
         self.last_v1_ts = ts.value;
-        // Populate cache under lock if it was null (double-check for concurrent warmup).
-        if (self.node_cache == null) {
-            self.node_cache = prefetched orelse try self.fetchRawNode();
+        // Populate cache under lock if it was empty (double-check for concurrent warmup).
+        // PERF-27: hasNodeCache reads the atomic flag under the lock (.acquire
+        // is strictly stronger than needed here but cheap on x86/arm64).
+        if (!self.hasNodeCache()) {
+            self.storeNodeCache(prefetched orelse try self.fetchRawNode());
         }
         // F-4: detect node ID change and increment clock_seq
         const old_node = self.last_node;
@@ -531,7 +577,9 @@ pub const Generator = struct {
         // blocking all threads during OS syscalls (socket + ioctl on Linux,
         // getifaddrs on macOS).  fetchRawNode reads only immutable generator
         // fields so it is safe without the lock.
-        const prefetched: ?[6]u8 = if (self.node_cache == null)
+        // PERF-27: fast-path probe is now an acquire-load of the atomic valid
+        // flag, making the unsynchronised read data-race-free (TSan-clean).
+        const prefetched: ?[6]u8 = if (!self.hasNodeCache())
             try self.fetchRawNode()
         else
             null;
@@ -567,7 +615,8 @@ pub const Generator = struct {
     /// Same error surface as `newV1AtTime`.
     pub fn newV6AtTime(self: *Generator, ts: Timestamp) Error!UUID {
         // PERF-05: Pre-fetch node outside the mutex on the cold path.
-        const prefetched: ?[6]u8 = if (self.node_cache == null)
+        // PERF-27: fast-path is an atomic acquire-load of node_cache_valid.
+        const prefetched: ?[6]u8 = if (!self.hasNodeCache())
             try self.fetchRawNode()
         else
             null;
@@ -844,13 +893,15 @@ pub const Generator = struct {
 
             var flags: u8 = 0;
             if (self.clock_seq_initialized) flags |= 0x01;
-            if (self.node_cache != null) flags |= 0x02;
+            const has_node = self.hasNodeCache();
+            if (has_node) flags |= 0x02;
             buf[5] = flags;
 
             std.mem.writeInt(u16, buf[6..8], @as(u16, self.clock_seq), .little);
             std.mem.writeInt(u64, buf[8..16], @as(u64, self.last_v1_ts), .little);
-            if (self.node_cache) |n| {
-                @memcpy(buf[16..22], &n);
+            if (has_node) {
+                const bytes = self.loadNodeCacheBytes();
+                @memcpy(buf[16..22], &bytes);
             } else {
                 @memset(buf[16..22], 0);
             }
@@ -1023,9 +1074,9 @@ pub const Generator = struct {
             self.last_v1_ts = saved_v1_ts;
         }
         if ((flags & 0x02) != 0) {
-            self.node_cache = buf[16..22][0..6].*;
+            self.storeNodeCache(buf[16..22][0..6].*);
         } else {
-            self.node_cache = null;
+            self.clearNodeCacheLocked();
         }
 
         // PERF-04 + SEC-10: restore V7 state only from version-2 files.

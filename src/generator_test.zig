@@ -835,11 +835,14 @@ test "Generator.clearNodeCache holds mutex and generator still works (SEC-R6-01)
 
     // Trigger a V1 call so that node_cache is populated.
     _ = try gen.newV1();
-    try std.testing.expect(gen.node_cache != null);
+    // PERF-27: node cache is now a split atomic-flag + bytes pair; probe via
+    // the atomic valid flag (acquire-load semantics match the generator's
+    // fast-path reader).
+    try std.testing.expect(gen.node_cache_valid.load(.acquire));
 
-    // clearNodeCache must succeed (holds mutex, sets node_cache = null).
+    // clearNodeCache must succeed (holds mutex, clears the atomic flag).
     gen.clearNodeCache();
-    try std.testing.expect(gen.node_cache == null);
+    try std.testing.expect(!gen.node_cache_valid.load(.acquire));
 
     // The generator must still produce valid UUIDs after the cache is cleared.
     // The next V1 call re-resolves the node — cache is warm again after this.
@@ -848,5 +851,5 @@ test "Generator.clearNodeCache holds mutex and generator still works (SEC-R6-01)
     try std.testing.expectEqual(Variant.rfc9562, u.variant());
 
     // node_cache must have been repopulated.
-    try std.testing.expect(gen.node_cache != null);
+    try std.testing.expect(gen.node_cache_valid.load(.acquire));
 }
