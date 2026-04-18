@@ -47,6 +47,7 @@ pub fn main() !void {
     try benchFromStringURN();
     try benchEql();
     try benchTimingSafeEql();
+    try benchV7Contention();
 }
 
 fn benchV4() !void {
@@ -430,4 +431,92 @@ fn report(name: []const u8, start: i128) void {
         ns_per_op,
         ops_per_sec,
     });
+}
+
+// =============================================================================
+// PERF-22: multi-threaded V7 contention benchmark.
+//
+// Spawns `getCpuCount()` worker threads, each calling `newV7` for a fixed
+// iteration count on a SHARED `Generator`.  Measures aggregate throughput
+// and wall-clock time so PERF-21 (lock-free CAS V7) has a regression gate
+// without needing a dedicated repro harness.
+// =============================================================================
+
+const contention_iters_per_thread: usize = 200_000;
+
+const V7ContentionCtx = struct {
+    gen: *uuid.Generator,
+    iters: usize,
+    sink: u8,
+    err: ?anyerror = null,
+};
+
+fn v7ContentionWorker(ctx: *V7ContentionCtx) void {
+    var sink: u8 = 0;
+    var i: usize = 0;
+    while (i < ctx.iters) : (i += 1) {
+        const u = ctx.gen.newV7() catch |e| {
+            ctx.err = e;
+            return;
+        };
+        sink ^= u.bytes[0];
+    }
+    ctx.sink = sink;
+}
+
+fn benchV7Contention() !void {
+    const thread_count_raw: usize = std.Thread.getCpuCount() catch 8;
+    // Clamp to a reasonable upper bound so wildly-large CPU counts (e.g.,
+    // 256-core servers) do not produce misleading numbers dominated by
+    // scheduler noise; the benchmark is meant to characterise contention,
+    // not system saturation.
+    const thread_count: usize = if (thread_count_raw > 32) 32 else thread_count_raw;
+
+    var shared_gen = uuid.Generator.init();
+    var alloc_buf: [32 * (@sizeOf(V7ContentionCtx) + @sizeOf(std.Thread))]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&alloc_buf);
+    const alloc = fba.allocator();
+
+    const ctxs = try alloc.alloc(V7ContentionCtx, thread_count);
+    defer alloc.free(ctxs);
+    const threads = try alloc.alloc(std.Thread, thread_count);
+    defer alloc.free(threads);
+
+    for (ctxs) |*c| {
+        c.* = .{
+            .gen = &shared_gen,
+            .iters = contention_iters_per_thread,
+            .sink = 0,
+        };
+    }
+
+    const start = nanoTimestamp();
+    for (threads, 0..) |*t, i| {
+        t.* = try std.Thread.spawn(.{}, v7ContentionWorker, .{&ctxs[i]});
+    }
+    for (threads) |t| t.join();
+    const elapsed = nanoTimestamp() - start;
+
+    // Surface per-worker errors (RandomError, InvalidTimestamp) without
+    // masking the headline throughput.
+    for (ctxs) |c| if (c.err) |e| return e;
+
+    const total_ops: i128 = @as(i128, @intCast(thread_count)) *
+        @as(i128, @intCast(contention_iters_per_thread));
+    const ns_per_op = if (total_ops > 0) @divTrunc(elapsed, total_ops) else 0;
+    const ops_per_sec = if (elapsed > 0)
+        @divTrunc(total_ops * 1_000_000_000, elapsed)
+    else
+        0;
+    const wall_ms = @divTrunc(elapsed, 1_000_000);
+
+    std.debug.print(
+        "v7Contend/{d}T  {d:>6} ns/op  {d:>12} ops/s  (wall {d} ms, {d} total ops)\n",
+        .{ thread_count, ns_per_op, ops_per_sec, wall_ms, total_ops },
+    );
+
+    // Defeat DCE — the workers' sink bytes must be observable.
+    var total_sink: u8 = 0;
+    for (ctxs) |c| total_sink ^= c.sink;
+    std.mem.doNotOptimizeAway(total_sink);
 }
