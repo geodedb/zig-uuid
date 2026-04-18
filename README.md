@@ -17,24 +17,32 @@ A fully RFC-9562-compliant UUID library for Zig.
 
 ### Using Zig Package Manager
 
-Add to your `build.zig.zon`:
+**Recommended:** use `zig fetch --save` — it downloads the archive, computes
+the content hash, and writes a correctly-formed `build.zig.zon` entry for you
+in one step:
+
+```bash
+zig fetch --save https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.0/uuid-v0.1.0.tar.gz
+```
+
+After this runs, your `build.zig.zon` will contain an entry that looks
+approximately like the block below. The `.hash` value is **content-addressed**
+— `zig fetch` derives it from the downloaded tarball, so you should not
+hand-edit it or copy it from documentation. The snippet below is for
+reference only:
 
 ```zig
 .dependencies = .{
     .uuid = .{
         .url = "https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.0/uuid-v0.1.0.tar.gz",
-        // Run: zig fetch https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.0/uuid-v0.1.0.tar.gz
-        // and paste the printed hash here.
-        .hash = "<hash printed by zig fetch>",
+        .hash = "<populated by `zig fetch --save`>",
     },
 },
 ```
 
-Or use `zig fetch --save` to add it automatically:
-
-```bash
-zig fetch --save https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.0/uuid-v0.1.0.tar.gz
-```
+> Note: v0.1.0 is unreleased; until the tag is published, point `.url` at a
+> specific commit archive (`.../archive/<sha>.tar.gz`) and re-run
+> `zig fetch --save` to refresh the hash.
 
 Then in your `build.zig`:
 
