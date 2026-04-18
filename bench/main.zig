@@ -17,7 +17,6 @@ const iters: usize = 1_000_000;
 // Sub-nanosecond operations need more iterations to get measurable results.
 const fast_iters: usize = 100_000_000;
 
-
 // std.time.nanoTimestamp was removed in Zig 0.16. Use the Io.Clock primitive
 // directly with the library's default single-threaded Io.
 fn nanoTimestamp() i128 {
