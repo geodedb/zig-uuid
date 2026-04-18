@@ -5,11 +5,12 @@
 > Zig version audited: 0.16.0
 > Reviewer: Performance review agent
 >
-> Last updated: 2026-04-18 (Group D closure round — HEAD `f77e7da`; PERF-21 ✅ Closed, PERF-31 ✅ Closed (promoted from Group C partial). Remaining open: **0**.)
+> Last updated: 2026-04-18 (Phase 4 follow-up audit, cycle 2 — HEAD `bcde186`; 7 new findings: PERF-33 through PERF-39. PERF-33/34/35 recommended for in-band closure; PERF-36 deferred pending multi-threaded bench validation.)
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
 > Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
 > Cycle 4 appended: 2026-03-22 (2 new findings: PERF-19 through PERF-20)
 > Cycle 5 appended: 2026-04-18 (12 new findings: PERF-21 through PERF-32 — Phase 2 gap-scanner confirmed PERF-19/PERF-20 closed)
+> Phase 4 follow-up appended: 2026-04-18 (7 new findings: PERF-33 through PERF-39; PERF-29 regression witness)
 
 ---
 
@@ -1245,3 +1246,257 @@ Per-row stddev was 4–12 % at 2T/4T, 3–8 % at 8T/16T — the observed cross-r
 - Requires a stable, isolated runner (see INV-01 recommendations) to avoid arm64 "regressions" that are actually cold-runner noise.
 
 **Status.** ⏸ Tracked — requires CI infrastructure decision (self-hosted vs SaaS arm64 runner); no code work needed in this repo until a runner is available.
+
+---
+
+## Phase 4 follow-up audit (2026-04-18, cycle 2)
+
+> HEAD at scan: `bcde186`. Source-evidence + Phase 3 perf-reviewer cross-check. Two P0 regressions discovered against the PERF-29 fix landed in Group C; three additional follow-ups across durability, concurrency, and cache-line hygiene.
+>
+> Documentation-only update — GitLab issues NOT mutated per caller directive.
+
+### Summary (Phase 4)
+
+| # | PerfSeverity | PerfScore | Confidence | Finding | Component | File:line | In-band? |
+|---|--------------|-----------|------------|---------|-----------|-----------|----------|
+| PERF-33 | **P0** | **100** (5×5×4) | confirmed | PERF-29 regression — `align(64)` pad insufficient; Zig reorders small-aligned fields past `[0]u8 align(64)`; `mono_seq`@204 and `v1v6_mutex`@200 share cache line | `src/generator.zig` cluster layout | generator.zig (Generator struct) | ✅ propose closure |
+| PERF-34 | **P0** | **80** (4×5×4) | confirmed | No offset-witness test enforcing V7/V1V6 cluster cache-line separation | `tests/` or `src/generator_test.zig` | new test | ✅ propose closure |
+| PERF-35 | **P1** | **48** (4×3×4) | confirmed | `saveState` missing `f.sync()` + parent-dir fsync — crash-after-rename leaves zero/torn state file | `src/generator.zig` `saveState` | saveState body | ✅ propose closure |
+| PERF-36 | **P1** | **48** (4×3×4) | suspected | Hybrid spin-then-sleep for lockfree saturation — 7,912 fallbacks × ~1 ms ≈ 8 s serialized at 16T | `src/generator.zig` `newV7Atomic` | fallback branch | ⏸ defer — needs spin_wins histogram |
+| PERF-37 | **P2** | **36** (3×3×4) | confirmed | `v7_lockfree_fallbacks` at generator.zig:184 shares cache line with `last_ms@192` — fetchAdd invalidates line 2 for readers | `src/generator.zig:184` | generator.zig:184 | defer (quick follow-up) |
+| PERF-38 | **P2** | **24** (3×2×4) | suspected | `PrehashedV3/V5.name()` hasher clone is ~88 B (Md5) / ~96 B (Sha1) `@memcpy` — may not pay for itself at <16-byte names | `src/generator.zig` PrehashedV3/V5 | generator.zig (prehashed variants) | defer |
+| PERF-39 | **P3** | **12** (2×3×2)* | confirmed | `saveState` uses `io_h.sleep(..., .real)` wall-clock which NTP may step; `.monotonic` is correct for backoff | `src/generator.zig` `saveState` | saveState retry/backoff | defer (trivial) |
+
+*PERF-39 rescored 2×3×2 intentionally — likelihood is moderate but impact under typical NTP jitter is micro-level.*
+
+**Dropped (reviewer confirmed benign):**
+
+- 4 KiB `tmp_path_buf` stack allocation — acceptable at saveState call frequency.
+- `fillFn` indirect call — benign; skip.
+
+### Detailed findings
+
+#### PERF-33: PERF-29 regression — `align(64)` pad is insufficient to prevent Zig field reordering (P0, confirmed)
+
+**File**: `src/generator.zig` (Generator struct, cluster boundary fields).
+
+Group C closed PERF-29 by inserting an `align(64)`-aligned zero-byte padding field (`_v1v6_pad: [0]u8 align(64)`) between the V7 cluster and the V1/V6 cluster. Phase 3 reviewer verified offsets on HEAD `bcde186` and found the V7 field `mono_seq` had been reordered by the Zig compiler past the `[0]u8 align(64)` boundary and placed at offset `204`, on the same cache line (offsets 192–255) as `v1v6_mutex` at offset `200`.
+
+**Verified offsets**: `@sizeOf(Generator) = 320`; `v1v6_mutex @ 200`; `mono_seq @ 204`. Both live on line 2 (offsets 192–255). False sharing between V7-writer and V1/V6-reader paths is back.
+
+**Root cause**: Zero-size aligned fields (`[0]u8 align(64)`) declare alignment but do not pin a non-zero boundary. Zig's field-reorder pass can (and did) migrate small-aligned fields past such markers because nothing of non-zero size spans the cache-line boundary.
+
+**Fix**: Wrap each cluster in a nested `align(64)` struct (`V7Cluster`, `V1V6Cluster`) so the struct boundaries themselves — which are non-zero — cannot be crossed by field reordering. Concretely:
+
+```zig
+const V7Cluster = struct align(64) {
+    v7_mutex: std.Io.Mutex,
+    last_ms: u64,
+    mono_seq: u16,
+    // ... (V7-only fields)
+};
+const V1V6Cluster = struct align(64) {
+    v1v6_mutex: std.Io.Mutex,
+    node_cache_valid: std.atomic.Value(bool),
+    node_cache_bytes: [6]u8,
+    // ... (V1/V6-only fields)
+};
+```
+
+**Validation plan**:
+
+1. Extend PERF-34 offset-witness (below) — `@offsetOf(Generator, "v7") / 64 != @offsetOf(Generator, "v1v6") / 64`.
+2. `zig build bench-contention` — re-run mixed V7 + V1 workload; expect ≥ the 34 % lockfree win at 32T to stay put (regressed toward ~+5 % before fix) and the mutex-path to stop degrading under mixed load.
+
+**Rollout risk**: Low. Nested-struct wrapping is ABI-neutral for the public API (Generator is not a stable-layout type). Access-site churn is trivial (`self.last_ms` → `self.v7.last_ms`, etc.). One-hour effort.
+
+**In-band recommendation**: ✅ Close in this cycle — cheap (~1 hour), blocks the Group C PERF-29 closure claim, and the witness test (PERF-34) permanently guards against regression.
+
+#### PERF-34: Missing offset-witness test for cluster cache-line separation (P0, confirmed)
+
+**File**: new test case in `src/generator_test.zig` (or co-located alongside `GeneratorInterfaceFor` tests).
+
+Group C's PERF-29 closure shipped without a regression witness. The PERF-33 discovery above is the direct consequence: a layout invariant was asserted in prose but not in a compile-time-or-test assertion.
+
+**Fix**: Add a trivially-cheap test that asserts the clusters land on distinct cache lines:
+
+```zig
+test "PERF-29 witness: V7 and V1V6 clusters do not share a cache line" {
+    const v7_line = @offsetOf(Generator, "v7") / 64;
+    const v1_line = @offsetOf(Generator, "v1v6") / 64;
+    try std.testing.expect(v7_line != v1_line);
+}
+```
+
+**Validation plan**: Test passes on HEAD after PERF-33 fix lands; fails on a naive revert. `zig build test` — no new runtime cost (compile-time constant comparison).
+
+**Rollout risk**: None. Test-only. ~15 minutes.
+
+**In-band recommendation**: ✅ Close in this cycle — pairs with PERF-33.
+
+#### PERF-35: `saveState` missing `f.sync()` + parent-directory fsync (P1, confirmed)
+
+**File**: `src/generator.zig` — `saveState` body. Sequence observed: `writePositionalAll(...)` → `close(...)` → `renameAbsolute(tmp, final)`. No `f.sync(io)` call before close, no parent-directory open+sync+close after rename.
+
+**Root cause**: POSIX rename atomicity guarantees that readers see either the old or new inode, but not that either inode's *contents* are on-disk. A crash between rename and flush can leave:
+
+- The new state file present in the directory but with zero-length / torn contents (data blocks not yet flushed).
+- The directory entry itself unflushed — recovery may not find the rename at all.
+
+For this library, state-file corruption forces the `loadState` fallback path and — depending on the corruption — may silently reset `mono_seq`, re-introducing the PERF-04 spin-wait regression window on restart.
+
+**Fix**:
+
+```zig
+try f.writePositionalAll(io, 0, buf[0..n]);
+try f.sync(io);        // flush file data + metadata
+f.close(io);
+try std.fs.renameAbsolute(tmp_path, final_path);
+// parent-dir fsync so the rename is durable
+var dir = try std.fs.openDirAbsolute(parent, .{});
+defer dir.close();
+try dir.sync(io);
+```
+
+**Validation plan**:
+
+1. Unit test with a simulated crash between rename and exit — use `std.fs.openDirAbsolute` on the parent and assert the renamed file is readable with full expected contents.
+2. `strace -e trace=fsync,rename,write zig build run-save-test` — confirm fsync calls appear in the expected order.
+
+**Rollout risk**: Low. Adds two syscalls per `saveState` invocation (saveState is cold — called on SIGTERM / shutdown path, not in hot generation loop). ~30 minutes.
+
+**In-band recommendation**: ✅ Close in this cycle — durability correctness, cheap.
+
+#### PERF-36: Hybrid spin-then-sleep for lockfree saturation (P1, suspected — needs bench validation)
+
+**File**: `src/generator.zig` — `newV7Atomic` fallback branch when CAS retries exceed threshold.
+
+**Evidence**: 7,912 lockfree fallbacks captured in baseline × ~1 ms serialized sleep ≈ 8 s of aggregate stall at 16 T. Current path goes straight to `Io.sleep` — no bounded spin first.
+
+**Proposed fix**: Bounded `std.atomic.spinLoopHint()` × 64 iterations before falling through to sleep. Gate behind an opt-in `InitOptions.v7_lockfree_hybrid: bool = false` — measure with `spin_wins` / `spin_exhausted` histogram counters before flipping the default.
+
+**Why suspected, not confirmed**: On over-subscribed hosts the spin is pure waste; the win only materializes on under-subscribed (`threads ≤ cores`) workloads. Needs empirical multi-config validation:
+
+- `spin_wins` / `spin_exhausted` ratio captured across 2T/4T/8T/16T/32T.
+- ARM64 re-run (different memory-model cost for the CAS).
+
+**Validation plan**: `zig build bench-contention` with `v7_lockfree_hybrid = true` vs `false`; compare median of 10 across three bench sessions; require ≥ 5 % ops/s improvement at 16T with < 1 % regression at 2T/4T before default-flip.
+
+**Rollout risk**: Medium. CPU-waste regression for under-contention callers is real. Opt-in gate is mandatory on first land.
+
+**In-band recommendation**: ⏸ Defer — needs bench infra (PERF-22 lockfree_fallbacks histogram extension) before a responsible default-flip.
+
+#### PERF-37: `v7_lockfree_fallbacks` counter shares cache line with `last_ms` (P2, confirmed)
+
+**File**: `src/generator.zig:184`.
+
+`v7_lockfree_fallbacks` is declared at line 184 without an explicit `align(64)`. Given the PERF-33 cluster-layout work, the counter currently lives on cache line 2 alongside `last_ms @ 192`. Every fallback path does a `fetchAdd` on the counter, invalidating the line for any thread reading `last_ms` — precisely the field the lockfree fast path reads on every CAS attempt.
+
+**Fix** (one of):
+
+1. Add explicit `align(64)` on `v7_lockfree_fallbacks` to pin it to its own line.
+2. Move the counter (and future siblings) into a dedicated cold-stats sub-struct appended after the V1V6 cluster with its own `align(64)`.
+
+Option 2 scales better as more diagnostics counters land.
+
+**Validation plan**: Re-run `bench-contention` at 16T with the counter moved; expect the per-op mutex-path latency variance to tighten (fewer coherence-miss stalls on `last_ms` loads).
+
+**Rollout risk**: Low. Layout-only change; witness covered by PERF-34's pattern (extend to cover the stats block).
+
+**In-band recommendation**: Defer — quick follow-up in a subsequent small PR after PERF-33 lands. Not strictly blocking.
+
+#### PERF-38: `PrehashedV3/V5.name()` hasher-clone POD copy measurement (P2, suspected)
+
+**File**: `src/generator.zig` — `PrehashedV3.name` / `PrehashedV5.name` (and any other prehashed call sites).
+
+**Evidence**: `var cloned = self.hasher;` is a POD struct copy — `std.crypto.hash.Md5` is ~88 B, `std.crypto.hash.Sha1` is ~96 B. For short names (< 16 B, e.g., short config keys), `@memcpy` cost of the 88/96-byte hasher state approaches or exceeds the fresh `init + update(namespace)` path it was meant to save.
+
+**Proposed work (not a code change yet)**:
+
+1. **POD proof test**: `comptime std.debug.assert(@typeInfo(Md5).Struct.fields` has no pointers) — guards against upstream Zig std refactors that turn the hasher into a non-trivially-copyable type (which would silently change semantics).
+2. **Micro-bench**: add `benchPrehashedV5ShortName` (4-byte name) vs `benchV5ShortName` to `bench/main.zig`. If prehashed < 10 % faster for names < 16 B, add a doc-comment guidance note: "Prehashed variant shines at ≥ 16-byte names; equal or slower below."
+
+**Validation plan**: `zig build bench` — report prehashed-vs-fresh ratio across name sizes {4, 8, 16, 32, 64} bytes. Decide whether the guidance note is needed from the data.
+
+**Rollout risk**: None (measurement + doc-only).
+
+**In-band recommendation**: Defer — non-blocking; schedule alongside next bench-expansion pass.
+
+#### PERF-39: `saveState` uses wall-clock `.real` sleep for retry backoff (P3, confirmed)
+
+**File**: `src/generator.zig` — `saveState` retry/backoff path uses `io_h.sleep(..., .real)`.
+
+**Root cause**: `.real` is wall-clock — NTP steps (leap seconds, time-server re-sync, manual clock adjustments) can cause the sleep to return immediately (step forward) or hang past the intended duration (step backward). For durability-retry backoff, elapsed time since last attempt is the correct semantic — that's `.monotonic`.
+
+**Fix**: Replace `.real` with `.monotonic` in the saveState retry sleep call.
+
+**Validation plan**: No runtime assertion is practical; code review + unit test that mocks clock behavior. Or simply trust the one-line `.real` → `.monotonic` diff — the change is semantically unambiguous.
+
+**Rollout risk**: None. One-line change, strict improvement.
+
+**In-band recommendation**: Defer — trivial to bundle into the PERF-35 fsync commit if desired.
+
+### Closed (recommended for this cycle)
+
+| Gap-ID | Effort | Why close now |
+|--------|--------|---------------|
+| **PERF-33** | ~1 hour | Closes a P0 regression against a Group C closed finding; cluster-struct wrapping is mechanical. |
+| **PERF-34** | ~15 min | Witness test makes PERF-29 + PERF-33 permanently regression-proof. |
+| **PERF-35** | ~30 min | Durability correctness; saveState is cold path so zero hot-path risk. |
+
+**Total effort**: ~1h45. All three pair naturally into a single commit + PR.
+
+### Deferred
+
+- **PERF-36**: Hybrid spin requires `spin_wins`/`spin_exhausted` histogram in bench output + multi-thread-count validation (extend `bench-contention`). Gate behind `v7_lockfree_hybrid: bool = false` on first land; default-flip only after data.
+- **PERF-37**: Quick follow-up PR after PERF-33 — layout-only.
+- **PERF-38**: Measurement + doc-only; schedule with next bench expansion.
+- **PERF-39**: Trivial; can bundle into PERF-35 commit or defer.
+
+### Ready-to-run `glab` commands (documentation-only — DO NOT EXECUTE per directive)
+
+> These are committed for traceability; caller explicitly requested no GitLab mutation this cycle.
+
+```bash
+# PERF-33 (P0, confirmed) — regression of PERF-29
+glab issue create --title "PERF-33: PERF-29 regression — align(64) pad insufficient; Zig reorders fields past [0]u8 align(64)" \
+  --label "performance,perf-severity::P0,category::perf,confidence::confirmed,status::triage,regression" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Phase 4 PERF-33. Fix: wrap each cluster in nested align(64) struct (V7Cluster, V1V6Cluster). Pairs with PERF-34 witness test."
+
+# PERF-34 (P0, confirmed) — witness test
+glab issue create --title "PERF-34: Add offset-witness test for V7/V1V6 cluster cache-line separation" \
+  --label "performance,perf-severity::P0,category::perf,confidence::confirmed,status::triage,test-coverage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Phase 4 PERF-34. Fix: assert @offsetOf(Generator, \"v7\")/64 != @offsetOf(Generator, \"v1v6\")/64."
+
+# PERF-35 (P1, confirmed) — saveState durability
+glab issue create --title "PERF-35: saveState missing f.sync() + parent-dir fsync — crash-after-rename torn state file" \
+  --label "performance,perf-severity::P1,category::perf,confidence::confirmed,status::triage,durability" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Phase 4 PERF-35. Fix: f.sync(io) before close + open parent dir, sync, close after renameAbsolute."
+
+# PERF-36 (P1, suspected) — hybrid spin, deferred
+glab issue create --title "PERF-36: Hybrid spin-then-sleep for lockfree saturation — needs spin_wins histogram" \
+  --label "performance,perf-severity::P1,category::perf,confidence::suspected,status::triage,needs-data" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Phase 4 PERF-36. Gate behind InitOptions.v7_lockfree_hybrid=false; requires multi-T bench validation before default flip."
+
+# PERF-37 (P2, confirmed) — counter cache-line
+glab issue create --title "PERF-37: v7_lockfree_fallbacks shares cache line with last_ms — false sharing via fetchAdd" \
+  --label "performance,perf-severity::P2,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Phase 4 PERF-37. Fix: explicit align(64) or move to cold-stats sub-struct."
+
+# PERF-38 (P2, suspected) — prehashed clone cost
+glab issue create --title "PERF-38: PrehashedV3/V5.name() hasher-clone cost — measure vs fresh init+update for short names" \
+  --label "performance,perf-severity::P2,category::perf,confidence::suspected,status::triage,measurement" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Phase 4 PERF-38. Fix: POD proof test + micro-bench across name sizes; add guidance note if needed."
+
+# PERF-39 (P3, confirmed) — saveState sleep clock
+glab issue create --title "PERF-39: saveState retry-backoff uses .real (wall-clock) — should be .monotonic" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md Phase 4 PERF-39. One-line change: io_h.sleep(..., .real) → io_h.sleep(..., .monotonic)."
+```
+
+### Methodology (Phase 4)
+
+- **HEAD**: `bcde186`.
+- **Cross-check**: Phase 3 perf-reviewer agent findings reconciled against tree state; offsets verified via `@sizeOf` / `@offsetOf` at compile time.
+- **Benchmarks run**: None this cycle (source + offset-evidence driven). PERF-36 and PERF-38 explicitly call for new bench runs as their validation gate.
+- **GitLab mutation**: None — per caller directive. All `glab` commands documented above are ready-to-run but not executed.
