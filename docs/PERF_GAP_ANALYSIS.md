@@ -1219,14 +1219,15 @@ Per-row stddev was 4–12 % at 2T/4T, 3–8 % at 8T/16T — the observed cross-r
 
 **Conclusion.** There is no real mutex-vs-lockfree crossover at 4T/8T — the original baseline landed in the lower tail of an ~20 %-wide distribution for those thread counts. The useful signal is that lockfree **consistently** outperforms mutex at 16T and higher; at 2T–8T the two paths are statistically indistinguishable on this host's bench harness. No code change; the default (mutex) stays correct.
 
-**Recommendations for bench-reliability (not urgent).**
+**Recommendations for bench-reliability — implementation status (2026-04-18):**
 
-- Capture perf counters on a CI runner with `kernel.perf_event_paranoid ≤ 1` (or root) to confirm the cache-miss profile matches the hypothesis.
-- Pin bench threads to dedicated cores (`taskset -c 2-17`) and disable CPU frequency scaling (`cpupower frequency-set -g performance`) for the `bench-contention` step.
-- Widen the 7-run × median-of-6 pattern to 15-run × median-of-10 for the contention scenarios specifically — the extra cost (~60 s added) is acceptable since the suite is already gated to manual / main-only.
-- Record `lockfree_fallbacks` count in the regression gate as a secondary signal (spike correlates with contention, so a change in its slope is a leading indicator of a real shift).
+- ⏸ **`kernel.perf_event_paranoid ≤ 1`** — host/CI config; not actionable from the repo. Left for when a privileged bench runner is available.
+- ⏸ **Disable CPU frequency scaling (`cpupower frequency-set -g performance`)** — host/CI config; same ownership as above.
+- ✅ **Pin bench threads to dedicated cores** — `f35cf13` + `8f52b34`. `.gitlab-ci.yml` `bench-regression` job now wraps `zig build bench` and `zig build bench-contention` with `taskset -c 2-N` (N = `min(nproc-1, 17)`) when the runner has ≥ 4 cores. Escape hatch: `BENCH_PIN_CORES=0` disables explicitly. Small runners skip gracefully.
+- ✅ **Widen 7-run × median-of-6 → 15-run × median-of-10 for contention** — `f35cf13`. `ScenarioSpec.run_count` is now overridable per spec; `bench_contention.zig` sets it to 15. Re-captured baseline shows the mutex-vs-lockfree ratio cleanly converging: 2T 1.02×, 4T 1.11×, 8T 1.04×, 16T 1.06× — lockfree now wins at every thread count, confirming the original "crossover" was noise. Stddev at 4T dropped 11 % → 5 %. Cost: ~55 s added per `bench-contention` invocation (manual / main-gated, acceptable).
+- ✅ **`lockfree_fallbacks` as secondary regression signal** — `0fc3135`. `compare.zig` emits a `WARN` line when baseline `lockfree_fallbacks ≥ 100` and the candidate drifts > 50 %. Warnings do NOT fail the process; they surface a leading-indicator change across captures for reviewer attention.
 
-**Status.** ✅ Closed — noise confirmed, no optimization action.
+**Status.** ✅ Closed — noise confirmed; four-of-four in-repo recommendations landed; two infra-level recommendations left for a future privileged-runner follow-up.
 
 ### INV-02 — Cross-architecture baseline capture (CI-infra dependent)
 
