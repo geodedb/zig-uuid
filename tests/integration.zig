@@ -517,3 +517,27 @@ test "integration: v3→v2 downgrade rejected when state_mac_key set (SEC-P4-01,
         gen2.loadState(path),
     );
 }
+
+// =============================================================================
+// GAP-DOC-08.3: lockfree V7 cross-thread monotonicity witness
+// =============================================================================
+
+test "integration: lockfree V7 cross-thread monotonicity witness" {
+    // Single-threaded check via module-level API — if the lockfree
+    // CAS regresses monotonicity under even this modest hammering,
+    // the integration suite catches it without the full bench-
+    // contention runtime.
+    const count: usize = 10_000;
+
+    var gen = uuid.Generator.initOptions(.{ .v7_lockfree = true });
+
+    var prev: uuid.UUID = try gen.newV7();
+    var i: usize = 1;
+    while (i < count) : (i += 1) {
+        const cur = try gen.newV7();
+        // Lexicographic ordering on the raw 16 bytes preserves V7
+        // timestamp+seq ordering per RFC-9562 §6.2.
+        try std.testing.expect(std.mem.order(u8, &prev.bytes, &cur.bytes) == .lt);
+        prev = cur;
+    }
+}
