@@ -188,15 +188,31 @@ pub const Generator = struct {
     /// the first call observes `old_ms = 0` and takes the new-ms branch.
     v7_atomic_state: std.atomic.Value(u64) align(64) = std.atomic.Value(u64).init(0),
 
-    /// SEC-P4-08: counter of saturation fallbacks from the lock-free
-    /// path into the mutex-protected `newV7Locked`.  The field is
-    /// underscore-prefixed (private-by-convention) so callers cannot
-    /// fingerprint contention via direct atomic reads; use
-    /// `lockfreeFallbackCount()` instead.  The accessor documents the
-    /// one-shot observation contract (load once, do not poll at high
-    /// frequency — a spinning reader imposes MESI ping-pong on the
-    /// same cache line that newV7Atomic writes).
-    _v7_lockfree_fallbacks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    /// SEC-P4-08 + PERF-40: diagnostic counters that are written by the
+    /// hot path (saturation fallback) and read by external observers
+    /// (`lockfreeFallbackCount()` / benches).  Wrapped in an `align(64)`
+    /// sub-struct with trailing pad so the counter owns its own cache
+    /// line — earlier (Phase-3) the raw `_v7_lockfree_fallbacks` field
+    /// landed at offset 248 and shared cache line 3 (offsets 192-255)
+    /// with the dispatch-pointer cluster (`clock`, `rand`, `rand_impl`,
+    /// `hwaddr_fn`, `clock_rollback_tolerance_ms`).  Every newV* call
+    /// reads that line; every saturation `fetchAdd` invalidated it on
+    /// all readers (MESI ping-pong on a line the hot path touches on
+    /// every call).  The witness is `test "PERF-40: stats on isolated
+    /// cache line"` in generator_test.zig.
+    ///
+    /// The counter remains nested behind `stats.` so callers cannot
+    /// fingerprint contention via direct atomic reads — public access
+    /// goes through `lockfreeFallbackCount()` (one-shot observation
+    /// contract; do not poll at high frequency).
+    stats: struct {
+        v7_lockfree_fallbacks: std.atomic.Value(u64) align(64) = std.atomic.Value(u64).init(0),
+        // Trailing pad so the sub-struct's total footprint is exactly
+        // one cache line.  Without this, a neighbouring field could
+        // pack into the remaining 56 B of the `align(64)` slot and
+        // re-introduce false sharing on the next bump.
+        _pad: [56]u8 = [_]u8{0} ** 56,
+    } align(64) = .{},
 
     // PERF-19: Two independent mutexes for V7 and V1/V6 clock domains.
     // V7 generation only acquires v7.mutex; V1/V6 generation only acquires
@@ -418,7 +434,7 @@ pub const Generator = struct {
     /// Relaxed load since the counter is a loose contention signal
     /// rather than a synchronising observable.
     pub fn lockfreeFallbackCount(self: *const Generator) u64 {
-        return self._v7_lockfree_fallbacks.load(.monotonic);
+        return self.stats.v7_lockfree_fallbacks.load(.monotonic);
     }
 
     /// Create a new generator with default clock (std.time.nanoTimestamp),
@@ -692,7 +708,7 @@ pub const Generator = struct {
     /// Public-ish for tests (via `@field`) but not re-exported at the
     /// library level.
     inline fn bumpFallback(self: *Generator) void {
-        _ = self._v7_lockfree_fallbacks.fetchAdd(1, .monotonic);
+        _ = self.stats.v7_lockfree_fallbacks.fetchAdd(1, .monotonic);
     }
 
     /// PERF-21: lock-free V7 generation.  See the comment block above for

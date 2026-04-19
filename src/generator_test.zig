@@ -1321,6 +1321,21 @@ test "SEC-P4-A1: bounded CAS retries on frozen clock" {
     try std.testing.expect(saw_invalid_timestamp);
 }
 
+// PERF-40: lock the lockfree-fallback counter onto its own cache line.
+// Phase-3 layout probe found `_v7_lockfree_fallbacks` at offset 248 —
+// shared with the dispatch-pointer cluster (clock @192, rand @200,
+// rand_impl @208, hwaddr_fn @232, clock_rollback_tolerance_ms @240).
+// Every newV* call reads the dispatch line; every saturation fallback
+// writes the counter, invalidating the line on all readers (MESI
+// ping-pong).  Wrap the counter in an `align(64)` `stats` sub-struct
+// with trailing pad to own a full line.  The witness is offset (must
+// be a multiple of 64) and size (must be exactly 64).
+test "PERF-40: stats on isolated cache line" {
+    const off = @offsetOf(Generator, "stats");
+    try std.testing.expect(off % 64 == 0);
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(@FieldType(Generator, "stats")));
+}
+
 test "SEC-P4-09: initOptions accepts a well-formed std.Random (debug assertion passes)" {
     // The known-weak check must accept a well-formed std.Random
     // derived from a CSPRNG — the expected safe source for
