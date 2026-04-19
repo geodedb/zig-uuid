@@ -159,6 +159,11 @@ pub const Generator = struct {
     /// hard-code the key in source.
     state_mac_key: ?[32]u8 = null,
 
+    /// SEC-P4-01: see `StateMacPolicy` + `InitOptions.state_mac_policy`.
+    /// Set via `initOptions`; `init`/`withClock`/`withRand`/`withHWAddr`
+    /// all use the safe default `.require_mac_when_keyed`.
+    state_mac_policy: StateMacPolicy = .require_mac_when_keyed,
+
     /// PERF-21: opt-in lock-free V7 path.  When true, `newV7` updates
     /// monotonicity state via a CAS loop over a packed `(ms:52)|(seq:12)`
     /// `u64` instead of the `v7.mutex`.  The lock-free path is wait-free
@@ -302,6 +307,32 @@ pub const Generator = struct {
         self.node_cache_valid.store(false, .release);
     }
 
+    /// SEC-P4-01: policy controlling how `loadState` handles unauthenticated
+    /// state files (wire-format v1 or v2) when the generator has a
+    /// `state_mac_key` configured.
+    ///
+    /// The default is `.require_mac_when_keyed` — when the caller has set a
+    /// key, only v3 (HMAC-authenticated) files are accepted.  v1/v2 files
+    /// are rejected with `Error.StateVersionDowngrade` so a local attacker
+    /// cannot silently downgrade the file by stripping the trailer.  The
+    /// looser `.any` policy restores the pre-SEC-P4-01 behaviour (v1/v2
+    /// accepted with a `std.log.warn`) for callers mid-rotation; the
+    /// stricter `.require_mac_always` rejects v1/v2 unconditionally, even
+    /// when no key is configured — useful for defense-in-depth in fresh
+    /// deployments that never shipped without HMAC.
+    pub const StateMacPolicy = enum {
+        /// Accept any state-file version; emit a warn on v1/v2 when a key
+        /// is set (legacy behaviour).  Use mid-rotation or during one-shot
+        /// migrations.
+        any,
+        /// Default.  Reject v1/v2 with `Error.StateVersionDowngrade` when
+        /// a `state_mac_key` is configured; accept v1/v2 normally when no
+        /// key is configured.
+        require_mac_when_keyed,
+        /// Reject v1/v2 with `Error.StateVersionDowngrade` unconditionally.
+        require_mac_always,
+    };
+
     /// Options for `Generator.init(opts)` (SEC-P3-08).
     ///
     /// Every field is optional; `.{}` is equivalent to the historical
@@ -348,6 +379,16 @@ pub const Generator = struct {
         /// zero the source buffer immediately after `initOptions` returns.
         state_mac_key: ?[32]u8 = null,
 
+        /// SEC-P4-01: policy controlling unauthenticated-state-file
+        /// acceptance in `loadState`.  Default `.require_mac_when_keyed`
+        /// rejects v1/v2 with `Error.StateVersionDowngrade` when
+        /// `state_mac_key` is set; see `StateMacPolicy` for details.
+        /// **Behaviour change** — pre-SEC-P4-01 callers that relied on
+        /// v1/v2 being accepted with a warn must either set this to
+        /// `.any` explicitly or call `Generator.migrateStateToV3`
+        /// once to upgrade the on-disk file to v3.
+        state_mac_policy: StateMacPolicy = .require_mac_when_keyed,
+
         /// PERF-21: opt into the lock-free V7 path.  Default false keeps
         /// the mutex-protected path (unchanged behaviour).  See
         /// `Generator.v7_lockfree` for algorithmic details.
@@ -372,6 +413,7 @@ pub const Generator = struct {
             .rand_impl = options.random,
             .hwaddr_fn = options.hwaddr_fn,
             .state_mac_key = options.state_mac_key,
+            .state_mac_policy = options.state_mac_policy,
             .v7_lockfree = options.v7_lockfree,
         };
     }
