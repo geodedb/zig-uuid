@@ -824,13 +824,13 @@ Remediation: in Debug builds, assert against a known-weak-PRNG fingerprint (firs
 | ------ | -------- | ---- | ------------ | ----------- |
 | SEC-P4-01 | HIGH | 7.4 | ✅ Closed 2026-04-18 (`0311ff5` error variant, `0b1e916` enum + field, `7b8ac7f` enforcement, `aab1215` migrateStateToV3 helper) — default policy `.require_mac_when_keyed` rejects v1/v2 with `Error.StateVersionDowngrade` when keyed. Migration recipe in CHANGELOG; `migrateStateToV3` provides one-shot upgrade. | Landed; CHANGELOG flags behaviour change. |
 | SEC-P4-02 | Medium | 5.1 | ✅ Closed 2026-04-18 (`6e1e37d` fix + guard `60690e6`) — pointer-capture via the optional-payload pointer syntax eliminates the 32-byte stack spill. | Yes. |
-| SEC-P4-03 | Medium | 4.6 | Implementable this session; one commit. | Yes. |
-| SEC-P4-04 | Low | 3.2 | Follow-up cycle (API addition). | No — coordinate with namespace docs. |
+| SEC-P4-03 | Medium | 4.6 | ✅ Closed 2026-04-18 (`d88b5ce`) — `clock_rollback_tolerance_ms` is now an `InitOptions` field with default tightened to 250 ms, clamped to `[0, 60_000]`. Behaviour change absorbed by one fixture update in the SEC-P3-02 slow-restart test. | Yes. |
+| SEC-P4-04 | Low | 3.2 | ✅ Closed 2026-04-18 (`0d73f3d`) — `Namespace.fromConfig(bytes, origin)` + `registerTrustedNamespaceOrigin` allowlist (append-only, mutex-protected, capacity 16×64-byte). `Error.UnvettedNamespace` when origin is unregistered. | No — coordinate with namespace docs. |
 | SEC-P4-05 | Low | 2.0 | ✅ Closed 2026-04-18 (`cfc4753`) — CWE-347 callout + safe/unsafe example patterns in `src/namespace.zig`. | Standalone doc commit. |
 | SEC-P4-06 | Low | 2.0 | ✅ Closed 2026-04-18 (`1cf5773`) — `Canonical:` + `Acknowledgments:` in `security.txt`; `## Acknowledgements` section in `SECURITY.md`. | Yes. |
 | SEC-P4-07 | Low | 1.8 | ✅ Closed 2026-04-18 (`1cf5773`, folded with -06) — `chmod 0644` on working tree; git stores 100644 regardless. | Folded into SEC-P4-06 commit. |
-| SEC-P4-08 | Low | 1.4 | Follow-up cycle. | Yes. |
-| SEC-P4-09 | Low | 1.5 | Follow-up cycle. | Yes. |
+| SEC-P4-08 | Low | 1.4 | ✅ Closed 2026-04-18 (`f2ee946`) — field renamed to `_v7_lockfree_fallbacks`; public read goes through `Generator.lockfreeFallbackCount()` (.monotonic). Five direct-access call sites migrated. | Yes. |
+| SEC-P4-09 | Low | 1.5 | ✅ Closed 2026-04-18 (`30510ac`) — `assertRandNotKnownWeak` Debug-mode smoke check on `fillFn` address; fully stripped in ReleaseFast via `builtin.mode == .Debug` gate. Pattern-match-against-DefaultPrng deferred (stdlib symbols not stable across revisions). | Yes. |
 
 ### Ready-to-run `glab` commands (documentation-only — **do not execute in this cycle**)
 
