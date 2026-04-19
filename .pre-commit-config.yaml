@@ -115,8 +115,44 @@ repos:
     pass_filenames: false
     stages: [pre-push]
 
+    # QC-116: pre-commit / CI parity. The hooks below mirror the scans
+    # that ran CI-only before: gitleaks (secret scan) at pre-commit, and
+    # `zig build test-integration` + `zig build bench-check` at pre-push.
+    # SAST and SBOM scanners remain CI-only — they rely on the GitLab
+    # component runtime and the scanner containers that are not installed
+    # on developer machines, so reproducing them locally would add a
+    # heavy dependency set that CI already covers.
+  - id: gitleaks
+    name: gitleaks (secret scan)
+    entry: gitleaks
+    args: [detect, --source, ., --config, .gitleaks.toml, --no-banner, --redact]
+    language: system
+    pass_filenames: false
+    stages: [pre-commit]
+
+  - id: zig-test-integration
+    name: zig test-integration
+    entry: zig build test-integration
+    language: system
+    pass_filenames: false
+    files: \.(zig|zon)$
+    exclude: ^(zig-out/|\.zig-cache/)
+    stages: [pre-push]
+
+  - id: zig-bench-check
+    name: zig bench-check (compile-only)
+    entry: zig build bench-check
+    language: system
+    pass_filenames: false
+    files: \.(zig|zon)$
+    exclude: ^(zig-out/|\.zig-cache/)
+    stages: [pre-push]
+
 ci:
   autofix_prs: true
   autofix_commit_msg: '[pre-commit.ci] auto fixes'
   autoupdate_schedule: weekly
-  skip: [zig-fmt, zig-build, zig-test, cross-compile-check]
+  # Zig-requiring hooks cannot run on pre-commit.ci (no Zig toolchain).
+  # gitleaks is skipped on pre-commit.ci as well because CI already runs
+  # the same scan as a dedicated job.
+  skip: [zig-fmt, zig-build, zig-test, cross-compile-check, zig-test-integration, zig-bench-check, gitleaks]
