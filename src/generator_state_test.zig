@@ -806,10 +806,13 @@ test "Generator: v3 with wrong key is rejected timing-safely (SEC-P3-04)" {
 }
 
 test "Generator: v2 file still loads when state_mac_key is set (SEC-P3-04 backward compat)" {
-    // A legacy v2 file must remain loadable when the caller has a key,
-    // so existing deployments migrating to HMAC can roll forward without
-    // re-writing state.  The library emits std.log.warn for operator
-    // visibility (not asserted here).
+    // A legacy v2 file must remain loadable when the caller has a key
+    // AND opts into the .any policy, so existing deployments migrating
+    // to HMAC can roll forward without re-writing state.  Under the
+    // SEC-P4-01 default (.require_mac_when_keyed) a v2 file with a key
+    // is rejected with Error.StateVersionDowngrade — see the
+    // SEC-P4-01 tests below.  The library emits std.log.warn for
+    // operator visibility under .any (not asserted here).
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -835,9 +838,14 @@ test "Generator: v2 file still loads when state_mac_key is set (SEC-P3-04 backwa
     defer fh.close(io);
     try fh.writePositionalAll(io, &blob, 0);
 
-    // Generator with a key must still accept the v2 file (with a warn).
+    // Generator with a key + .any policy must still accept the v2 file
+    // (with a warn).  This preserves the pre-SEC-P4-01 behaviour behind
+    // an explicit opt-in.
     const key: [32]u8 = .{0xA5} ** 32;
-    var gen = Generator.initOptions(.{ .state_mac_key = key });
+    var gen = Generator.initOptions(.{
+        .state_mac_key = key,
+        .state_mac_policy = .any,
+    });
     try gen.loadState(path);
     try std.testing.expectEqual(@as(u14, 0x1122), gen.v1v6.clock_seq);
 }

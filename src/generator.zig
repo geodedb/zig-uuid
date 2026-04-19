@@ -1577,14 +1577,44 @@ pub const Generator = struct {
             if (!std.crypto.timing_safe.eql([state_mac_size]u8, expected, trailer.*)) {
                 return Error.StateMacMismatch;
             }
-        } else if (self.state_mac_key != null) {
-            // v1/v2 accepted for backward compat, but inform the operator
-            // that the state file is unauthenticated despite a key being
-            // configured (SEC-P3-04 backward-compat warning).
-            std.log.warn(
-                "uuid: loaded unauthenticated state file (version {d}); state_mac_key is set but file has no HMAC trailer",
-                .{file_version},
-            );
+        } else {
+            // SEC-P4-01: enforce state_mac_policy against unauthenticated
+            // versions.  The authoritative decision tree is:
+            //
+            //   .any               → always accept; emit a warn when
+            //                         a key is set but the file has no
+            //                         tag, matching the pre-SEC-P4-01
+            //                         behaviour.
+            //   .require_mac_when_keyed (default)
+            //                      → reject with StateVersionDowngrade
+            //                         when a key is set; accept freely
+            //                         when no key is set.
+            //   .require_mac_always
+            //                      → reject with StateVersionDowngrade
+            //                         unconditionally.
+            //
+            // Rejection is tamper-resistant: a local attacker cannot
+            // downgrade a v3 file to v2 by stripping the trailer, since
+            // loadState now refuses to consume the stripped file under
+            // the default policy.
+            switch (self.state_mac_policy) {
+                .any => {
+                    if (self.state_mac_key != null) {
+                        std.log.warn(
+                            "uuid: loaded unauthenticated state file (version {d}); state_mac_key is set but file has no HMAC trailer",
+                            .{file_version},
+                        );
+                    }
+                },
+                .require_mac_when_keyed => {
+                    if (self.state_mac_key != null) {
+                        return Error.StateVersionDowngrade;
+                    }
+                },
+                .require_mac_always => {
+                    return Error.StateVersionDowngrade;
+                },
+            }
         }
 
         // SEC-R13-08 (CWE-833): Read the clock BEFORE acquiring the mutex.
