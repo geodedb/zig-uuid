@@ -181,8 +181,11 @@ pub fn main() !void {
 | `NullUUID.from(u) NullUUID` | Wrap a UUID value (valid = true) |
 | `nu.value() ?UUID` | Returns `?UUID` — null if not valid |
 | `nu.format(w) !void` | Format as canonical UUID string or `"null"` via `{f}` specifier |
-| `nu.jsonMarshal(alloc) !json.Value` | Marshal to JSON string or `json.Value.null` |
-| `NullUUID.jsonUnmarshal(alloc, v) !NullUUID` | Unmarshal from JSON string or null value |
+
+JSON marshal / unmarshal for `NullUUID` live in the separate `uuid_json`
+module as free functions (`nullUuidJsonMarshal` / `nullUuidJsonUnmarshal`)
+so the core `uuid` module does not import `json`. See
+[JSON Adapter](#json-adapter) below for signatures and usage.
 
 ### Generator
 
@@ -217,6 +220,32 @@ Both refer to the same values; prefer the shorter `uuid.nil`/`uuid.max` form.
 | Constant | Description |
 |----------|-------------|
 | `uuid.version` | Library version string (e.g. `"0.1.0"`) |
+
+### JSON Adapter
+
+The JSON adapter ships as a separate `uuid_json` module (see `build.zig`) to
+avoid pulling a `json` dependency into the core `uuid` module. Consumers that
+need JSON support depend on the `uuid_json` module explicitly and call the
+four free functions below (no methods on `UUID` / `NullUUID`):
+
+| Function | Description |
+|----------|-------------|
+| `uuid_json.uuidJsonMarshal(u, alloc) !json.Value` | Marshal a `UUID` to a canonical lowercase `json.Value.str` (heap-allocated with `alloc`). |
+| `uuid_json.uuidJsonUnmarshal(alloc, v) !UUID` | Parse a `UUID` from a `json.Value.str`; returns `Error.InvalidFormat` on any other value. |
+| `uuid_json.nullUuidJsonMarshal(nu, alloc) !json.Value` | Marshal a `NullUUID`: canonical string when `valid`, `json.Value.null` otherwise. |
+| `uuid_json.nullUuidJsonUnmarshal(alloc, v) !NullUUID` | Accept `json.Value.null` or a canonical UUID string; reject other types with `Error.InvalidFormat`. |
+
+```zig
+const uuid_json = @import("uuid_json");
+
+// Marshal: returns a heap-allocated json.Value.str — caller frees the
+// backing slice (typically via json.Value.deinit).
+const v = try uuid_json.uuidJsonMarshal(my_uuid, allocator);
+defer allocator.free(v.str);
+
+// Unmarshal: allocator is unused today (kept for interface conformance).
+const parsed = try uuid_json.uuidJsonUnmarshal(allocator, v);
+```
 
 ## Requirements
 

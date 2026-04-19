@@ -10,8 +10,11 @@ responsibility is to generate, parse, format, compare, and serialize UUIDs of
 all RFC-9562 versions (V1, V3, V4, V5, V6, V7, V8) and to provide an injectable
 `Generator` so callers can substitute clock, random, and hardware-address
 sources for testing or policy reasons. The only external dependency is
-`gitlab.com/devnw/zig/json` for `NullUUID` and `jsonMarshal` / `jsonUnmarshal`
-support.
+`gitlab.com/devnw/zig/json`, consumed through the opt-in `uuid_json` module
+which exposes free-function `uuidJsonMarshal` / `uuidJsonUnmarshal` /
+`nullUuidJsonMarshal` / `nullUuidJsonUnmarshal` adapters. The core `uuid`
+module does not import `json`, so consumers that do not need the JSON adapter
+can avoid pulling in that dependency.
 
 ## Non-Goals
 
@@ -40,7 +43,7 @@ support.
 | UUID-REQ-010 | Provide constant-time equality (`timingSafeEql`) for secret-token use (CWE-208). | `src/uuid.zig` (`UUID.timingSafeEql`) |
 | UUID-REQ-011 | Provide injectable `Generator` with `withClock`, `withRand`, `withHWAddr`, `clearNodeCache`, `saveState`, `loadState`, and a `GeneratorInterface` vtable. | `src/generator.zig` |
 | UUID-REQ-012 | Provide `Timestamp` with V1 / V6 / V7 extraction plus Unix ns / ms / s conversions. | `src/timestamp.zig`, `src/versions.zig` (`timestampFromV1/V6/V7`) |
-| UUID-REQ-013 | Provide `NullUUID` wrapper plus JSON marshal / unmarshal via `gitlab.com/devnw/zig/json`. | `src/null_uuid.zig`, `src/uuid.zig` (`jsonMarshal`/`jsonUnmarshal`) |
+| UUID-REQ-013 | Provide `NullUUID` wrapper plus JSON marshal / unmarshal via `gitlab.com/devnw/zig/json`. JSON ships as free functions in the separate `uuid_json` module (`uuidJsonMarshal` / `uuidJsonUnmarshal` / `nullUuidJsonMarshal` / `nullUuidJsonUnmarshal`) so the core `uuid` module does not import `json`. | `src/null_uuid.zig`, `src/uuid_json.zig` |
 | UUID-REQ-014 | Provide `UUID.HashContext` (fixed-seed Wyhash) and `UUID.SecureHashContext` (CSPRNG-seeded) for `std.HashMap` keys. | `src/uuid.zig` |
 
 ## Test Requirements
@@ -58,7 +61,7 @@ support.
 - Full RFC-9562 conformance (V1, V3, V4, V5, V6, V7, V8 with correct version
   and variant nibbles; rejection of invalid variants in parse).
 - `zig build check && zig build test --summary all && zig build test-integration`
-  passes 172/172 unit tests and 32/32 integration tests on Zig 0.16.0.
+  passes 257/257 unit tests + 1 skip and 37/37 integration tests on Zig 0.16.0.
 - Cross-platform MAC resolution compiles on Linux / macOS / Windows;
   `withHWAddr` is opt-in and documented as exposing the host MAC.
 
