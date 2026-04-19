@@ -75,6 +75,15 @@ pub const Error = error{
     /// and no `state_mac_key` is configured (the library refuses to accept
     /// data it cannot authenticate).
     StateMacMismatch,
+    /// SEC-P4-01: `loadState` refused an unauthenticated state file
+    /// (version 1 or 2) under a policy that requires HMAC authentication.
+    /// Signals that the file predates the caller's current
+    /// `state_mac_key` configuration and must be migrated via
+    /// `Generator.migrateStateToV3` before it can be consumed under the
+    /// strict policy.  Distinct from `StateMacMismatch` so callers can
+    /// programmatically offer a migration path without mis-classifying
+    /// tampering as downgrade (and vice-versa).
+    StateVersionDowngrade,
 };
 
 /// UUID version nibble (bits 76-79 of byte 6).

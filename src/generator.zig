@@ -57,6 +57,7 @@ fn mapStateError(err: anyerror) Error {
         Error.InvalidTimestamp => Error.InvalidTimestamp,
         Error.StateIoFailure => Error.StateIoFailure,
         Error.StateMacMismatch => Error.StateMacMismatch,
+        Error.StateVersionDowngrade => Error.StateVersionDowngrade,
         // Anything else (OS/IO errors) → StateIoFailure.
         else => Error.StateIoFailure,
     };
