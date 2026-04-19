@@ -84,6 +84,15 @@ pub const Error = error{
     /// programmatically offer a migration path without mis-classifying
     /// tampering as downgrade (and vice-versa).
     StateVersionDowngrade,
+    /// SEC-P4-12 (CWE-400): Returned by `Generator.newV3Bounded` /
+    /// `Generator.newV5Bounded` (and the module-level
+    /// `uuid.newV3Bounded` / `uuid.newV5Bounded` wrappers) when
+    /// `name.len` exceeds the caller-supplied `max_len` cap.  The
+    /// bounded variants let callers reject attacker-controlled or
+    /// oversized inputs before they reach the MD5 / SHA-1 hasher,
+    /// closing a CPU-amplification (hash-DoS) path where a multi-GB
+    /// `name` would force the library to hash the entire buffer.
+    NameTooLong,
 };
 
 /// UUID version nibble (bits 76-79 of byte 6).

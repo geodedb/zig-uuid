@@ -1193,6 +1193,14 @@ pub const Generator = struct {
     /// pass a UUID read from untrusted input. Call `newV3Strict` to let
     /// the type system enforce this by accepting only the closed
     /// `namespace.Namespace` enum.
+    ///
+    /// **SEC-P4-12 (CWE-400) — unbounded hash input:** `name` is hashed
+    /// in full with no internal length cap. Forwarding an
+    /// attacker-controlled blob causes MD5 to consume CPU proportional
+    /// to `name.len`, which a caller may not intend. Callers with
+    /// attacker-influenced inputs MUST either validate `name.len` up-
+    /// front or use `newV3Bounded`, which returns `Error.NameTooLong`
+    /// above the caller's cap.
     pub fn newV3(_: *Generator, ns: UUID, name: []const u8) UUID {
         var md5 = std.crypto.hash.Md5.init(.{});
         md5.update(&ns.bytes);
@@ -1225,6 +1233,12 @@ pub const Generator = struct {
     /// forgery path described for `newV3`. Prefer `newV5Strict` for new
     /// code, which restricts the namespace to a closed enum of vetted
     /// values.
+    ///
+    /// **SEC-P4-12 (CWE-400) — unbounded hash input:** `name` is hashed
+    /// in full with no internal length cap. Forwarding an
+    /// attacker-controlled blob causes SHA-1 to consume CPU proportional
+    /// to `name.len`. Use `newV5Bounded` (returns `Error.NameTooLong`
+    /// above the caller's cap) or validate `name.len` before calling.
     pub fn newV5(_: *Generator, ns: UUID, name: []const u8) UUID {
         var sha1 = std.crypto.hash.Sha1.init(.{});
         sha1.update(&ns.bytes);
@@ -1250,6 +1264,32 @@ pub const Generator = struct {
     /// SEC-P3-05: strict V5 wrapper — see `newV3Strict`.
     pub fn newV5Strict(self: *Generator, ns: @import("namespace.zig").Namespace, name: []const u8) UUID {
         return self.newV5(ns.asUUID(), name);
+    }
+
+    /// SEC-P4-12 (CWE-400): bounded V3 wrapper that rejects `name`
+    /// inputs longer than `max_len` with `Error.NameTooLong` *before*
+    /// hashing.  Semantics for accepted inputs are identical to
+    /// `newV3` — the only difference is a caller-supplied length gate
+    /// that prevents an attacker-controlled multi-GB `name` from
+    /// forcing MD5 to consume CPU proportional to `name.len`
+    /// (CPU-amplification / hash-DoS).
+    ///
+    /// Pick `max_len` to match the longest legitimate name for the
+    /// namespace at the call site (e.g. 253 for DNS labels, 2048 for
+    /// URLs, etc.).  Passing `std.math.maxInt(usize)` disables the
+    /// check and is equivalent to calling `newV3` directly.
+    pub fn newV3Bounded(self: *Generator, ns: UUID, name: []const u8, max_len: usize) Error!UUID {
+        if (name.len > max_len) return Error.NameTooLong;
+        return self.newV3(ns, name);
+    }
+
+    /// SEC-P4-12 (CWE-400): bounded V5 wrapper — see `newV3Bounded`.
+    /// Rejects `name` longer than `max_len` with `Error.NameTooLong`
+    /// before invoking SHA-1.  Identical output to `newV5` for
+    /// accepted inputs.
+    pub fn newV5Bounded(self: *Generator, ns: UUID, name: []const u8, max_len: usize) Error!UUID {
+        if (name.len > max_len) return Error.NameTooLong;
+        return self.newV5(ns, name);
     }
 
     // =========================================================================

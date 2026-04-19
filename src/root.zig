@@ -78,9 +78,13 @@ pub const newV1 = @import("versions.zig").newV1;
 pub const newV1AtTime = @import("versions.zig").newV1AtTime;
 pub const newV3 = @import("versions.zig").newV3;
 pub const newV3Strict = @import("versions.zig").newV3Strict;
+/// SEC-P4-12: bounded V3 wrapper (`Error.NameTooLong` above `max_len`).
+pub const newV3Bounded = @import("versions.zig").newV3Bounded;
 pub const newV4 = @import("versions.zig").newV4;
 pub const newV5 = @import("versions.zig").newV5;
 pub const newV5Strict = @import("versions.zig").newV5Strict;
+/// SEC-P4-12: bounded V5 wrapper (`Error.NameTooLong` above `max_len`).
+pub const newV5Bounded = @import("versions.zig").newV5Bounded;
 pub const newV6 = @import("versions.zig").newV6;
 pub const newV6AtTime = @import("versions.zig").newV6AtTime;
 pub const newV7 = @import("versions.zig").newV7;

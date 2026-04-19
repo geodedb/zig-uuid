@@ -199,6 +199,78 @@ test "Generator.newV5: RFC Appendix B — DNS namespace + 'www.example.com'" {
     );
 }
 
+// SEC-P4-12 (CWE-400): bounded sibling APIs enforce `max_len` before
+// invoking the MD5 / SHA-1 hasher, so attacker-controlled `name` inputs
+// cannot amplify CPU cost via unbounded hashing.
+
+test "SEC-P4-12: newV3Bounded enforces max_len" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+
+    // Short name below the cap: bytes match unbounded newV3 exactly.
+    const short = try gen.newV3Bounded(ns_mod.namespace_dns, "www.example.com", 64);
+    const reference = gen.newV3(ns_mod.namespace_dns, "www.example.com");
+    try std.testing.expectEqual(reference.bytes, short.bytes);
+
+    // Name equal to max_len: still accepted (inclusive bound).
+    const exact = try gen.newV3Bounded(ns_mod.namespace_dns, "abc", 3);
+    try std.testing.expectEqual(
+        gen.newV3(ns_mod.namespace_dns, "abc").bytes,
+        exact.bytes,
+    );
+
+    // Name above the cap: rejected before hashing.
+    try std.testing.expectError(
+        error.NameTooLong,
+        gen.newV3Bounded(ns_mod.namespace_dns, "too-long-name", 4),
+    );
+
+    // An arbitrarily long payload is rejected instantly — the function
+    // must not hash it.  A 1 MiB buffer is cheap here but would take
+    // measurable time to MD5 if the cap were bypassed.
+    var big: [1024 * 1024]u8 = undefined;
+    @memset(&big, 'A');
+    try std.testing.expectError(
+        error.NameTooLong,
+        gen.newV3Bounded(ns_mod.namespace_dns, &big, 1024),
+    );
+}
+
+test "SEC-P4-12: newV5Bounded enforces max_len" {
+    const ns_mod = @import("namespace.zig");
+    var gen = Generator.init();
+
+    // Short name below the cap: bytes match unbounded newV5 exactly.
+    const short = try gen.newV5Bounded(ns_mod.namespace_dns, "www.example.com", 64);
+    const reference = gen.newV5(ns_mod.namespace_dns, "www.example.com");
+    try std.testing.expectEqual(reference.bytes, short.bytes);
+
+    // Name equal to max_len: still accepted (inclusive bound).
+    const exact = try gen.newV5Bounded(ns_mod.namespace_dns, "xyz", 3);
+    try std.testing.expectEqual(
+        gen.newV5(ns_mod.namespace_dns, "xyz").bytes,
+        exact.bytes,
+    );
+
+    // Name above the cap: rejected before hashing.
+    try std.testing.expectError(
+        error.NameTooLong,
+        gen.newV5Bounded(ns_mod.namespace_dns, "too-long-name", 4),
+    );
+
+    // Module-level wrapper exercises the default_generator delegation.
+    const mod = @import("versions.zig");
+    try std.testing.expectError(
+        error.NameTooLong,
+        mod.newV5Bounded(ns_mod.namespace_dns, "too-long-name", 4),
+    );
+    const ok = try mod.newV3Bounded(ns_mod.namespace_dns, "ok", 16);
+    try std.testing.expectEqual(
+        gen.newV3(ns_mod.namespace_dns, "ok").bytes,
+        ok.bytes,
+    );
+}
+
 // PERF-30: prehashed namespace variants produce the same UUIDs as
 // Generator.newV3 / Generator.newV5 while amortising the namespace hash.
 

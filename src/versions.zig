@@ -30,8 +30,24 @@ pub fn newV1AtTime(ts: Timestamp) Error!UUID {
 /// attacker-controlled `ns` enables `(ns, name)` collision crafting under
 /// MD5 without needing a full preimage attack. Use `newV3Strict` (closed
 /// `Namespace` enum) when the call site would otherwise accept any UUID.
+///
+/// **SEC-P4-12 (CWE-400) — unbounded hash input:** `name` is hashed in
+/// full with no internal length cap. Forwarding an attacker-controlled
+/// blob causes MD5 to consume CPU proportional to `name.len` (CPU-
+/// amplification / hash-DoS). Validate `name.len` before calling or
+/// use `newV3Bounded`, which returns `Error.NameTooLong` above the
+/// caller's cap.
 pub fn newV3(ns: UUID, name: []const u8) UUID {
     return gen_mod.default_generator.newV3(ns, name);
+}
+
+/// SEC-P4-12 (CWE-400): bounded V3 wrapper that rejects `name` inputs
+/// longer than `max_len` with `Error.NameTooLong` before hashing.
+/// Delegates to `Generator.newV3Bounded` on the process-global
+/// `default_generator`; output for accepted inputs is byte-identical
+/// to `newV3`.
+pub fn newV3Bounded(ns: UUID, name: []const u8, max_len: usize) Error!UUID {
+    return gen_mod.default_generator.newV3Bounded(ns, name, max_len);
 }
 
 /// SEC-P3-05: strict variant of `newV3` — accepts only the closed
@@ -56,8 +72,23 @@ pub fn newV4() Error!UUID {
 /// constant. An attacker-controlled namespace enables the same forgery
 /// vector described for `newV3`. Use `newV5Strict` for call sites where the
 /// compiler should reject attacker-controlled UUIDs.
+///
+/// **SEC-P4-12 (CWE-400) — unbounded hash input:** `name` is hashed in
+/// full with no internal length cap. Forwarding an attacker-controlled
+/// blob causes SHA-1 to consume CPU proportional to `name.len`.
+/// Validate `name.len` before calling or use `newV5Bounded`, which
+/// returns `Error.NameTooLong` above the caller's cap.
 pub fn newV5(ns: UUID, name: []const u8) UUID {
     return gen_mod.default_generator.newV5(ns, name);
+}
+
+/// SEC-P4-12 (CWE-400): bounded V5 wrapper that rejects `name` inputs
+/// longer than `max_len` with `Error.NameTooLong` before hashing.
+/// Delegates to `Generator.newV5Bounded` on the process-global
+/// `default_generator`; output for accepted inputs is byte-identical
+/// to `newV5`.
+pub fn newV5Bounded(ns: UUID, name: []const u8, max_len: usize) Error!UUID {
+    return gen_mod.default_generator.newV5Bounded(ns, name, max_len);
 }
 
 /// SEC-P3-05: strict variant of `newV5` — see `newV3Strict`.
