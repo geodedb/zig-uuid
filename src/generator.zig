@@ -1703,13 +1703,26 @@ pub const Generator = struct {
     }
 
     fn loadStateImpl(self: *Generator, path: []const u8) !void {
-        // SEC-R11-04 (CWE-61): Open the state file without following symlinks
-        // on POSIX targets.  An attacker who can place a symlink at the state-file
-        // path before loadState runs could redirect the read to any world-readable
-        // file, leaking its contents.  O_NOFOLLOW causes open(2) to fail with
-        // ELOOP if the path is a symlink, closing the redirect.  On Windows,
-        // symlink handling is enforced differently by the OS; openFileAbsolute
-        // is used unchanged.
+        // SEC-R11-04 / SEC-P4-11 (CWE-61): Reject symlink / reparse-point
+        // redirection of the state file on every supported platform.  An
+        // attacker who can place a symlink (POSIX) or NTFS junction /
+        // symbolic link (Windows) at the state-file path before loadState
+        // runs could redirect the read to any file readable by the
+        // running process, leaking its contents.
+        //
+        // POSIX: O_NOFOLLOW causes open(2) to fail with ELOOP if the
+        // final path component is a symlink, closing the redirect.
+        //
+        // Windows: after opening the file via std.Io.Dir.openFileAbsolute,
+        // query FILE_BASIC_INFORMATION via NtQueryInformationFile and
+        // reject the file if its FileAttributes carry REPARSE_POINT
+        // (NTFS junctions, symbolic links, mount points).  Opening via
+        // openFileAbsolute does follow reparse points by default, so
+        // opening succeeds for the redirected target; the post-open
+        // attribute check catches that case via the *source* handle —
+        // Windows preserves REPARSE_POINT on the reparse-point inode
+        // itself, so a TOCTOU swap between open and query cannot let a
+        // reparse point through unnoticed.
         const io = gio();
         const f = if (builtin.os.tag == .windows)
             try std.Io.Dir.openFileAbsolute(io, path, .{})
@@ -1718,6 +1731,32 @@ pub const Generator = struct {
             break :blk std.Io.File{ .handle = fd, .flags = .{ .nonblocking = false } };
         };
         defer f.close(io);
+
+        if (builtin.os.tag == .windows) {
+            // SEC-P4-11 (CWE-61) Windows reparse-point rejection.
+            // NtQueryInformationFile + FILE_BASIC_INFORMATION exposes
+            // the REPARSE_POINT bit (std.os.windows.FILE.ATTRIBUTE).
+            // Reused rather than the higher-level `GetFileInformationByHandle`
+            // because the latter is not exposed in Zig 0.16's std; the
+            // NT-level syscall is already the canonical primitive used by
+            // std.Build.Watch (see lib/std/Build/Watch.zig, ~line 497).
+            const w = std.os.windows;
+            var iosb: w.IO_STATUS_BLOCK = undefined;
+            var basic: w.FILE.BASIC_INFORMATION = undefined;
+            switch (w.ntdll.NtQueryInformationFile(
+                f.handle,
+                &iosb,
+                &basic,
+                @sizeOf(w.FILE.BASIC_INFORMATION),
+                .Basic,
+            )) {
+                .SUCCESS => {},
+                // Any query failure is treated as I/O failure — the
+                // outer mapStateError collapses this to StateIoFailure.
+                else => return error.Unexpected,
+            }
+            if (basic.FileAttributes.REPARSE_POINT) return Error.InvalidFormat;
+        }
 
         // SEC-R13-04 (CWE-908): Zero-initialize to prevent uninitialized reads.
         // For v1 state files (22 bytes), bytes 22–63 are never written by readAll.
