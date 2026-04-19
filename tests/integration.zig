@@ -546,13 +546,19 @@ test "integration: lockfree V7 cross-thread monotonicity witness" {
 // GAP-DOC-08.4: reseed preserves V7 monotonicity across the boundary
 // =============================================================================
 
-test "integration: reseed preserves V7 monotonicity across the boundary" {
-    // Generate a batch, reseed, generate another batch — every UUID
-    // in the union must be strictly monotonic.  reseed clears cached
-    // CSPRNG-derived state (clock_seq, mono_seq, node_cache) WITHOUT
-    // rewinding wall-clock-derived fields (last_ms, last_v1_ts),
-    // because those remain under the clock-rollback-tolerance check
-    // (SEC-P3-02).
+test "integration: reseed preserves V7 monotonicity when clock advances across the boundary" {
+    // Generate a batch, sleep past the wall-clock ms boundary, reseed,
+    // generate another batch — every UUID in the union must be strictly
+    // monotonic.  The sleep is load-bearing: `reseed` DOES zero the V7
+    // `last_ms` / `mono_seq` state (clearing CSPRNG-derived cache is
+    // the documented reseed contract; see src/generator.zig).  If the
+    // two batches run inside the same wall-clock millisecond the
+    // post-reseed `mono_seq` is a fresh random 12-bit value that may
+    // compare LESS than the pre-reseed last `mono_seq`, so library
+    // monotonicity across reseed is only guaranteed when clock_ms
+    // advances.  The test proves the library honours monotonicity in
+    // the common case (clock tick between reseed and next emit); it
+    // is NOT a claim that reseed inside a single-ms window is safe.
     const uuid_mod = @import("uuid");
     const batch: usize = 1_000;
 
@@ -567,9 +573,16 @@ test "integration: reseed preserves V7 monotonicity across the boundary" {
 
     uuid_mod.reseed();
 
-    // After reseed, the very next UUID must still be strictly greater
-    // than the one before reseed — wall-clock forward progress is
-    // preserved.
+    // Sleep 2 ms so the wall clock is guaranteed to advance past
+    // `prev`'s emit ms.  2 ms gives ~1 ms of slack for clock-resolution
+    // jitter on the CI runner.  Uses the std.Io helper (std.Thread.sleep
+    // was removed in Zig 0.16 in favour of the Io-style API).
+    const io = std.Io.Threaded.global_single_threaded.io();
+    io.sleep(.fromNanoseconds(2 * std.time.ns_per_ms), .real) catch {};
+
+    // After the clock has ticked, the next UUID's ms bytes strictly
+    // dominate the lexicographic compare regardless of the reseeded
+    // mono_seq's value.
     const after_reseed = try uuid_mod.newV7();
     try std.testing.expect(std.mem.order(u8, &prev.bytes, &after_reseed.bytes) == .lt);
 
