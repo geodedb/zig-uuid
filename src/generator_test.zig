@@ -1049,7 +1049,7 @@ test "Generator.init() + initOptions coexist on same process (SEC-P3-08)" {
 //   (2) Multi-threaded stress: no duplicate (ms,seq) pairs; per-thread
 //       monotonicity.
 //   (3) Saturation fallback: a slow clock forces the path into the mutex
-//       fallback and the v7_lockfree_fallbacks counter increments.
+//       fallback and `lockfreeFallbackCount()` increments.
 // =============================================================================
 
 /// Extract `(ms, seq)` from a V7 UUID's raw bytes.  ms is bytes [0..6] big-
@@ -1206,7 +1206,7 @@ test "Generator: lock-free V7 saturation falls back to mutex path (PERF-21)" {
     while (i < n) : (i += 1) out[i] = try gen.newV7();
 
     // At least one fallback must have occurred.
-    const falls = gen.v7_lockfree_fallbacks.load(.monotonic);
+    const falls = gen.lockfreeFallbackCount();
     try std.testing.expect(falls >= 1);
 
     // All UUIDs strictly monotonic.

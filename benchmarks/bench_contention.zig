@@ -154,7 +154,7 @@ fn runContention(
         .cpu_ns = if (cpu_end > cpu_start) cpu_end - cpu_start else end - start,
         .iterations = total_iters,
         .latencies_ns = merged_lat,
-        .lockfree_fallbacks = if (lockfree) gen.v7_lockfree_fallbacks.load(.monotonic) else 0,
+        .lockfree_fallbacks = if (lockfree) gen.lockfreeFallbackCount() else 0,
         .duplicate_uuids = duplicates,
     };
 }

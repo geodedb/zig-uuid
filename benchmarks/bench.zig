@@ -116,7 +116,7 @@ fn scenarioV7Lockfree(allocator: std.mem.Allocator, _: std.Io) !common.RunResult
     const end = common.nowNs();
     std.mem.doNotOptimizeAway(sink);
     var res = common.timedResult(iters, start, end, cpu_start, cpu_end, &.{});
-    res.lockfree_fallbacks = gen.v7_lockfree_fallbacks.load(.monotonic);
+    res.lockfree_fallbacks = gen.lockfreeFallbackCount();
     return res;
 }
 

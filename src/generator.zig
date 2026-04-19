@@ -188,12 +188,15 @@ pub const Generator = struct {
     /// the first call observes `old_ms = 0` and takes the new-ms branch.
     v7_atomic_state: std.atomic.Value(u64) align(64) = std.atomic.Value(u64).init(0),
 
-    /// PERF-21: counter of saturation fallbacks from the lock-free path
-    /// into the mutex-protected `newV7Locked`.  Exposed for tests and
-    /// diagnostics; not an API commitment — the exact interpretation may
-    /// change.  Reads use `.monotonic` since the absolute value is only
-    /// a rough signal ("did we fall back at least once?").
-    v7_lockfree_fallbacks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    /// SEC-P4-08: counter of saturation fallbacks from the lock-free
+    /// path into the mutex-protected `newV7Locked`.  The field is
+    /// underscore-prefixed (private-by-convention) so callers cannot
+    /// fingerprint contention via direct atomic reads; use
+    /// `lockfreeFallbackCount()` instead.  The accessor documents the
+    /// one-shot observation contract (load once, do not poll at high
+    /// frequency — a spinning reader imposes MESI ping-pong on the
+    /// same cache line that newV7Atomic writes).
+    _v7_lockfree_fallbacks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
     // PERF-19: Two independent mutexes for V7 and V1/V6 clock domains.
     // V7 generation only acquires v7.mutex; V1/V6 generation only acquires
@@ -409,6 +412,14 @@ pub const Generator = struct {
         /// `Generator.v7_lockfree` for algorithmic details.
         v7_lockfree: bool = false,
     };
+
+    /// SEC-P4-08: read the lockfree-fallback counter.  Intended for
+    /// diagnostic / bench reporting — do NOT poll at high frequency.
+    /// Relaxed load since the counter is a loose contention signal
+    /// rather than a synchronising observable.
+    pub fn lockfreeFallbackCount(self: *const Generator) u64 {
+        return self._v7_lockfree_fallbacks.load(.monotonic);
+    }
 
     /// Create a new generator with default clock (std.time.nanoTimestamp),
     /// CSPRNG (std.Io.random), and random multicast node ID.
@@ -643,7 +654,7 @@ pub const Generator = struct {
     /// Public-ish for tests (via `@field`) but not re-exported at the
     /// library level.
     inline fn bumpFallback(self: *Generator) void {
-        _ = self.v7_lockfree_fallbacks.fetchAdd(1, .monotonic);
+        _ = self._v7_lockfree_fallbacks.fetchAdd(1, .monotonic);
     }
 
     /// PERF-21: lock-free V7 generation.  See the comment block above for
