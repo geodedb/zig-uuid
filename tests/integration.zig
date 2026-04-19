@@ -581,3 +581,42 @@ test "integration: reseed preserves V7 monotonicity across the boundary" {
         prev = cur;
     }
 }
+
+// =============================================================================
+// GAP-DOC-08.5: newV3Strict matches newV3 for all four RFC namespaces + custom
+// =============================================================================
+
+test "integration: newV3Strict matches newV3 for all four RFC namespaces (SEC-P3-05)" {
+    const name = "example.com";
+
+    // newV3/newV5 (+Strict variants) return UUID directly — they cannot fail
+    // on well-formed compile-time inputs, so no `try` is needed.
+    const v3_dns_strict = uuid.newV3Strict(.dns, name);
+    const v3_dns_plain = uuid.newV3(uuid.namespace_dns, name);
+    try std.testing.expectEqualSlices(u8, &v3_dns_plain.bytes, &v3_dns_strict.bytes);
+
+    const v3_url_strict = uuid.newV3Strict(.url, name);
+    const v3_url_plain = uuid.newV3(uuid.namespace_url, name);
+    try std.testing.expectEqualSlices(u8, &v3_url_plain.bytes, &v3_url_strict.bytes);
+
+    const v3_oid_strict = uuid.newV3Strict(.oid, name);
+    const v3_oid_plain = uuid.newV3(uuid.namespace_oid, name);
+    try std.testing.expectEqualSlices(u8, &v3_oid_plain.bytes, &v3_oid_strict.bytes);
+
+    const v3_x500_strict = uuid.newV3Strict(.x500, name);
+    const v3_x500_plain = uuid.newV3(uuid.namespace_x500, name);
+    try std.testing.expectEqualSlices(u8, &v3_x500_plain.bytes, &v3_x500_strict.bytes);
+
+    // V5 parity for DNS (one is enough — V5 shares the same namespace
+    // plumbing as V3, differing only in the hash algorithm).
+    const v5_dns_strict = uuid.newV5Strict(.dns, name);
+    const v5_dns_plain = uuid.newV5(uuid.namespace_dns, name);
+    try std.testing.expectEqualSlices(u8, &v5_dns_plain.bytes, &v5_dns_strict.bytes);
+
+    // .custom parity: a compile-time 16-byte constant must match the
+    // plain newV3 with the same bytes.
+    const custom_bytes: [16]u8 = .{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10 };
+    const v3_custom_strict = uuid.newV3Strict(.{ .custom = custom_bytes }, name);
+    const v3_custom_plain = uuid.newV3(uuid.UUID{ .bytes = custom_bytes }, name);
+    try std.testing.expectEqualSlices(u8, &v3_custom_plain.bytes, &v3_custom_strict.bytes);
+}
