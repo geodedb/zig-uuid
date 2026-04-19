@@ -4135,7 +4135,7 @@ glab issue create \
 | SEC-P4-10 | `Generator.reseed()` does not clear `v7_atomic_state` | Security | Medium | 12 | ✅ Closed 2026-04-19 (`5202714`) | `reseed` zeroes atomic under both mutexes; co-closed SEC-P4-A1 |
 | SEC-P4-11 | Windows `loadState` lacks NOFOLLOW-equivalent | Security | Low | 2 | ✅ Closed 2026-04-19 (`f67e8bf`) | `NtQueryInformationFile` reparse-point reject on Windows open path |
 | SEC-P4-12 | `newV3` / `newV5` accept unbounded `name` | Security | Low | 6 | ✅ Closed 2026-04-19 (`904d352`) | `newV3Bounded`/`newV5Bounded` + `Error.NameTooLong`; CWE-400 docstring |
-| SEC-P4-13 | `@intCast((hi<<16)\|lo)` refactor-fragile | Security | Very Low | 1 | Open | Append to `2026-04-18-security-minor-hardening.md` — `std.debug.assert` invariant |
+| SEC-P4-13 | `@intCast((hi<<16)\|lo)` refactor-fragile | Security | Very Low | 1 | ✅ Closed 2026-04-19 (`3b338ab`) | `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0)` + invariant comment in `timestampFromV7` (V7 unix_ts_ms path; finding text referenced V1 — commit body documents the reconciliation) |
 | SEC-P4-A1 | Lockfree V7 saturation sleep-loop DoS via injected `withClock` | Security | Low | 4 | ✅ Closed 2026-04-19 (`5202714`) | Co-closed with SEC-P4-10; CAS retry budget 32_768 → 4096 |
 | SEC-P4-14 | CI catalog components pinned by moving tag `@v1.7.1` | Security / Supply-chain | Medium-High | 40 | 🚧 Blocked | Unblock: operator provides 40-char SHA map for 8 components at `gitlab.com/devnw/ci-catalog@v1.7.1` |
 
@@ -4151,6 +4151,6 @@ glab auth status
 # SEC-P4-10, -11, -12, -13, -A1 are standard severity labels — see SECURITY_REVIEW_NOTES.md for full invocations.
 ```
 
-_Phase 4 cycle 3 net delta: +6 security findings (SEC-P4-10, SEC-P4-11, SEC-P4-12, SEC-P4-A1 closed 2026-04-19; SEC-P4-14 Blocked pending operator-provided ci-catalog SHA map; SEC-P4-13 remains Open as Very-Low follow-up). No tracker mutations; all findings require `glab auth status` green before issue filing._
+_Phase 4 cycle 3 net delta: +6 security findings (SEC-P4-10, SEC-P4-11, SEC-P4-12, SEC-P4-A1 closed 2026-04-19; **SEC-P4-13 closed 2026-04-19 (`3b338ab`, residual batch)**; SEC-P4-14 Blocked pending operator-provided ci-catalog SHA map). Only SEC-P4-14 remains open from this cycle. No tracker mutations; all findings require `glab auth status` green before issue filing._
 
 ---
