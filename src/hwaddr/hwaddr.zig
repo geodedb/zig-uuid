@@ -66,3 +66,15 @@ test "hwaddr.get() returns 6-byte array or NoHWAddressFound" {
         try @import("std").testing.expectEqual(Error.NoHWAddressFound, err);
     }
 }
+
+// QC-114: pull every per-OS backend into the test graph so the pure
+// byte-level parser tests (`parseIfreqHwaddr`, `parseSockaddrDlMac`,
+// `findMacInAdapters`) run on every native target. The imported files only
+// declare extern OS syscalls; tests never reference those declarations, so
+// the link edge is never created and the same Linux host can compile+run
+// the macOS/Windows parser tests.
+test {
+    _ = @import("linux.zig");
+    _ = @import("macos.zig");
+    _ = @import("windows.zig");
+}

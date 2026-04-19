@@ -9,7 +9,7 @@ const hwaddr = @import("hwaddr.zig");
 const windows = std.os.windows;
 
 // IP_ADAPTER_ADDRESSES (simplified — only fields we use)
-const IP_ADAPTER_ADDRESSES = extern struct {
+pub const IP_ADAPTER_ADDRESSES = extern struct {
     Length: windows.ULONG,
     IfIndex: windows.DWORD,
     Next: ?*IP_ADAPTER_ADDRESSES,
@@ -30,7 +30,7 @@ const IP_ADAPTER_ADDRESSES = extern struct {
     // ... additional fields omitted; Length field ensures safe iteration
 };
 
-const IF_TYPE_SOFTWARE_LOOPBACK: windows.DWORD = 24;
+pub const IF_TYPE_SOFTWARE_LOOPBACK: windows.DWORD = 24;
 const GAA_FLAG_NONE: windows.ULONG = 0;
 const AF_UNSPEC: windows.ULONG = 0;
 
@@ -71,7 +71,17 @@ pub fn getHWAddr() Error![6]u8 {
     return findMacInAdapters(@ptrCast(@alignCast(heap_buf.ptr)));
 }
 
-fn findMacInAdapters(head: *IP_ADAPTER_ADDRESSES) Error![6]u8 {
+/// QC-114: Pure iterator over an `IP_ADAPTER_ADDRESSES` linked list.
+///
+/// Walks the caller-supplied list, skipping:
+///   - software loopback adapters (`IfType == 24`);
+///   - adapters whose `PhysicalAddressLength != 6` (WiFi Direct, Bluetooth PAN,
+///     tunnels, and others may report 0, 8, or a non-Ethernet length);
+///   - all-zero and broadcast MACs (RFC 4122 §4.1.6, shared predicate).
+///
+/// Does not call `GetAdaptersAddresses`, so tests can feed synthetic
+/// linked-list fixtures through it on any host.
+pub fn findMacInAdapters(head: *IP_ADAPTER_ADDRESSES) Error![6]u8 {
     var it: ?*IP_ADAPTER_ADDRESSES = head;
     while (it) |adapter| : (it = adapter.Next) {
         // Skip loopback
@@ -143,4 +153,144 @@ test "guidToUUID and uuidToGUID round-trip" {
     try std.testing.expectEqual(guid.Data1, guid2.Data1);
     try std.testing.expectEqual(guid.Data2, guid2.Data2);
     try std.testing.expectEqual(guid.Data3, guid2.Data3);
+}
+
+// =============================================================================
+// QC-114 — adapter-iteration tests.
+//
+// These construct synthetic `IP_ADAPTER_ADDRESSES` linked lists and feed
+// them through `findMacInAdapters`. No `GetAdaptersAddresses` syscall is
+// performed so the coverage works on any cross-compile host.
+// =============================================================================
+
+/// Build a minimal `IP_ADAPTER_ADDRESSES` node for tests. Only the fields the
+/// iterator reads are populated — the name / description pointers point at
+/// static empty sentinels so the extern-struct layout is valid.
+fn makeAdapter(
+    if_type: windows.DWORD,
+    mac_len: windows.DWORD,
+    mac: [8]u8,
+    next: ?*IP_ADAPTER_ADDRESSES,
+) IP_ADAPTER_ADDRESSES {
+    const State = struct {
+        var empty_char: windows.CHAR = 0;
+        var empty_wchar: windows.WCHAR = 0;
+    };
+    return .{
+        .Length = @sizeOf(IP_ADAPTER_ADDRESSES),
+        .IfIndex = 0,
+        .Next = next,
+        .AdapterName = @ptrCast(&State.empty_char),
+        .FirstUnicastAddress = null,
+        .FirstAnycastAddress = null,
+        .FirstMulticastAddress = null,
+        .FirstDnsServerAddress = null,
+        .DnsSuffix = @ptrCast(&State.empty_wchar),
+        .Description = @ptrCast(&State.empty_wchar),
+        .FriendlyName = @ptrCast(&State.empty_wchar),
+        .PhysicalAddress = mac,
+        .PhysicalAddressLength = mac_len,
+        .Flags = 0,
+        .Mtu = 1500,
+        .IfType = if_type,
+        .OperStatus = 1,
+    };
+}
+
+test "QC-114 windows: findMacInAdapters returns first usable Ethernet MAC" {
+    const IF_TYPE_ETHERNET: windows.DWORD = 6;
+    // Two-node list: loopback first (must be skipped), then a real NIC.
+    var nic = makeAdapter(
+        IF_TYPE_ETHERNET,
+        6,
+        .{ 0x00, 0x1b, 0x21, 0xaa, 0xbb, 0xcc, 0, 0 },
+        null,
+    );
+    var loopback = makeAdapter(
+        IF_TYPE_SOFTWARE_LOOPBACK,
+        6,
+        .{ 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0, 0 }, // would be "usable" but loopback → skipped
+        &nic,
+    );
+
+    const mac = try findMacInAdapters(&loopback);
+    try std.testing.expectEqualSlices(
+        u8,
+        &[_]u8{ 0x00, 0x1b, 0x21, 0xaa, 0xbb, 0xcc },
+        &mac,
+    );
+    try std.testing.expect(hwaddr.isUsableMac(&mac));
+}
+
+test "QC-114 windows: findMacInAdapters rejects all-zero, broadcast, and empty lists" {
+    const IF_TYPE_ETHERNET: windows.DWORD = 6;
+
+    // All-zero PhysicalAddress → RFC 4122 §4.1.6 reject.
+    var zero = makeAdapter(IF_TYPE_ETHERNET, 6, .{ 0, 0, 0, 0, 0, 0, 0, 0 }, null);
+    try std.testing.expectError(Error.NoHWAddressFound, findMacInAdapters(&zero));
+
+    // Broadcast → reject.
+    var bcast = makeAdapter(IF_TYPE_ETHERNET, 6, .{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0 }, null);
+    try std.testing.expectError(Error.NoHWAddressFound, findMacInAdapters(&bcast));
+
+    // A chain of only-loopback adapters → reject (NoHWAddressFound).
+    var lb2 = makeAdapter(
+        IF_TYPE_SOFTWARE_LOOPBACK,
+        6,
+        .{ 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0, 0 },
+        null,
+    );
+    var lb1 = makeAdapter(
+        IF_TYPE_SOFTWARE_LOOPBACK,
+        6,
+        .{ 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0, 0 },
+        &lb2,
+    );
+    try std.testing.expectError(Error.NoHWAddressFound, findMacInAdapters(&lb1));
+}
+
+test "QC-114 windows: findMacInAdapters handles non-6-byte PhysicalAddressLength" {
+    const IF_TYPE_ETHERNET: windows.DWORD = 6;
+    const IF_TYPE_TUNNEL: windows.DWORD = 131;
+    const IF_TYPE_IEEE80211: windows.DWORD = 71;
+
+    // Tunnel advertises 0-byte PhysicalAddress (common for 6to4/ISATAP) →
+    // must be skipped without reading past the buffer.
+    var good = makeAdapter(
+        IF_TYPE_ETHERNET,
+        6,
+        .{ 0x02, 0x00, 0x5e, 0x00, 0x53, 0x01, 0, 0 },
+        null,
+    );
+    var wifi_direct = makeAdapter(
+        IF_TYPE_IEEE80211,
+        8, // oversized (WiFi with 802.11 extended MAC)
+        .{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 },
+        &good,
+    );
+    var tunnel = makeAdapter(
+        IF_TYPE_TUNNEL,
+        0,
+        .{ 0, 0, 0, 0, 0, 0, 0, 0 },
+        &wifi_direct,
+    );
+
+    const mac = try findMacInAdapters(&tunnel);
+    try std.testing.expectEqualSlices(
+        u8,
+        &[_]u8{ 0x02, 0x00, 0x5e, 0x00, 0x53, 0x01 },
+        &mac,
+    );
+
+    // Single adapter with mac_len=8 (oversized) but no follow-up → reject.
+    var only_wifi_direct = makeAdapter(
+        IF_TYPE_IEEE80211,
+        8,
+        .{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 },
+        null,
+    );
+    try std.testing.expectError(
+        Error.NoHWAddressFound,
+        findMacInAdapters(&only_wifi_direct),
+    );
 }
