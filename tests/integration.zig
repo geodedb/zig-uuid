@@ -541,3 +541,43 @@ test "integration: lockfree V7 cross-thread monotonicity witness" {
         prev = cur;
     }
 }
+
+// =============================================================================
+// GAP-DOC-08.4: reseed preserves V7 monotonicity across the boundary
+// =============================================================================
+
+test "integration: reseed preserves V7 monotonicity across the boundary" {
+    // Generate a batch, reseed, generate another batch — every UUID
+    // in the union must be strictly monotonic.  reseed clears cached
+    // CSPRNG-derived state (clock_seq, mono_seq, node_cache) WITHOUT
+    // rewinding wall-clock-derived fields (last_ms, last_v1_ts),
+    // because those remain under the clock-rollback-tolerance check
+    // (SEC-P3-02).
+    const uuid_mod = @import("uuid");
+    const batch: usize = 1_000;
+
+    var prev: uuid.UUID = try uuid_mod.newV7();
+
+    var i: usize = 1;
+    while (i < batch) : (i += 1) {
+        const cur = try uuid_mod.newV7();
+        try std.testing.expect(std.mem.order(u8, &prev.bytes, &cur.bytes) == .lt);
+        prev = cur;
+    }
+
+    uuid_mod.reseed();
+
+    // After reseed, the very next UUID must still be strictly greater
+    // than the one before reseed — wall-clock forward progress is
+    // preserved.
+    const after_reseed = try uuid_mod.newV7();
+    try std.testing.expect(std.mem.order(u8, &prev.bytes, &after_reseed.bytes) == .lt);
+
+    prev = after_reseed;
+    i = 0;
+    while (i < batch) : (i += 1) {
+        const cur = try uuid_mod.newV7();
+        try std.testing.expect(std.mem.order(u8, &prev.bytes, &cur.bytes) == .lt);
+        prev = cur;
+    }
+}
