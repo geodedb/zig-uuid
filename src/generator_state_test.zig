@@ -838,6 +838,12 @@ test "Generator: v3 with wrong key is rejected timing-safely (SEC-P3-04)" {
 }
 
 test "Generator: v2 file still loads when state_mac_key is set (SEC-P3-04 backward compat)" {
+    // QC-117: suppress the expected `.uuid_state_mac` warn from this
+    // policy-downgrade test. The library intentionally emits std.log.warn
+    // under .any when a v2 file loads with a key configured; the warn is
+    // asserted operator-visible in production but is noise during tests.
+    std.testing.log_level = .err;
+
     // A legacy v2 file must remain loadable when the caller has a key
     // AND opts into the .any policy, so existing deployments migrating
     // to HMAC can roll forward without re-writing state.  Under the
@@ -1069,6 +1075,10 @@ test "SEC-P4-01: default policy rejects v2 when state_mac_key is set" {
 }
 
 test "SEC-P4-01: .any policy accepts v2 when state_mac_key is set" {
+    // QC-117: suppress the expected `.uuid_state_mac` warn (see comment
+    // on "Generator: v2 file still loads ..." above).
+    std.testing.log_level = .err;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1130,6 +1140,10 @@ test "SEC-P4-01: .require_mac_always rejects v2 even without key" {
 }
 
 test "SEC-P4-01: migrateStateToV3 round-trips a v2 file into v3 under the default policy" {
+    // QC-117: migrateStateToV3 internally loads under .any to read a v2
+    // file. Suppress the expected `.uuid_state_mac` warn.
+    std.testing.log_level = .err;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;

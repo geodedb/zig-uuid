@@ -1927,7 +1927,11 @@ pub const Generator = struct {
         switch (policy) {
             .any => {
                 if (has_key) {
-                    std.log.warn(
+                    // QC-117: scoped log so tests can suppress this specific
+                    // warn without silencing unrelated logs. The scope is
+                    // filtered to .err in the test-only std_options block
+                    // in src/root.zig (gated on builtin.is_test).
+                    std.log.scoped(.uuid_state_mac).warn(
                         "uuid: loaded unauthenticated state file (version {d}); state_mac_key is set but file has no HMAC trailer",
                         .{file_version},
                     );
