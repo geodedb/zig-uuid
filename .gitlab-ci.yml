@@ -288,8 +288,19 @@ bench-regression:
         echo "INV-01: taskset pin skipped (nproc=$(nproc), BENCH_PIN_CORES=${BENCH_PIN_CORES:-1})"
       fi
       export TASKSET_PREFIX
+    # PERF-43: run every benchmark suite that has a committed baseline so
+    # bench-compare-all actually has a candidate for each pair.  Previously
+    # only `bench` + `bench-contention` ran and the walker silently skipped
+    # baseline_state.json / baseline_micro_*.json.  The three micro suites
+    # are invoked individually (not via the `bench-micro` aggregate step)
+    # because they all forward `b.args` to the same `--output` path and
+    # would otherwise clobber each other.
     - $TASKSET_PREFIX zig build bench -Doptimize=ReleaseFast -- --output benchmarks/results/latest.json
     - $TASKSET_PREFIX zig build bench-contention -Doptimize=ReleaseFast -- --output benchmarks/results/latest_contention.json
+    - $TASKSET_PREFIX zig build bench-state -Doptimize=ReleaseFast -- --output benchmarks/results/latest_state.json
+    - $TASKSET_PREFIX zig build bench-micro-parse -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_parse.json
+    - $TASKSET_PREFIX zig build bench-micro-format -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_format.json
+    - $TASKSET_PREFIX zig build bench-micro-hash -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_hash.json
     - |
       zig build bench-compare-all -- \
         --threshold "${PERF26_THRESHOLD:-0.15}" 2>&1 | tee bench-regression-report.txt
@@ -298,6 +309,10 @@ bench-regression:
     paths:
       - benchmarks/results/latest.json
       - benchmarks/results/latest_contention.json
+      - benchmarks/results/latest_state.json
+      - benchmarks/results/latest_micro_parse.json
+      - benchmarks/results/latest_micro_format.json
+      - benchmarks/results/latest_micro_hash.json
       - bench-regression-report.txt
     expire_in: 90 days
   rules:
