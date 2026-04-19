@@ -1510,6 +1510,44 @@ pub const Generator = struct {
         self.loadStateImpl(path) catch |e| return mapStateError(e);
     }
 
+    /// SEC-P4-01: one-shot migration of a v1/v2 state file to v3
+    /// (HMAC-authenticated) under the generator's current
+    /// `state_mac_key`.  Usage:
+    ///
+    /// ```zig
+    /// var gen = uuid.Generator.initOptions(.{ .state_mac_key = key });
+    /// try gen.migrateStateToV3("/var/lib/myapp/uuid.state");
+    /// // File is now v3; future loadState under the default policy works.
+    /// ```
+    ///
+    /// Semantics:
+    ///   1. `state_mac_key` must be configured — returns
+    ///      `Error.StateMacMismatch` otherwise (the helper has nothing
+    ///      to authenticate with).
+    ///   2. Loads the file with a temporary `.any` policy so v1/v2 is
+    ///      accepted; the generator's configured policy is restored
+    ///      before saveState runs.
+    ///   3. Saves under the generator's policy — because the key is
+    ///      configured, `saveState` writes wire-format v3 (the
+    ///      authenticated trailer is added automatically by
+    ///      `saveStateImpl`).
+    ///
+    /// Idempotent: calling on an already-v3 file is a no-op equivalent
+    /// to `loadState` + `saveState` (the v3 verify succeeds, then a
+    /// fresh v3 file is written).  Callers can run migrateStateToV3
+    /// in a release-rollout script without pre-checking the on-disk
+    /// version.
+    pub fn migrateStateToV3(self: *Generator, path: []const u8) Error!void {
+        if (self.state_mac_key == null) return Error.StateMacMismatch;
+        // Override the policy for the load half of the migration.
+        // Save keeps the generator's configured policy.
+        const saved_policy = self.state_mac_policy;
+        self.state_mac_policy = .any;
+        defer self.state_mac_policy = saved_policy;
+        try self.loadState(path);
+        try self.saveState(path);
+    }
+
     fn loadStateImpl(self: *Generator, path: []const u8) !void {
         // SEC-R11-04 (CWE-61): Open the state file without following symlinks
         // on POSIX targets.  An attacker who can place a symlink at the state-file

@@ -1132,7 +1132,9 @@ test "SEC-P4-01: migrateStateToV3 round-trips a v2 file into v3 under the defaul
     // Fresh default-policy load now succeeds.
     var gen2 = Generator.initOptions(.{ .state_mac_key = key });
     try gen2.loadState(path);
-    try std.testing.expectEqual(@as(u14, 0x4444), gen2.v1v6.clock_seq);
+    // loadState masks the raw u16 with 0x3FFF to fit u14:
+    // 0x4444 & 0x3FFF == 0x0444.
+    try std.testing.expectEqual(@as(u14, 0x4444 & 0x3FFF), gen2.v1v6.clock_seq);
 }
 
 test "SEC-P4-01: migrateStateToV3 rejects when no key configured" {

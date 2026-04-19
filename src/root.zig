@@ -99,6 +99,8 @@ pub const reseed = @import("versions.zig").reseed;
 pub const saveState = @import("versions.zig").saveState;
 pub const loadState = @import("versions.zig").loadState;
 pub const secureWipeMacKey = @import("versions.zig").secureWipeMacKey;
+pub const migrateStateToV3 = @import("versions.zig").migrateStateToV3;
+pub const StateMacPolicy = @import("generator.zig").StateMacPolicy;
 pub const initV3Namespace = @import("versions.zig").initV3Namespace;
 pub const initV5Namespace = @import("versions.zig").initV5Namespace;
 

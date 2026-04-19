@@ -159,6 +159,17 @@ pub fn loadState(path: []const u8) Error!void {
     return gen_mod.default_generator.loadState(path);
 }
 
+/// SEC-P4-01: module-level wrapper for `Generator.migrateStateToV3`
+/// operating on the shared `default_generator`.  See
+/// `Generator.migrateStateToV3` for semantics.  Requires
+/// `default_generator.state_mac_key` to be set (configure via a one-
+/// off local Generator + save, or by mutating
+/// `uuid.defaultGenerator().state_mac_key` — see the advanced-API
+/// section of README for key-handling patterns).
+pub fn migrateStateToV3(path: []const u8) Error!void {
+    return gen_mod.default_generator.migrateStateToV3(path);
+}
+
 /// QC-100: module-level wrapper for `Generator.secureWipeMacKey` operating
 /// on the shared `default_generator`. See `Generator.secureWipeMacKey` for
 /// semantics (idempotent volatile zeroization of the HMAC state-file key).
