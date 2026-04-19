@@ -1088,3 +1088,66 @@ test "SEC-P4-01: .require_mac_always rejects v2 even without key" {
     });
     try std.testing.expectError(Error.StateVersionDowngrade, gen.loadState(path));
 }
+
+test "SEC-P4-01: migrateStateToV3 round-trips a v2 file into v3 under the default policy" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    // Place a v2 file on disk.
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version_v2;
+    blob[5] = 0x01;
+    std.mem.writeInt(u16, blob[6..8], 0x4444, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], 0, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    {
+        const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+        try f.writePositionalAll(io, &blob, 0);
+        f.close(io);
+    }
+
+    const key: [32]u8 = .{0x99} ** 32;
+
+    // Default policy gen: migrate the file.  After migration, the
+    // file must be v3 (64 bytes) and a fresh default-policy load must
+    // succeed.
+    var gen = Generator.initOptions(.{ .state_mac_key = key });
+    try gen.migrateStateToV3(path);
+
+    // Verify on-disk size is now v3.
+    const f2 = try std.Io.Dir.openFileAbsolute(io, path, .{});
+    defer f2.close(io);
+    const stat = try f2.stat(io);
+    try std.testing.expectEqual(@as(u64, Generator.state_size_v3), stat.size);
+
+    // Fresh default-policy load now succeeds.
+    var gen2 = Generator.initOptions(.{ .state_mac_key = key });
+    try gen2.loadState(path);
+    try std.testing.expectEqual(@as(u14, 0x4444), gen2.v1v6.clock_seq);
+}
+
+test "SEC-P4-01: migrateStateToV3 rejects when no key configured" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    var gen = Generator.init();
+    // File doesn't even need to exist for this check — the key-not-set
+    // guard fires first.
+    try std.testing.expectError(
+        Error.StateMacMismatch,
+        gen.migrateStateToV3(path),
+    );
+}
