@@ -164,6 +164,12 @@ pub const Generator = struct {
     /// all use the safe default `.require_mac_when_keyed`.
     state_mac_policy: StateMacPolicy = .require_mac_when_keyed,
 
+    /// SEC-P4-03: instance-field rollback tolerance.  Default is
+    /// `default_clock_rollback_tolerance_ms` (250 ms); override via
+    /// `InitOptions.clock_rollback_tolerance_ms`.  Value is clamped
+    /// to `[0, 60_000]` in `initOptions`.
+    clock_rollback_tolerance_ms: i64 = default_clock_rollback_tolerance_ms,
+
     /// PERF-21: opt-in lock-free V7 path.  When true, `newV7` updates
     /// monotonicity state via a CAS loop over a packed `(ms:52)|(seq:12)`
     /// `u64` instead of the `v7.mutex`.  The lock-free path is wait-free
@@ -389,6 +395,15 @@ pub const Generator = struct {
         /// once to upgrade the on-disk file to v3.
         state_mac_policy: StateMacPolicy = .require_mac_when_keyed,
 
+        /// SEC-P4-03: override the default clock-rollback tolerance
+        /// (`Generator.default_clock_rollback_tolerance_ms` = 250 ms).
+        /// Clamped to `[0, 60_000]` by `initOptions` to prevent
+        /// accidental disables (via maxInt) and negative values.  Null
+        /// keeps the default; set to 0 to reject ANY backward clock
+        /// motion; larger values widen the accepted window for
+        /// deployments with known-bad clocks.
+        clock_rollback_tolerance_ms: ?i64 = null,
+
         /// PERF-21: opt into the lock-free V7 path.  Default false keeps
         /// the mutex-protected path (unchanged behaviour).  See
         /// `Generator.v7_lockfree` for algorithmic details.
@@ -414,8 +429,19 @@ pub const Generator = struct {
             .hwaddr_fn = options.hwaddr_fn,
             .state_mac_key = options.state_mac_key,
             .state_mac_policy = options.state_mac_policy,
+            .clock_rollback_tolerance_ms = clampRollbackTolerance(options.clock_rollback_tolerance_ms),
             .v7_lockfree = options.v7_lockfree,
         };
+    }
+
+    fn clampRollbackTolerance(opt: ?i64) i64 {
+        const raw = opt orelse default_clock_rollback_tolerance_ms;
+        // Clamp to [0, 60_000] — 60s is the practical upper bound for
+        // NTP + reasonable VM-suspend recovery; beyond that, the caller
+        // should call resetState() rather than widen the tolerance.
+        if (raw < 0) return 0;
+        if (raw > 60_000) return 60_000;
+        return raw;
     }
 
     /// Create a generator with a custom clock function, useful for testing
@@ -1303,13 +1329,14 @@ pub const Generator = struct {
     /// Wire size (in bytes) of a v3 state file: v2 payload + HMAC trailer.
     pub const state_size_v3: usize = state_size + state_mac_size;
 
-    /// SEC-P3-02: NTP-skew tolerance used by `loadState` when comparing the
-    /// persisted last_v1_ts / last_ms against the current wall clock. Saved
-    /// timestamps more than this many milliseconds in the future relative
-    /// to `self.clockCall()` are treated as clock-rollback / replay and
-    /// rejected with `Error.InvalidFormat`. 1000 ms accommodates typical
-    /// well-configured NTP skew without masking real rollbacks.
-    pub const clock_rollback_tolerance_ms: i64 = 1_000;
+    /// SEC-P4-03: default clock-rollback tolerance applied when
+    /// `InitOptions.clock_rollback_tolerance_ms` is null.  Tightened
+    /// from the pre-SEC-P4-03 1_000 ms to 250 ms, matching NTP's
+    /// chrony `maxslewrate` practical upper bound.  Callers that need
+    /// a wider window (e.g. deployments with flaky NTP or VM-suspend
+    /// jumps) pass an explicit value via InitOptions; the value is
+    /// clamped to [0, 60_000].
+    pub const default_clock_rollback_tolerance_ms: i64 = 250;
 
     /// Save generator state to stable storage (F-9, SEC-1, SEC-9, SEC-10).
     ///
@@ -1698,7 +1725,7 @@ pub const Generator = struct {
         // (u60). Convert to Unix ms for comparison with current_ms.
         const saved_v1_ms: i64 = (Timestamp{ .value = saved_v1_ts }).toUnixMs();
         if (current_ms != 0 and saved_v1_ms > current_ms and
-            (saved_v1_ms - current_ms) > clock_rollback_tolerance_ms)
+            (saved_v1_ms - current_ms) > self.clock_rollback_tolerance_ms)
         {
             return Error.InvalidFormat;
         }
@@ -1728,7 +1755,7 @@ pub const Generator = struct {
             // or the state file is stale/tampered; either way accepting it
             // would produce duplicate V7 UUIDs once the clock catches up.
             if (current_ms != 0 and saved_ms > current_ms and
-                (saved_ms - current_ms) > clock_rollback_tolerance_ms)
+                (saved_ms - current_ms) > self.clock_rollback_tolerance_ms)
             {
                 return Error.InvalidFormat;
             }

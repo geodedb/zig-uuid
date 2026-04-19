@@ -354,8 +354,8 @@ test "Generator.loadState: rejects out-of-range last_v1_ts (SEC-R6-04)" {
 
 test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     // Inject a clock returning a value ≤ saved_ms → conservative overflow branch.
-    // SEC-P3-02: saved_ms must be within clock_rollback_tolerance_ms (1000)
-    // of current_ms; otherwise the rollback guard rejects the load.
+    // SEC-P3-02: saved_ms must be within self.clock_rollback_tolerance_ms
+    // (default 250 ms) of current_ms; otherwise the rollback guard rejects.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -363,7 +363,7 @@ test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
 
-    const saved_ms: i64 = 1001;
+    const saved_ms: i64 = 201;
     var blob: [Generator.state_size]u8 = undefined;
     @memcpy(blob[0..4], &Generator.state_magic);
     blob[4] = Generator.state_format_version;
@@ -378,7 +378,7 @@ test "Generator.loadState: slow-restart branch uses injectable clock (QC-29)" {
     try f2.writePositionalAll(std.Io.Threaded.global_single_threaded.io(), &blob, 0);
     f2.close(std.Io.Threaded.global_single_threaded.io());
 
-    // Inject a clock returning 1ms (< saved_ms=1001; diff=1000 ≤ tolerance).
+    // Inject a clock returning 1ms (< saved_ms=201; diff=200 ≤ 250ms tolerance).
     const past_clock = struct {
         fn clock() i128 {
             return 1 * 1_000_000; // 1ms in nanoseconds
@@ -555,9 +555,9 @@ test "Generator.loadState: rejects last_ms beyond NTP tolerance (SEC-P3-02)" {
     var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
 
-    // current_ms = 1_000 ms; saved_ms = 1_000 + 1001 = 2_001 → diff=1001 > 1000.
+    // current_ms = 1_000 ms; saved_ms = 1_000 + default_tol + 1 → diff > tolerance.
     const current_ms: i64 = 1_000;
-    const saved_ms: i64 = current_ms + Generator.clock_rollback_tolerance_ms + 1;
+    const saved_ms: i64 = current_ms + Generator.default_clock_rollback_tolerance_ms + 1;
     var blob: [Generator.state_size]u8 = undefined;
     @memcpy(blob[0..4], &Generator.state_magic);
     blob[4] = Generator.state_format_version;
@@ -584,7 +584,7 @@ test "Generator.loadState: rejects last_ms beyond NTP tolerance (SEC-P3-02)" {
 
 test "Generator.loadState: accepts last_ms within NTP tolerance (SEC-P3-02)" {
     // Same setup as the rejection test but with saved_ms exactly at the
-    // tolerance boundary (current + 1000).  diff == tolerance → NOT > → accepted.
+    // tolerance boundary (current + default_tolerance). diff == tolerance → NOT > → accepted.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -593,7 +593,7 @@ test "Generator.loadState: accepts last_ms within NTP tolerance (SEC-P3-02)" {
     const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
 
     const current_ms: i64 = 1_000;
-    const saved_ms: i64 = current_ms + Generator.clock_rollback_tolerance_ms;
+    const saved_ms: i64 = current_ms + Generator.default_clock_rollback_tolerance_ms;
     var blob: [Generator.state_size]u8 = undefined;
     @memcpy(blob[0..4], &Generator.state_magic);
     blob[4] = Generator.state_format_version;
@@ -1155,19 +1155,19 @@ test "SEC-P4-01: migrateStateToV3 rejects when no key configured" {
 }
 
 test "SEC-P4-03: default clock_rollback_tolerance_ms is 250 (tightened from 1000)" {
-    var gen = Generator.init();
+    const gen = Generator.init();
     try std.testing.expectEqual(@as(i64, 250), gen.clock_rollback_tolerance_ms);
 }
 
 test "SEC-P4-03: InitOptions.clock_rollback_tolerance_ms overrides the default" {
-    var gen = Generator.initOptions(.{ .clock_rollback_tolerance_ms = 500 });
+    const gen = Generator.initOptions(.{ .clock_rollback_tolerance_ms = 500 });
     try std.testing.expectEqual(@as(i64, 500), gen.clock_rollback_tolerance_ms);
 }
 
 test "SEC-P4-03: InitOptions caps rollback tolerance to [0, 60_000] range" {
-    var gen_lo = Generator.initOptions(.{ .clock_rollback_tolerance_ms = -100 });
+    const gen_lo = Generator.initOptions(.{ .clock_rollback_tolerance_ms = -100 });
     try std.testing.expectEqual(@as(i64, 0), gen_lo.clock_rollback_tolerance_ms);
 
-    var gen_hi = Generator.initOptions(.{ .clock_rollback_tolerance_ms = 1_000_000 });
+    const gen_hi = Generator.initOptions(.{ .clock_rollback_tolerance_ms = 1_000_000 });
     try std.testing.expectEqual(@as(i64, 60_000), gen_hi.clock_rollback_tolerance_ms);
 }
