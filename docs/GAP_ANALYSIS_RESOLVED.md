@@ -73,7 +73,7 @@ Evidence for each resolution is pinned to a concrete file:line, commit SHA, or t
 - **Issue:** [#164](https://gitlab.com/devnw/zig/uuid/-/work_items/164) (still open on tracker)
 - **Category:** Security / Process
 - **Severity:** Info
-- **Resolution:** Added encrypted reporting channel, CVSS v3.1 severity table, and version support matrix.
+- **Resolution:** Added encrypted reporting channel, CVSS v3.1 severity table, and version support matrix. (CVSS v4.0 is now the primary scoring scheme across tracking docs; the v3.1 table in `SECURITY.md` is retained as the backward-compat reference — see `SECURITY.md` § Severity Classification.)
 - **Evidence:** `SECURITY.md` (all three sections present).
 - **Resolved date:** 2026-03-22
 
@@ -569,7 +569,7 @@ recorded under "Phase 3 Closure Cycle" below.
 
 > HEAD at closure: `f77e7da` (pushed). Test state: all unit + integration suites green.
 > Docs-tracked only — no dedicated GitLab work items. 4 full closures + 1 partial
-> (SEC-P3-07 — `security.txt`, CVSS v4.0, and safe-harbor skeleton landed; full
+> (SEC-P3-07 — `security.txt`, CVSS v4.0 (v3.1 equivalents retained in `SECURITY.md`), and safe-harbor skeleton landed; full
 > closure blocked on three human-input TODOs: PGP fingerprint publication, CNA
 > choice, safe-harbor legal review). PERF-31 — previously partial in Group C —
 > is promoted to Closed this round via an additive comptime-generic wrapper.
@@ -623,7 +623,7 @@ recorded under "Phase 3 Closure Cycle" below.
 - **Issue:** tracked in docs only
 - **Category:** Security / CWE-1059 (process)
 - **Severity:** Low (Risk 4, confidence::confirmed)
-- **Resolution (partial):** Landed the mechanical portions that do not require human legal / cryptographic input: (a) `/.well-known/security.txt` published per RFC 9116 with contact, preferred-languages, and expiration; (b) CVSS v4.0 severity statement section added to `SECURITY.md`; (c) safe-harbor language skeleton (Disclose.io-derived) added to `SECURITY.md` as a draft awaiting legal review.
+- **Resolution (partial):** Landed the mechanical portions that do not require human legal / cryptographic input: (a) `/.well-known/security.txt` published per RFC 9116 with contact, preferred-languages, and expiration; (b) CVSS v4.0 severity statement section added to `SECURITY.md` (now the primary scoring scheme; the earlier v3.1 table remains as the backward-compat reference alongside it — see `SECURITY.md` § Severity Classification); (c) safe-harbor language skeleton (Disclose.io-derived) added to `SECURITY.md` as a draft awaiting legal review.
 - **Blocked on (human input, 3 TODOs):**
   1. Publish a PGP key + fingerprint (block: key generation + publication).
   2. Choose + register a CNA path (MITRE vs GitLab CNA vs project-own).

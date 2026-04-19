@@ -3195,11 +3195,11 @@ The truncation detection block at `src/hwaddr/linux.zig:57–61` (triggered when
 
 **Severity:** Info | **Risk Score:** 4 | **Confidence:** Confirmed
 
-**Status: ✅ Closed — Implemented.** Added PGP channel note, CVSS v3.1 severity table, and version support policy to `SECURITY.md`.
+**Status: ✅ Closed — Implemented.** Added PGP channel note, CVSS v3.1 severity table, and version support policy to `SECURITY.md`. (Primary scoring scheme across tracking docs is now CVSS v4.0; the v3.1 table in `SECURITY.md` is retained as the backward-compat reference for consumers still on v3.1 tooling — see `SECURITY.md` § Severity Classification.)
 
 `SECURITY.md` exists but lacks: (1) a PGP key or encrypted reporting channel note, (2) a CVSS/scoring criteria table so reporters understand severity determination, and (3) a version support / end-of-life policy. These gaps can delay or complicate handling of future vulnerability reports.
 
-**Fix:** Add three sections to `SECURITY.md`: encrypted reporting channel, CVSS criteria table (v3.1), and version support matrix.
+**Fix:** Add three sections to `SECURITY.md`: encrypted reporting channel, CVSS criteria table (v3.1 — later extended by SEC-P3-07 with a CVSS v4.0 section which is now the primary scheme), and version support matrix.
 
 **Files:** `SECURITY.md`
 

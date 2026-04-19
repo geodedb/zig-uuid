@@ -666,7 +666,7 @@ Status: Won't Do (intentional; re-confirmed, see SEC-R12-01).
 
 **7. SEC-P3-07** (Low, CWE-1059, Risk 4, confidence::confirmed) — SECURITY.md missing PGP fingerprint, CVE path, safe-harbor, security.txt.
 Evidence: `SECURITY.md:13-40` — reporting section lists email only; no PGP key fingerprint, no CVE assignment path, no safe-harbor clause, no `/.well-known/security.txt`.
-Remediation: add PGP fingerprint, MITRE/GitLab CNA routing, CVSS v4.0 statement, safe-harbor language (Disclose.io template), publish `security.txt`.
+Remediation: add PGP fingerprint, MITRE/GitLab CNA routing, CVSS v4.0 statement (primary scoring scheme; v3.1 equivalents retained in `SECURITY.md` for backward-compat), safe-harbor language (Disclose.io template), publish `security.txt`.
 Status: ⚠️ Partially Closed (2026-04-18, commit `6ffe052`) — `security.txt` (RFC 9116), CVSS v4.0 section, and safe-harbor skeleton (Disclose.io-derived) landed. **Blocked on 3 human-input TODOs:** (1) PGP key + fingerprint publication, (2) CNA choice (MITRE / GitLab CNA / project-own), (3) legal review of safe-harbor language.
 
 **8. SEC-P3-08** (Medium, CWE-670 / CWE-345, Risk 8, confidence::suspected → confirmed post-fix) — Global CSPRNG substitution risk.
