@@ -335,3 +335,55 @@ build-bench:
   script:
     - zig build bench-check -Doptimize=ReleaseFast
   needs: []
+
+# PERF-44: MR-scoped micro-benchmark regression gate.
+#
+# `bench-regression` (above) only runs on `main` + scheduled pipelines, so
+# pre-merge regressions in the three micro suites (parse / format / hash)
+# are not caught until after the MR lands. This job re-runs the three
+# cheapest benches on every merge-request pipeline and compares each against
+# its committed baseline at a 10% threshold. The full `bench-regression`
+# suite (which also includes contention + state) stays main/schedule-only
+# because it is the expensive piece.
+#
+# Rationale for 10% (vs. 15% on main): the micro suites are single-threaded
+# and have tight, stable distributions, so a tighter gate is reasonable.
+# INV-01 pinning mirrors the main bench-regression job (skip when nproc<4).
+bench-micro-mr:
+  stage: fuzz
+  image: debian:bookworm-slim
+  variables:
+    MICRO_THRESHOLD: "0.10"
+    BENCH_PIN_CORES: "1"
+  before_script:
+    - *install-zig
+    - apt-get update && apt-get install -y --no-install-recommends util-linux procps
+  script:
+    - |
+      if [ "${BENCH_PIN_CORES:-1}" = "1" ] && command -v taskset >/dev/null 2>&1 && [ "$(nproc)" -ge 4 ]; then
+        LAST_CORE=$(($(nproc) - 1))
+        if [ "$LAST_CORE" -gt 17 ]; then LAST_CORE=17; fi
+        TASKSET_PREFIX="taskset -c 2-$LAST_CORE"
+        echo "INV-01: pinning bench to cores 2-$LAST_CORE (nproc=$(nproc))"
+      else
+        TASKSET_PREFIX=""
+        echo "INV-01: taskset pin skipped (nproc=$(nproc), BENCH_PIN_CORES=${BENCH_PIN_CORES:-1})"
+      fi
+      export TASKSET_PREFIX
+    - $TASKSET_PREFIX zig build bench-micro-parse -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_parse.json
+    - $TASKSET_PREFIX zig build bench-micro-format -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_format.json
+    - $TASKSET_PREFIX zig build bench-micro-hash -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_hash.json
+    - zig build bench-compare -- --baseline benchmarks/results/baseline_micro_parse.json --candidate benchmarks/results/latest_micro_parse.json --threshold "${MICRO_THRESHOLD}"
+    - zig build bench-compare -- --baseline benchmarks/results/baseline_micro_format.json --candidate benchmarks/results/latest_micro_format.json --threshold "${MICRO_THRESHOLD}"
+    - zig build bench-compare -- --baseline benchmarks/results/baseline_micro_hash.json --candidate benchmarks/results/latest_micro_hash.json --threshold "${MICRO_THRESHOLD}"
+  artifacts:
+    when: always
+    paths:
+      - benchmarks/results/latest_micro_parse.json
+      - benchmarks/results/latest_micro_format.json
+      - benchmarks/results/latest_micro_hash.json
+    expire_in: 30 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  needs:
+    - build-bench
