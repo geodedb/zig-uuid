@@ -1255,3 +1255,21 @@ test "PERF-34: V7 and V1V6 clusters occupy distinct cache lines" {
         @offsetOf(@FieldType(Generator, "v7"), "mono_seq")) / cache_line;
     try std.testing.expectEqual(v7_mutex_line, v7_mono_seq_line);
 }
+
+test "SEC-P4-09: initOptions accepts a well-formed std.Random (debug assertion passes)" {
+    // The known-weak check must accept a well-formed std.Random
+    // derived from a CSPRNG — the expected safe source for
+    // InitOptions.random.  This test exercises the initOptions path
+    // with an explicit random arg so the debug assertion fires in
+    // Debug builds; any regression that causes a legitimate
+    // std.Random vtable to fail the check shows up here.
+    //
+    // We do NOT add a negative-case test that TRIPS the assertion:
+    // std.debug.assert panics the test binary in Debug, which aborts
+    // the whole test run.  Negative testing belongs in ad-hoc sanity
+    // checks, not the automated suite.
+    var chacha = std.Random.ChaCha.init([_]u8{0x5a} ** 32);
+    const rand = chacha.random();
+    var gen = Generator.initOptions(.{ .random = rand });
+    _ = try gen.newV4();
+}
