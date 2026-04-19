@@ -122,6 +122,15 @@ make test-integration
 - Open a discussion issue
 - See [SUPPORT.md](SUPPORT.md) for support options
 
+## Runbooks
+
+Operator runbooks for recurring infra tasks live under
+`docs/runbooks/`. Current runbooks:
+
+- [`glab` auth rotation](docs/runbooks/glab-auth.md) — PAT rotation
+  procedure for the GitLab CLI used by `codepros:audit` and related
+  workflows (GAP-DOC-10).
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
