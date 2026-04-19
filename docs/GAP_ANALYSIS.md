@@ -4264,10 +4264,10 @@ glab issue create \
 
 | Gap-ID | Title | Category | Severity | Status | Next action |
 |--------|-------|----------|----------|--------|-------------|
-| GAP-DOC-05 | README.md omits post-audit public API surface | Docs | High | Not Implemented | Follow-up PR; Phase 2 drafted symbol list |
-| GAP-DOC-06 | README.md missing `benchmarks/` and `zig build bench*` docs | Docs | Medium | Not Implemented | Bundle with GAP-DOC-05 follow-up PR |
-| GAP-DOC-07 | `NamespaceContext` stale refs (CHANGELOG + 2 docs) | Docs | Medium | Not Implemented | In-band close via trailing commit this cycle |
-| GAP-DOC-08 | `tests/integration.zig` zero black-box coverage of new API | Test | High | Not Implemented | Separate PR — new integration suite |
+| GAP-DOC-05 | README.md omits post-audit public API surface | Docs | High | ✅ Closed 2026-04-18 (`8111d41`) | `## Generator Lifecycle & Advanced API` section added |
+| GAP-DOC-06 | README.md missing `benchmarks/` and `zig build bench*` docs | Docs | Medium | ✅ Closed 2026-04-18 (`ed06db2`) | `## Benchmarks` section added |
+| GAP-DOC-07 | `NamespaceContext` stale refs (CHANGELOG + 2 docs) | Docs | Medium | ✅ Closed 2026-04-18 (`7b1c7d3`) | 7 stale refs rewritten across 3 files |
+| GAP-DOC-08 | `tests/integration.zig` zero black-box coverage of new API | Test | High | 🟡 Partial 2026-04-18 | 4/5 tests landed (`de8ee68`, `0f38d0c`, `92f7afa`, `a22c007`); 5th test XFAIL-guarded (`5fe1771`) pending SEC-P4-01 |
 | GAP-DOC-09 | CVSS v3.1 vs v4.0 drift across 3 doc files | Docs | Low | Partial | Fold into next security-review cycle |
 | GAP-DOC-10 | `glab` auth broken — tracker cross-reference unavailable | CI-CD | Medium | Not Implemented | Rotate token; replay `glab` block above |
 
