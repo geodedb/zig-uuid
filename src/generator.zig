@@ -1493,79 +1493,75 @@ pub const Generator = struct {
         self.saveStateImpl(path) catch |e| return mapStateError(e);
     }
 
-    fn saveStateImpl(self: *Generator, path: []const u8) !void {
+    /// QC-113b: pack the v1v6/v7 snapshot into the caller-supplied buffer.
+    /// Runs under BOTH state mutexes (v7 first, v1v6 second — PERF-19 fixed
+    /// acquisition order).  The caller owns the buffer lifetime.
+    ///
+    /// Writes the 32-byte v2 payload region (buf[0..state_size]); the v3
+    /// HMAC trailer is appended by saveStateImpl outside this helper (and
+    /// outside the mutexes, so the HMAC compute does not serialise
+    /// generators on the HMAC code path).
+    ///
+    /// Returns `true` if `state_mac_key` is configured so saveStateImpl
+    /// knows to emit wire-format v3 (payload + 32-byte HMAC trailer).
+    fn packStateIntoBuffer(self: *Generator, buf: *[state_size_v3]u8) bool {
         // Snapshot state under both mutexes; release before I/O.
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
-        // SEC-P3-04: use a single buffer sized for v3 (payload + HMAC trailer).
-        // When `state_mac_key` is null the trailer bytes are never written, so
-        // the file length stays at `state_size`. When non-null we append the
-        // HMAC and write `state_size_v3` bytes.
-        var buf: [state_size_v3]u8 = undefined;
-        const write_version: u8 = if (self.state_mac_key != null)
+        // SEC-P3-04: buffer is sized for v3 (payload + HMAC trailer) by the
+        // caller.  When `state_mac_key` is null the trailer bytes are never
+        // written, so the file length stays at `state_size`.
+        const is_v3 = self.state_mac_key != null;
+        const write_version: u8 = if (is_v3)
             state_format_version_v3
         else
             state_format_version_v2;
-        {
-            self.v7.mutex.lockUncancelable(gio());
-            defer self.v7.mutex.unlock(gio());
-            self.v1v6.mutex.lockUncancelable(gio());
-            defer self.v1v6.mutex.unlock(gio());
 
-            @memcpy(buf[0..4], &state_magic);
-            buf[4] = write_version; // 2 or 3
+        self.v7.mutex.lockUncancelable(gio());
+        defer self.v7.mutex.unlock(gio());
+        self.v1v6.mutex.lockUncancelable(gio());
+        defer self.v1v6.mutex.unlock(gio());
 
-            var flags: u8 = 0;
-            if (self.v1v6.clock_seq_initialized) flags |= 0x01;
-            const has_node = self.hasNodeCache();
-            if (has_node) flags |= 0x02;
-            buf[5] = flags;
+        @memcpy(buf[0..4], &state_magic);
+        buf[4] = write_version; // 2 or 3
 
-            std.mem.writeInt(u16, buf[6..8], @as(u16, self.v1v6.clock_seq), .little);
-            std.mem.writeInt(u64, buf[8..16], @as(u64, self.v1v6.last_v1_ts), .little);
-            if (has_node) {
-                const bytes = self.loadNodeCacheBytes();
-                @memcpy(buf[16..22], &bytes);
-            } else {
-                @memset(buf[16..22], 0);
-            }
-            // SEC-10: persist V7 state.
-            std.mem.writeInt(i64, buf[22..30], self.v7.last_ms, .little);
-            std.mem.writeInt(u16, buf[30..32], @as(u16, self.v7.mono_seq), .little);
+        var flags: u8 = 0;
+        if (self.v1v6.clock_seq_initialized) flags |= 0x01;
+        const has_node = self.hasNodeCache();
+        if (has_node) flags |= 0x02;
+        buf[5] = flags;
+
+        std.mem.writeInt(u16, buf[6..8], @as(u16, self.v1v6.clock_seq), .little);
+        std.mem.writeInt(u64, buf[8..16], @as(u64, self.v1v6.last_v1_ts), .little);
+        if (has_node) {
+            const bytes = self.loadNodeCacheBytes();
+            @memcpy(buf[16..22], &bytes);
+        } else {
+            @memset(buf[16..22], 0);
         }
+        // SEC-10: persist V7 state.
+        std.mem.writeInt(i64, buf[22..30], self.v7.last_ms, .little);
+        std.mem.writeInt(u16, buf[30..32], @as(u16, self.v7.mono_seq), .little);
+        return is_v3;
+    }
 
-        // SEC-P3-04: compute and append HMAC-SHA256 over the payload if a
-        // key is configured. HMAC runs outside the mutex — `buf[0..32]` is
-        // already a snapshot, and the key is an immutable field set at
-        // construction.
-        // SEC-P4-02: capture the key as a pointer (`|*key_ptr|`) into
-        // `self.state_mac_key`'s Optional payload, NOT by value.  A
-        // value capture (`|key|`) creates a 32-byte stack copy that
-        // Zig will not `secureZero` on function return — classic
-        // cleartext-in-memory residue (CWE-316).  The pointer capture
-        // dispatches HMAC directly through the Generator's own storage;
-        // `secureWipeMacKey` (the authoritative wipe path) already
-        // volatile-zeros that storage.  `HmacSha256.create` takes the
-        // key as `*const [32]u8`, so the pointer capture is a drop-in
-        // signature match.
-        const write_len: usize = if (self.state_mac_key) |*key_ptr| blk: {
-            var mac: [state_mac_size]u8 = undefined;
-            std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, buf[0..state_size], key_ptr);
-            @memcpy(buf[state_size..state_size_v3], &mac);
-            break :blk state_size_v3;
-        } else state_size;
-
-        // SEC-9: atomic write — write to <path>.tmp then rename so that a
-        // crash or signal between write and close never leaves a torn file.
-        // SEC-1: mode 0o600 prevents other local users reading the state,
-        // which may contain the node ID (hardware MAC when hwaddr_fn is set).
-        // SEC-R3-01 (CWE-61): Remove any stale or attacker-placed file/symlink at
-        // the .tmp path before creating, then use exclusive:true (O_EXCL|O_CREAT on
-        // POSIX) so the OS refuses to follow a symlink or overwrite any file that
-        // appears between delete and create.  This makes saveState symlink-safe:
-        //   - deleteFileAbsolute unlinks any pre-placed symlink (not the target).
-        //   - exclusive:true fails with EEXIST if a new symlink/file appears in the
-        //     TOCTOU window, preventing the write from reaching the symlink target.
-        // The mutex is NOT held during I/O (see PERF note above).
+    /// QC-113b: perform the atomic write-then-rename dance, owning all
+    /// filesystem-level security and durability invariants.  No generator
+    /// state is touched; the function is pure I/O over the caller-supplied
+    /// bytes.  Invariants preserved from pre-refactor saveStateImpl:
+    ///
+    ///   - SEC-9: write to `<path>.tmp`, fsync, then rename atomically.
+    ///   - SEC-1 / SEC-P3-03 (CWE-276 / CWE-732): mode 0o600 on POSIX via
+    ///     `Permissions.fromMode` on create AND an explicit post-create
+    ///     fchmod (umask-proof).  Windows has no POSIX mode concept, so
+    ///     the fchmod branch is skipped.
+    ///   - SEC-R3-01 (CWE-61): stale-file delete before create +
+    ///     `exclusive = true` (O_EXCL) to refuse symlink follow and
+    ///     refuse to overwrite a file that races into the tmp path.
+    ///   - PERF-35: fsync the file data before close, then fsync the
+    ///     parent directory so the rename itself is durable across crash.
+    ///   - SEC-R2-15: named `tmp_suffix` / explicit PATH_MAX rather than
+    ///     magic `4100`.
+    fn atomicWriteStateFile(path: []const u8, bytes: []const u8) !void {
         // SEC-R2-15: Use a named constant instead of the magic number 4100.
         // 4096 = OS maximum path length (POSIX PATH_MAX); + 4 for ".tmp" suffix.
         const tmp_suffix = ".tmp";
@@ -1612,7 +1608,7 @@ pub const Generator = struct {
                 const errno_val = std.os.linux.errno(rc);
                 if (errno_val != .SUCCESS) return Error.StateIoFailure;
             }
-            try f.writePositionalAll(io, buf[0..write_len], 0);
+            try f.writePositionalAll(io, bytes, 0);
             // PERF-35: flush file data to stable storage BEFORE the
             // defer-close runs.  rename(2) only atomically swaps the
             // directory entry — the file's data blocks may still be
@@ -1657,6 +1653,47 @@ pub const Generator = struct {
             };
             try dir_as_file.sync(io);
         }
+    }
+
+    /// QC-113b: orchestrator for `saveState`.  Splits into three phases:
+    ///   1. `packStateIntoBuffer` — snapshot under both mutexes.
+    ///   2. Append HMAC-SHA256 trailer outside mutexes if a key is set.
+    ///   3. `atomicWriteStateFile` — pure I/O (open / write / fsync /
+    ///      rename / dirsync), no generator state.
+    fn saveStateImpl(self: *Generator, path: []const u8) !void {
+        // SEC-P3-04: use a single buffer sized for v3 (payload + HMAC trailer).
+        // When `state_mac_key` is null the trailer bytes are never written, so
+        // the file length stays at `state_size`. When non-null we append the
+        // HMAC and write `state_size_v3` bytes.
+        var buf: [state_size_v3]u8 = undefined;
+        const is_v3 = self.packStateIntoBuffer(&buf);
+
+        // SEC-P3-04: compute and append HMAC-SHA256 over the payload if a
+        // key is configured. HMAC runs outside the mutex — `buf[0..32]` is
+        // already a snapshot, and the key is an immutable field set at
+        // construction.
+        // SEC-P4-02: capture the key as a pointer (`|*key_ptr|`) into
+        // `self.state_mac_key`'s Optional payload, NOT by value.  A
+        // value capture (`|key|`) creates a 32-byte stack copy that
+        // Zig will not `secureZero` on function return — classic
+        // cleartext-in-memory residue (CWE-316).  The pointer capture
+        // dispatches HMAC directly through the Generator's own storage;
+        // `secureWipeMacKey` (the authoritative wipe path) already
+        // volatile-zeros that storage.  `HmacSha256.create` takes the
+        // key as `*const [32]u8`, so the pointer capture is a drop-in
+        // signature match.
+        const write_len: usize = if (is_v3) blk: {
+            const key_ptr: *const [32]u8 = if (self.state_mac_key) |*k| k else unreachable;
+            var mac: [state_mac_size]u8 = undefined;
+            std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, buf[0..state_size], key_ptr);
+            @memcpy(buf[state_size..state_size_v3], &mac);
+            break :blk state_size_v3;
+        } else state_size;
+
+        // SEC-9 / SEC-1 / SEC-R3-01 / SEC-P3-03 / PERF-35: delegated to
+        // the pure-I/O helper.  See atomicWriteStateFile for the full
+        // invariant list.
+        try atomicWriteStateFile(path, buf[0..write_len]);
     }
 
     /// Load generator state from stable storage (F-9, SEC-10, PERF-04).
