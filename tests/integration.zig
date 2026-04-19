@@ -404,3 +404,50 @@ test "integration: timingSafeEql unequal UUIDs (QC-74)" {
     // Symmetry: b.timingSafeEql(a) must agree with a.timingSafeEql(b).
     try std.testing.expect(a.timingSafeEql(b) == b.timingSafeEql(a));
 }
+
+// =============================================================================
+// GAP-DOC-08.1: HMAC v3 state round-trip + tampered-tag rejection
+// =============================================================================
+
+test "integration: HMAC v3 state round-trip + tampered-tag rejection" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Zig 0.16 removed tmp.dir.realpath; reconstruct the tmp path via cwd +
+    // the well-known .zig-cache/tmp/<sub_path> layout produced by tmpDir().
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try std.process.currentPath(io, &cwd_buf);
+    var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buf,
+        "{s}/.zig-cache/tmp/{s}/hmac.state",
+        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
+    );
+
+    const key: [32]u8 = .{0x5a} ** 32;
+
+    var gen = uuid.Generator.initOptions(.{ .state_mac_key = key });
+    _ = try gen.newV7();
+    try gen.saveState(path);
+
+    // Correct-key round-trip loads.
+    var gen2 = uuid.Generator.initOptions(.{ .state_mac_key = key });
+    try gen2.loadState(path);
+
+    // Tamper with the HMAC trailer — read the file, flip one byte in
+    // the last 32 bytes, write it back, then verify loadState rejects.
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(bytes);
+    try std.testing.expectEqual(@as(usize, 64), bytes.len);
+    bytes[63] ^= 0x01;
+    {
+        const f = try std.Io.Dir.createFileAbsolute(io, path, .{
+            .permissions = std.Io.File.Permissions.fromMode(0o600),
+        });
+        defer f.close(io);
+        try f.writePositionalAll(io, bytes, 0);
+    }
+
+    var gen3 = uuid.Generator.initOptions(.{ .state_mac_key = key });
+    try std.testing.expectError(uuid.Error.StateMacMismatch, gen3.loadState(path));
+}
