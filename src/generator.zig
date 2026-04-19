@@ -1087,6 +1087,40 @@ pub const Generator = struct {
         return .{ .t = ts.value, .node = node, .clock_seq = self.v1v6.clock_seq };
     }
 
+    /// QC-113a / QC-115: shared preamble output for V1 and V6 generation.
+    /// Holds the three values both byte-layouts consume — the 60-bit
+    /// Gregorian timestamp, the resolved node ID, and the clock_seq —
+    /// so the two callers can focus solely on their version-specific
+    /// `writeInt` sequences.  This is an internal value type; not pub.
+    const V1V6Core = struct {
+        t: u60,
+        node: [6]u8,
+        clock_seq: u14,
+    };
+
+    /// QC-113a / QC-115: extract the node-prefetch + resolveV1V6State
+    /// scaffolding that was duplicated between `newV1AtTime` and
+    /// `newV6AtTime`.  Preserves the PERF-05 / PERF-27 invariants:
+    /// the node prefetch runs OUTSIDE the v1v6 mutex, and the
+    /// atomic-acquire `hasNodeCache()` probe gates the cold-path
+    /// syscalls.  Behaviour-preserving: identical fetchRawNode /
+    /// resolveV1V6State call sequence as before the dedup.
+    fn buildV1V6Core(self: *Generator, ts: Timestamp) Error!V1V6Core {
+        // PERF-05: Pre-fetch node outside the mutex on the cold path to avoid
+        // blocking all threads during OS syscalls (socket + ioctl on Linux,
+        // getifaddrs on macOS).  fetchRawNode reads only immutable generator
+        // fields so it is safe without the lock.
+        // PERF-27: fast-path probe is now an acquire-load of the atomic valid
+        // flag, making the unsynchronised read data-race-free (TSan-clean).
+        const prefetched: ?[6]u8 = if (!self.hasNodeCache())
+            try self.fetchRawNode()
+        else
+            null;
+
+        const s = try self.resolveV1V6State(ts, prefetched);
+        return .{ .t = s.t, .node = s.node, .clock_seq = s.clock_seq };
+    }
+
     /// Generate a UUIDv1 (Gregorian timestamp + node ID).
     ///
     /// Uses `Timestamp.now()` (system clock) — NOT affected by `withClock()`.
@@ -1102,18 +1136,7 @@ pub const Generator = struct {
     /// **Errors:** `Error.RandomError` (CSPRNG failure for clock_seq init or
     /// random node ID), `Error.NoHWAddressFound` (hwaddr_fn set but failed).
     pub fn newV1AtTime(self: *Generator, ts: Timestamp) Error!UUID {
-        // PERF-05: Pre-fetch node outside the mutex on the cold path to avoid
-        // blocking all threads during OS syscalls (socket + ioctl on Linux,
-        // getifaddrs on macOS).  fetchRawNode reads only immutable generator
-        // fields so it is safe without the lock.
-        // PERF-27: fast-path probe is now an acquire-load of the atomic valid
-        // flag, making the unsynchronised read data-race-free (TSan-clean).
-        const prefetched: ?[6]u8 = if (!self.hasNodeCache())
-            try self.fetchRawNode()
-        else
-            null;
-
-        const s = try self.resolveV1V6State(ts, prefetched);
+        const s = try self.buildV1V6Core(ts);
         var u: UUID = undefined;
         const t = s.t;
         // time_low: bits 0-31
@@ -1143,14 +1166,7 @@ pub const Generator = struct {
     ///
     /// Same error surface as `newV1AtTime`.
     pub fn newV6AtTime(self: *Generator, ts: Timestamp) Error!UUID {
-        // PERF-05: Pre-fetch node outside the mutex on the cold path.
-        // PERF-27: fast-path is an atomic acquire-load of node_cache_valid.
-        const prefetched: ?[6]u8 = if (!self.hasNodeCache())
-            try self.fetchRawNode()
-        else
-            null;
-
-        const s = try self.resolveV1V6State(ts, prefetched);
+        const s = try self.buildV1V6Core(ts);
         var u: UUID = undefined;
         const t = s.t;
         // V6: reorder timestamp for lexicographic sort
