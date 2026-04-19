@@ -482,6 +482,44 @@ millisecond timestamp field, so UUIDs remain monotonically sortable across threa
 rates exceeding 4 M/sec with strict per-generator monotonicity, use `newV7AtTime` with V8
 for the extra sub-millisecond bits.
 
+### V3/V5 Prehashed Namespaces (PERF-30 / PERF-41)
+
+`Generator.initV3Namespace(ns)` and `Generator.initV5Namespace(ns)` return a
+`PrehashedV3` / `PrehashedV5` handle that captures the MD5 / SHA-1 hasher
+state after the 16-byte namespace has been absorbed. Calling `.name(bytes)`
+on the handle clones the hasher, feeds the name, and finalises — skipping
+the per-call MD5 / SHA-1 init + namespace update that `newV3(ns, name)`
+and `newV5(ns, name)` perform on every invocation.
+
+For repeated generation under the same namespace, prefer the prehashed
+helpers — they skip the per-call hasher init + namespace update, which
+is the dominant cost on short names. Measured ~1.2x speedup on short
+hostnames; the delta grows with call count.
+
+```zig
+const uuid = @import("uuid");
+
+// One-time setup: absorb the namespace.
+const pre = uuid.initV3Namespace(uuid.namespace_dns);
+
+// Reuse across many names — zero re-hash of the 16-byte namespace.
+for (hostnames) |h| {
+    const id = pre.name(h);
+    _ = id;
+}
+```
+
+Equivalent V5 helper: `uuid.initV5Namespace(ns)` returning a `PrehashedV5`
+with the same `.name(bytes)` contract.
+
+Security: the prehashed handles inherit the same MD5 / SHA-1 collision
+caveats as `newV3` / `newV5`. Use `newV5Strict` / `newV5Bounded` at the
+call sites where you want the SEC-P3-05 namespace allow-list or the
+SEC-P4-12 length cap; there is no prehashed variant of those strict /
+bounded wrappers today (considered as option (b) "NamespacedGenerator
+wrapper" under PERF-41 and deferred — the raw prehashed handles are
+sufficient for the current workload profiles).
+
 ## Benchmarks
 
 The repo ships a structured JSON benchmark suite under `benchmarks/`
