@@ -899,3 +899,146 @@ glab issue create \
 `build.zig.zon` `json` dependency: pinned commit matches upstream HEAD at audit time (no stale pin). Recommend a **weekly scheduled pipeline** that runs `zig fetch --save` into a scratch worktree and emails/opens an issue if the resolved hash drifts from the pinned `.zon` value — detects silent upstream force-pushes (content-hash mismatch) and advertises stale pins for security-relevant upstream fixes.
 
 _Last updated: 2026-04-18 — Phase 4 follow-up audit (cycle 2). 9 new findings (1 HIGH awaiting sign-off, 2 Medium one-commit-each, 3 Low close-in-session, 3 Low follow-up). No GitLab mutations performed in this cycle._
+
+---
+
+## Phase 4 follow-up audit (2026-04-19, cycle 3)
+
+> **HEAD:** (post-2026-04-18 Plan 2/3 closure — `7e57b2b` at time of detection).
+> **Scope:** Phase-2/3 adversarial re-review focused on: `Generator.reseed()` atomic-state residue, Windows state-load symlink handling, V3/V5 CPU-DoS inputs, timestamp bit-packing brittleness, lockfree V7 saturation under injected clock, and CI component supply-chain pin integrity.
+> **Tracker status:** `glab` auth is **DEGRADED** (invalid token — see GAP-DOC-10). No GitLab mutations were performed; the `glab` block below is documentation-only and must be replayed after token rotation.
+> Risk = Impact × Likelihood × Reach (retained from prior cycles; 0–100 scale).
+> ID continuation: SEC-P4-10 onward. Adversarial findings tagged `SEC-P4-A*`. CI-catalog finding assigned `SEC-P4-14` (kept within the SEC-P4 taxonomy; no SEC-CI-* namespace exists yet).
+
+### New Findings (Phase 4, cycle 3)
+
+**10. SEC-P4-10** (Medium, CWE-665 "Improper Initialization" + CWE-331 "Insufficient Entropy" in context, Risk **12**, confidence::confirmed) — `Generator.reseed()` does not clear `v7_atomic_state`.
+Evidence: `src/generator.zig:551-563` (the `reseed` body — clears rng, node cache, last timestamps, clock seq) vs `src/generator.zig:189` (the `v7_atomic_state: std.atomic.Value(u128)` field used by the lockfree V7 fast-path). After a manual `reseed()` with `v7_lockfree = true`, the atomic packed `(ms, seq)` word retains the pre-reseed sequence within the same millisecond window, so the first ≤4095 V7 UUIDs minted after reseed inherit predictable sequence bits. Contradicts the SEC-P3-01 fork-safety contract (reseed is documented to reset all generator-internal entropy-derived state).
+Attack scenario: an attacker who previously observed V7 output from the process (e.g., via logs) can reason about the next 12-bit sequence counter values after the operator force-reseeds, within the current millisecond window. Bounded to ≤4095 predictable IDs per reseed event per process.
+Remediation: under **both** mutexes in `reseed()`, add `self.v7_atomic_state.store(0, .release);` so the `(ms, seq)` word is zeroed alongside all other generator-internal state.
+Acceptance: unit test asserts that a V7 mint taken immediately before `reseed()` and another taken immediately after (within the same ms) do **not** share a contiguous sequence counter when the atomic path is active.
+References: CWE-665, CWE-331; cross-links to SEC-P3-01 (fork-safety contract).
+Plan: new `docs/superpowers/plans/2026-04-19-sec-p4-10-reseed-v7-atomic.md` (this plan also folds in SEC-P4-A1 since both touch the same lockfree V7 code path).
+Implementable this session; one-commit fix.
+
+**11. SEC-P4-11** (Low, CWE-61 "UNIX Symbolic Link Following", Risk **2**, confidence::confirmed) — Windows `loadState` lacks NOFOLLOW-equivalent.
+Evidence: `src/generator.zig:1629-1630` (Windows open path) opens the state file without a reparse-point guard, whereas the POSIX branch at `src/generator.zig:1632` sets `O_NOFOLLOW`. On NTFS, an attacker with write access to the state directory can replace the state file with a junction/symlink to an arbitrary readable file on the same volume.
+Attack scenario: shape-existence oracle — the attacker learns whether a target path exists and is shaped like a state file (size/magic match) without reading its contents (magic/size checks on the follow-through data cause clean failure). No content leak; Windows ACLs normally mitigate.
+Remediation: open with `FILE_FLAG_OPEN_REPARSE_POINT` via `std.os.windows.OpenFile`, then call `GetFileInformationByHandle` and reject if `FILE_ATTRIBUTE_REPARSE_POINT` is set. Match the POSIX NOFOLLOW contract.
+Acceptance: integration test on Windows (or mocked via `std.os.windows`) confirms that a junction pointing at a valid-shaped victim file fails `loadState` before any content is consumed.
+References: CWE-61.
+Plan: append task to `docs/superpowers/plans/2026-04-18-security-minor-hardening.md`.
+
+**12. SEC-P4-12** (Low, CWE-400 "Uncontrolled Resource Consumption", Risk **6**, confidence::confirmed) — `newV3` / `newV5` accept unbounded `name`.
+Evidence: `src/generator.zig:1162-1199` — both constructors stream the caller-supplied `name: []const u8` directly into MD5 / SHA-1 with no length cap.
+Attack scenario: a caller that forwards attacker-controlled blobs (e.g., a webhook body) into `newV3` / `newV5` can be made to consume multi-second CPU time via a 2³¹-byte input. Not memory-unsafe; pure CPU-DoS. The library is defense-in-depth; the real mitigation belongs to the caller.
+Remediation: add an API caveat in the function docstrings and ship `newV3Bounded(ns, name, max_len) !Uuid` / `newV5Bounded(ns, name, max_len) !Uuid` siblings that return `error.NameTooLong` when `name.len > max_len`.
+Acceptance: test asserts `newV5Bounded` returns `error.NameTooLong` for `name.len == max_len + 1`; docs on `newV3` / `newV5` cite CWE-400 and point to the `*Bounded` variants.
+References: CWE-400.
+Plan: append task to `docs/superpowers/plans/2026-04-18-security-minor-hardening.md`.
+
+**13. SEC-P4-13** (Very Low, CWE-704 "Incorrect Type Conversion or Cast", Risk **1**, confidence::suspected) — `@intCast((hi<<16)|lo)` refactor-fragile.
+Evidence: `src/timestamp.zig:154` — the packed-timestamp reconstruction `@intCast((hi << 16) | lo)` silently relies on `hi <= 2^48-1` and `lo <= 2^16-1`. A future refactor that widens either half (e.g., swaps sub-ms units) can produce a truncating cast with no compile-time warning in ReleaseFast.
+Remediation: add `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0);` immediately before the `@intCast`, plus a single-line comment explaining the invariant.
+Acceptance: debug build traps if either half overflows its field; ReleaseFast semantics unchanged.
+References: CWE-704.
+Plan: append task to `docs/superpowers/plans/2026-04-18-security-minor-hardening.md`.
+
+### New Adversarial Findings (Phase 3 re-review)
+
+**A1. SEC-P4-A1** (Low, CWE-400 "Uncontrolled Resource Consumption", Risk **4**, confidence::suspected) — Lockfree V7 saturation sleep-loop DoS via injected `withClock`.
+Evidence: `src/generator.zig:768-781` — in the saturation branch of `newV7Atomic`, when the 12-bit sequence counter overflows within a millisecond the loop `std.Thread.sleep(1 * std.time.ns_per_ms)`s without consuming any retry budget. If a caller has exposed `InitOptions.clock` (via `withClock`) to untrusted config, an attacker who pins the clock return value can starve the generator: throughput drops from ~4M/sec to ~4k/sec (≈1000× degradation).
+Attack scenario: attacker-controlled `withClock` returns a frozen `ms`; concurrent `newV7` callers all hit the same saturation branch and sleep-loop indefinitely. **Reach is constrained**: usually unreachable in-process because `withClock` is an internal test-injection knob, not a user-facing config surface.
+Remediation: cap total wall-clock time spent in the `newV7Atomic` saturation loop (e.g., `max_total_ns = 10 * std.time.ns_per_ms`) and surface `Error.InvalidTimestamp` if exceeded. Document in the `InitOptions.clock` doc comment that the clock **must be monotone**; violation is caller-UB.
+Acceptance: test injects a frozen clock, expects `Error.InvalidTimestamp` within 10 ms rather than an unbounded sleep; docstring on `InitOptions.clock` explicitly forbids non-monotone clocks.
+References: CWE-400.
+Plan: **folded into** `docs/superpowers/plans/2026-04-19-sec-p4-10-reseed-v7-atomic.md` (same lockfree V7 code path as SEC-P4-10).
+
+**14. SEC-P4-14** (Medium-High, CWE-494 "Download of Code Without Integrity Check" + CWE-1357 "Reliance on Insufficiently Trustworthy Component", Risk **40**, confidence::confirmed) — CI catalog components pinned by moving tag.
+Evidence: `.gitlab-ci.yml:11-24` — eight `include:` entries reference `gitlab.com/devnw/ci-catalog/*@v1.7.1`, using a **tag** rather than a 40-char commit SHA. Tags are mutable; a compromised maintainer (or anyone with write access to the catalog project) can force-push `v1.7.1` to point at arbitrary YAML.
+Attack scenario: upstream catalog maintainer or credential compromise → force-push to `v1.7.1` → next pipeline pulls malicious YAML under `CI_JOB_TOKEN`. Since SAST, SBOM, gitleaks, and other secret-adjacent jobs all run under that token, the compromised include can exfiltrate secrets, poison artifacts, or bypass gate checks. Internet-facing blast radius: all CI pipelines on the default branch.
+Remediation: replace `@v1.7.1` with `@<40-char-SHA>` for each of the eight includes. Add a quarterly rotation runbook mirroring `docs/runbooks/glab-auth-rotation.md` so the pin is audited and advanced on a cadence.
+Acceptance: `grep -E 'gitlab.com/devnw/ci-catalog/.*@[0-9a-f]{40}' .gitlab-ci.yml` matches all eight includes; no `@v[0-9]` tag references remain; runbook committed under `docs/runbooks/`.
+References: CWE-494, CWE-1357; OWASP A08:2021 Software and Data Integrity Failures.
+Plan: new `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md`.
+Exploit surface: internet-facing (CI).
+
+### Triage plan (Phase 4, cycle 3)
+
+| Gap-ID | Severity | Risk | Session plan | One-commit? |
+| ------ | -------- | ---- | ------------ | ----------- |
+| SEC-P4-10 | Medium | 12 | ✅ Closed 2026-04-19 (`5202714`) — `reseed` clears `v7_atomic_state` under both mutexes; co-closed SEC-P4-A1 (CAS budget 32_768 → 4096). | Landed. |
+| SEC-P4-11 | Low | 2 | ✅ Closed 2026-04-19 (`f67e8bf`) — Windows `loadState` post-open `NtQueryInformationFile` reparse-point reject. | Landed. |
+| SEC-P4-12 | Low | 6 | ✅ Closed 2026-04-19 (`904d352`) — `newV3Bounded` / `newV5Bounded` + `Error.NameTooLong`; CWE-400 docstring on unbounded variants. | Landed. |
+| SEC-P4-13 | Very Low | 1 | Open — `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0)` + comment at `src/timestamp.zig:154`. Append to `2026-04-18-security-minor-hardening.md`. Not closed this cycle (Very Low; stretch). | Yes (next cycle). |
+| SEC-P4-A1 | Low | 4 | ✅ Closed 2026-04-19 (`5202714`) — folded into SEC-P4-10 commit. CAS retry budget tightened from 32_768 to 4096; `InitOptions.clock` docstring forbids non-monotone clocks. | Landed. |
+| SEC-P4-14 | Medium-High | 40 | 🚧 **Blocked** — `git ls-remote https://gitlab.com/devnw/ci-catalog` fails: `fatal: could not read Username for 'https://gitlab.com'`. Plan `2026-04-19-sec-p4-ci-catalog-sha-pins.md` is ready but requires the operator-provided tag→SHA map for 8 components at `gitlab.com/devnw/ci-catalog@v1.7.1`. See § _Unblock action required (SEC-P4-14)_ below. | Yes once unblocked (CI YAML + runbook). |
+
+### Ready-to-run `glab` commands (documentation-only — `glab` auth is DEGRADED this cycle; DO NOT execute)
+
+> **Prerequisite:** `glab auth status` must report green first. See GAP-DOC-10 / the glab-auth runbook.
+
+```bash
+# SEC-P4-10 — Medium (V7 atomic state residue after reseed)
+glab issue create \
+  --title "SEC-P4-10: Generator.reseed() does not clear v7_atomic_state (CWE-665 / CWE-331)" \
+  --label "security,severity::medium,type::bug,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 3. Risk 12. Add self.v7_atomic_state.store(0, .release) under both mutexes in reseed(). Plan: docs/superpowers/plans/2026-04-19-sec-p4-10-reseed-v7-atomic.md."
+
+# SEC-P4-11 — Low (Windows loadState NOFOLLOW-equivalent)
+glab issue create \
+  --title "SEC-P4-11: Windows loadState lacks NOFOLLOW-equivalent (CWE-61)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 3. Risk 2. FILE_FLAG_OPEN_REPARSE_POINT + GetFileInformationByHandle rejection on reparse-point bit."
+
+# SEC-P4-12 — Low (V3/V5 unbounded name CPU-DoS)
+glab issue create \
+  --title "SEC-P4-12: newV3/newV5 accept unbounded name — CPU-DoS (CWE-400)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 3. Risk 6. Add newV3Bounded/newV5Bounded + docstring caveat."
+
+# SEC-P4-13 — Very Low (timestamp @intCast refactor-fragile)
+glab issue create \
+  --title "SEC-P4-13: timestamp.zig:154 @intCast((hi<<16)|lo) refactor-fragile (CWE-704)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 3. Risk 1. Add std.debug.assert bit-width invariant + comment."
+
+# SEC-P4-A1 — Low (folded into SEC-P4-10 plan)
+glab issue create \
+  --title "SEC-P4-A1: Lockfree V7 saturation sleep-loop DoS via injected withClock (CWE-400)" \
+  --label "security,severity::low,type::hardening,confidence::suspected,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 3. Risk 4. Cap total wall-clock time in newV7Atomic saturation loop; document InitOptions.clock monotonicity. Folded into SEC-P4-10 plan."
+
+# SEC-P4-14 — Medium-High, confidential (CI catalog tag→SHA pin)
+glab issue create \
+  --title "SEC-P4-14: CI catalog components pinned by moving tag @v1.7.1 (CWE-494 / CWE-1357)" \
+  --label "security,severity::high,type::supply-chain,confidence::confirmed,status::triage" \
+  --confidential \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 3. Risk 40. Replace 8× @v1.7.1 in .gitlab-ci.yml with 40-char SHA pins; add quarterly rotation runbook. Plan: docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md."
+```
+
+### Closure cycle 2026-04-19 — outcomes
+
+| Gap-ID | Severity | Risk | Outcome | Commit | Evidence |
+| ------ | -------- | ---- | ------- | ------ | -------- |
+| SEC-P4-10 | Medium | 12 | ✅ Closed | `5202714` | `src/generator.zig` (`reseed` atomic clear under both mutexes); `src/generator_test.zig` (pre/post-reseed sequence disjointness). |
+| SEC-P4-11 | Low | 2 | ✅ Closed | `f67e8bf` | `src/generator.zig` (Windows `NtQueryInformationFile` reparse-point reject). |
+| SEC-P4-12 | Low | 6 | ✅ Closed | `904d352` | `src/generator.zig` (`newV3Bounded`, `newV5Bounded`, `Error.NameTooLong`, CWE-400 docstrings); `src/generator_test.zig` (boundary tests). |
+| SEC-P4-13 | Very Low | 1 | Open | — | Not closed this cycle (stretch). Remains queued on `2026-04-18-security-minor-hardening.md`. |
+| SEC-P4-A1 | Low | 4 | ✅ Closed (co-closed) | `5202714` | `src/generator.zig` (`max_retries = 4096`; `InitOptions.clock` monotonicity docstring); bounded-time saturation test. |
+| SEC-P4-14 | Medium-High | 40 | 🚧 Blocked | — | See § _Unblock action required (SEC-P4-14)_ below. |
+
+### Unblock action required (SEC-P4-14)
+
+> **Blocker:** No credentials currently held for `gitlab.com/devnw/ci-catalog`. `git ls-remote https://gitlab.com/devnw/ci-catalog refs/tags/v1.7.1` fails with `fatal: could not read Username for 'https://gitlab.com'`. Without the tag→SHA mapping for the 8 catalog components this work cannot land.
+
+**Unblock steps (operator action):**
+
+1. Operator runs `git ls-remote https://gitlab.com/devnw/ci-catalog refs/tags/v1.7.1` with valid credentials and captures the returned 40-char SHA, **OR** the operator provides the SHA map for the 8 components directly, **OR** the operator authorizes an unauthenticated `git ls-remote` against the public repo if that mode is supported.
+2. Replace each `@v1.7.1` at `.gitlab-ci.yml:11-24` with the corresponding 40-char SHA. Include order and component→SHA mapping must be preserved; no include may remain on the moving tag.
+3. Add new runbook `docs/runbooks/ci-catalog-sha-rotation.md` using `docs/runbooks/glab-auth.md` as the template. Cover: quarterly cadence, how to fetch the next `ci-catalog` tag's SHA, how to verify no in-flight MRs break, and the gitleaks / SAST / SBOM job revalidation checklist.
+4. Verify CI pipeline is green after the pin change: `zig build test`, integration, bench-check, cross-compile matrix (GAP-CI-01), and the three secret-adjacent jobs (gitleaks, SAST, SBOM).
+
+**Plan:** `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` (ready to execute once step 1 above is satisfied).
+
+_Last updated: 2026-04-19 — Phase 4 follow-up audit (cycle 3). 6 new findings added (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1): 1 Medium-High supply-chain (Risk 40), 1 Medium (Risk 12), 1 Low (Risk 6), 1 Low (Risk 4), 1 Low (Risk 2), 1 Very Low (Risk 1). `glab` auth DEGRADED — no tracker mutations performed._

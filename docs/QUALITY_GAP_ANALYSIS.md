@@ -1,10 +1,10 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-04-18 (Phase 4 follow-up audit, cycle 2 — HEAD `bcde186`; 10 new findings QC-103..QC-112; 3 closed in-band this session (QC-104, QC-105, QC-109); 7 remain open.)
+> **Last updated:** 2026-04-19 (Phase 2/3 quality audit — 5 new findings QC-113..QC-117. **Closure cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-113d Deferred (rationale in `cb0f44d` body — V7 CAS state-machine extraction defers to preserve ABA-avoidance + PERF-40 cache layout); QC-114 closed (`b7fb01e`); QC-115 co-closed with QC-113a (`2a8f4ea`). QC-116, QC-117 remain Open. `glab` auth currently DEGRADED; platform issues not filed this cycle.)
 > **Zig version audited:** 0.16.0
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
-> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102), Phase 4 follow-up cycle 2 (QC-103–QC-112)
+> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102), Phase 4 follow-up cycle 2 (QC-103–QC-112), Phase 2/3 audit 2026-04-19 (QC-113–QC-117)
 
 ---
 
@@ -36,8 +36,12 @@
 | 12 | Medium | 1 | ✅ Closed |
 | 12 | Low | 12 | ✅ All closed |
 | 12 | Info | 2 | ✅ All closed |
+| Phase 2/3 (2026-04-19) | Medium | 2 | ✅ QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-113d Deferred; QC-114 closed (`b7fb01e`) |
+| Phase 2/3 (2026-04-19) | Low | 3 | ✅ QC-115 co-closed (`2a8f4ea`); 🟡 QC-116, QC-117 Open |
 
-**Total issues:** 91 — **89 closed, 2 Won't Do (QC-16, QC-64), 0 open**
+**Total issues:** 106 — **96 closed (92 prior + QC-113a/b/c + QC-114 + QC-115 this cycle), 2 Won't Do (QC-16, QC-64), 1 Deferred (QC-113d), 7 open (7 from Phase 4 cycle 2 + QC-116, QC-117 from Phase 2/3)**
+
+_Note: QC-113 is tracked as four sub-items QC-113a/b/c/d. QC-113a/b/c are closed this cycle; QC-113d (V7 CAS state-machine extraction) is deliberately deferred — see the `cb0f44d` commit body for rationale (ABA-avoidance and PERF-40 cache-layout risk)._
 
 ### Top 5 Closed Items (Cycle 12)
 
@@ -2565,3 +2569,47 @@ EOF
 _Last updated: 2026-04-18 — Phase 4 follow-up cycle 2 complete. 10 new findings (QC-103–QC-112): 1 High, 5 Medium, 4 Low. 3 closed in-band (QC-104, QC-105, QC-109); 7 open. 101 total issues tracked (92 closed, 2 Won't Do, 7 open from this cycle)._
 
 _Phase 3 closure cycle complete (Group C round, 2026-04-18) — 10 closed, 0 deferred._
+
+---
+
+## Phase 2/3 quality audit (2026-04-19)
+
+> **Date:** 2026-04-19. Zig 0.16.0. Fresh Phase-2/3 quality-reviewer pass focused on security-critical file size, OS-specific test coverage, V1/V6 preamble duplication, pre-commit/CI parity, and test-log hygiene.
+> 5 new findings (QC-113..QC-117), stack-ranked by PriorityScore = Impact × Likelihood × 4.
+> **Tracker status:** `glab` auth is currently DEGRADED (invalid token). No platform issues were created this cycle; all entries remain local-only. Re-file via `glab` once auth is restored (see GAP-DOC-10 runbook).
+> Cross-reference: GAP-DOC-11/12/13 and GAP-CI-01 in `docs/GAP_ANALYSIS.md`.
+
+### Stack-ranked findings
+
+| Rank | QC | Sev | Score | Category | Finding | File:Line | Recommended fix | Confidence | Status |
+| ---- | --- | --- | ----- | -------- | ------- | --------- | --------------- | ---------- | ------ |
+| 1 | QC-113 | Medium | 9 | maintainability | Oversized functions in security-critical `src/generator.zig`: `loadStateImpl` ~193 LOC, `saveStateImpl` ~154 LOC, `newV7Atomic` ~105 LOC. | `src/generator.zig:1620-1812` (loadStateImpl), `:1406-1559` (saveStateImpl), `:702-806` (newV7Atomic) | Split into pure helpers: `readAndValidateFile`, `verifyMac`, `enforcePolicy`, `applyStateUnderLock` / `packStateUnderLocks`, `appendMac`, `atomicWriteAndSync`; V7 state machine for `newV7Atomic`. Folds in QC-115 (V1/V6 preamble dedup). Plan: `plans/2026-04-19-qc-113-generator-refactor.md`. | confirmed | ✅ QC-113a/b/c Closed 2026-04-19 (`2a8f4ea`, `47ec3d0`, `cb0f44d`). QC-113d Deferred — see `cb0f44d` body (V7 CAS state-machine extraction preserves ABA-avoidance + PERF-40 cache layout). |
+| 2 | QC-114 | Medium | 9 | tests | OS-specific hwaddr backends untested: `src/hwaddr/linux.zig` (119 LOC, 0 tests), `src/hwaddr/macos.zig` (92 LOC, 0 tests), `src/hwaddr/windows.zig` (1 round-trip test only — no OOM or fail-branch coverage). | `src/hwaddr/linux.zig`, `src/hwaddr/macos.zig`, `src/hwaddr/windows.zig` | Add platform-conditional unit tests covering success + OOM + ENOENT + permission-denied + empty-iface branches; gate via `builtin.os.tag`. Plan: `plans/2026-04-19-qc-114-hwaddr-tests.md`. | confirmed | ✅ Closed 2026-04-19 (`b7fb01e`) — +11 per-OS hwaddr tests (linux/macos/windows). |
+| 3 | QC-115 | Low | 6 | readability | Duplicated V1/V6 preamble (node-prefetch + `resolveV1V6State` scaffolding copy-pasted; only `writeInt` layout differs). | `src/generator.zig:1070-1098` vs `:1113-1138` | Fold shared preamble into a private helper; keep only the 4-byte layout branch per version. Rolled into QC-113 plan (`plans/2026-04-19-qc-113-generator-refactor.md`). | confirmed | ✅ Closed 2026-04-19 (`2a8f4ea`) — co-closed with QC-113a (V1/V6 preamble helper extracted). |
+| 4 | QC-116 | Low | 4 | ci-cd | Pre-commit hooks skip `test-integration`, `bench-check`, `gitleaks`, SAST, and SBOM locally — local gate is strictly weaker than CI, allowing commits that fail CI-only checks. | `.pre-commit-config.yaml` vs `.gitlab-ci.yml` | Add opt-in parity hooks (`make pre-push-integration`, `gitleaks detect`, `make bench-check`); document trade-off in CONTRIBUTING. Plan: `plans/2026-04-19-qc-116-precommit-parity.md`. | confirmed | Open |
+| 5 | QC-117 | Low | 4 | tests | Test stderr noise during policy-downgrade tests — expected warn from `src/generator.zig:1710` emitted without an expected-warn capture, polluting `zig build test` output. | `src/generator.zig:1710`; `src/generator_state_test.zig` (downgrade tests) | Add expected-warn capture (stderr redirect / log sink fixture) around downgrade tests so intentional warns are swallowed by the test, not the console. Folded into docs-and-tests-refresh plan. | confirmed | Open |
+
+### Plans queued
+
+- `plans/2026-04-19-qc-113-generator-refactor.md` — generator.zig oversized-fn refactor (also closes QC-115).
+- `plans/2026-04-19-qc-114-hwaddr-tests.md` — OS-conditional hwaddr unit tests across linux/macos/windows.
+- `plans/2026-04-19-qc-116-precommit-parity.md` — pre-commit ↔ CI parity (integration/bench/secret-scan hooks).
+- docs-and-tests-refresh (existing plan) — QC-117 test-log hygiene folded in.
+
+### Cross-references
+
+- GAP-DOC-11, GAP-DOC-12, GAP-DOC-13 — tracked in `docs/GAP_ANALYSIS.md`.
+- GAP-CI-01 — tracked in `docs/GAP_ANALYSIS.md`.
+- SEC-P4-01 / QC-103 downgrade-resistance still open from Phase 4 cycle 2 (not a duplicate of QC-117).
+
+### Roadmap (Phase 2/3 2026-04-19)
+
+- **Quick wins (<1d):** QC-116, QC-117 — hook additions + test log capture.
+- **Medium (1–5d):** QC-113 (+QC-115 rolled in), QC-114 — one refactor plan + one test-matrix plan.
+- **Strategic (>5d):** none this cycle; QC-113 sits at the upper end of Medium.
+
+### Tracker status
+
+`glab` auth is DEGRADED (invalid token) as of 2026-04-19. No `glab issue create` calls were made this cycle. When auth is restored, file the five new issues using the same label scheme as Phase 4 cycle 2 (`quality`, `severity::{medium,low}`, `category::{maintainability,tests,readability,ci-cd}`, `confidence::confirmed`, `status::triage`) and back-link the issue URLs into the Stack-Ranked Findings table above.
+
+_Last updated: 2026-04-19 — Phase 2/3 quality audit + closure cycle. 5 new findings (QC-113–QC-117): 2 Medium, 3 Low. **Closure cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-113d Deferred (rationale in `cb0f44d`); QC-114 closed (`b7fb01e`); QC-115 co-closed (`2a8f4ea`). QC-116, QC-117 remain Open. 106 total issues tracked (96 closed, 2 Won't Do, 1 Deferred, 7 Open: 7 from Phase 4 cycle 2 + QC-116, QC-117 from Phase 2/3)._

@@ -4,7 +4,8 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-04-18 — Group D closure round (HEAD `f77e7da`): 5 items closed this cycle (4 full + 1 partial SEC-P3-07). Phase-3 totals: 60 items tracked — 52 previously closed (16 Phase-3 initial + 25 Phase-2 bookkeeping + 11 Group C) + 4 Group D full + 1 Group D partial (SEC-P3-07 — 3 human-input TODOs) + 4 Won't-Do. **Remaining open: 0.**
+> Last updated: 2026-04-19 — Phase 5 gap-detector sync + Phase 4 security cycle 3 + closure cycle. Legacy F-1..F-9 + G-1..G-10 closed sections migrated to `docs/GAP_ANALYSIS_RESOLVED.md`; 4 new quality gaps recorded (GAP-CI-01, GAP-DOC-11, GAP-DOC-12, GAP-DOC-13) plus 6 new security gaps from Phase-4 cycle 3 (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1). `glab` auth remains DEGRADED (see GAP-DOC-10 in the resolved file) — no tracker mutations performed this cycle. **Closure cycle 2026-04-19:** GAP-CI-01 closed (`87c4a0e`); SEC-P4-10 + SEC-P4-A1 closed (`5202714`); SEC-P4-11 closed (`f67e8bf`); SEC-P4-12 closed (`904d352`); SEC-P4-14 Blocked pending operator-provided SHAs for 8 ci-catalog components. **Remaining open: 4** (SEC-P4-13 Very Low, SEC-P4-14 Medium-High Blocked, GAP-DOC-11 Low, GAP-DOC-12 Low).
+> Previously (2026-04-18): Group D closure round (HEAD `f77e7da`): 5 items closed (4 full + 1 partial SEC-P3-07). Phase-3 totals: 60 items tracked — 52 previously closed (16 Phase-3 initial + 25 Phase-2 bookkeeping + 11 Group C) + 4 Group D full + 1 Group D partial (SEC-P3-07 — 3 human-input TODOs) + 4 Won't-Do.
 
 ---
 
@@ -20,330 +21,17 @@
 
 ## RFC-9562 Compliance Gaps
 
-### F-1 — V1/V6 embed real MAC address by default
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** `Generator.hwaddr_fn` changed from `HWAddrFn = hwaddr.get` to
-`?HWAddrFn = null`. When `null` (the default), `getNode()` generates a random
-multicast node ID (multicast bit set per RFC §6.10) and caches it for the
-generator's lifetime. MAC-based node IDs are now an explicit opt-in via
-`Generator.withHWAddr(f)` or setting `.hwaddr_fn = f`.
-
-**Files:** `src/generator.zig`
-
-**Tests added:**
-
-- `Generator.newV1: default uses random node with multicast bit (F-1)`
-- `Generator.newV1: node is cached across calls (F-6/G-6)`
-- `Generator.clearNodeCache refreshes node (F-6/G-6)`
-
----
-
-### F-2 — `UUID.version()` panics on unknown version nibbles
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** `Version` is now a non-exhaustive enum (trailing `_`). `@enumFromInt`
-on unknown nibbles (nil UUID version=0, DCE Security version=2, future
-versions 9–15) returns an unnamed member instead of panicking. `UUID.nil.version()`
-no longer panics.
-
-**Files:** `src/uuid.zig`
-
-**Tests added:**
-
-- `UUID.version() is safe for nil UUID (nibble=0, non-exhaustive)`
-- `UUID.version() is safe for future nibble (nibble=15)`
-
----
-
-### F-3 — Clock sequence fallback is not random
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** `initClockSeq()` changed from `void` to `Error!void`. The
-hardcoded `{ 0x12, 0x34 }` fallback is removed. CSPRNG failure now propagates
-as `Error.RandomError` from `newV1AtTime`/`newV6AtTime`.
-
-**Files:** `src/generator.zig`
-
-**Tests added:**
-
-- `Generator.initClockSeq propagates CSPRNG failure (F-3)`
-
----
-
-### F-4 — V1/V6 do not detect node ID changes
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added `last_node: ?[6]u8 = null` to `Generator`. In
-`newV1AtTime` and `newV6AtTime`, after fetching the node ID, the new node is
-compared against `last_node`; if different, `clock_seq` is incremented. The
-node change detection works in conjunction with `clearNodeCache()` (F-6).
-
-**Files:** `src/generator.zig`
-
-**Tests added:**
-
-- `Generator.newV1: clock_seq increments on node ID change (F-4)`
-
----
-
-### F-5 — No URN output method
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added `UUID.toURN(buf: *[45]u8) []u8` and
-`UUID.toURNAlloc(alloc) ![]u8`. `"urn:uuid:"` (9 chars) + canonical UUID
-(36 chars) = 45 chars. Output is parseable by `UUID.fromString`.
-
-**Files:** `src/uuid.zig`
-
-**Tests added:**
-
-- `toURN produces urn:uuid: prefix (F-5 / G-3)`
-- `toURNAlloc (F-5 / G-3)`
-- `toURN round-trip with fromString (F-5 / G-3)`
-
----
-
-### F-6 — RFC Appendix A test vectors not fully asserted
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added three deterministic tests using exact RFC Appendix A
-timestamps, node IDs, and clock sequences. The V7 test uses a module-level
-mock rand to fix rand_a and rand_b.
-
-**Files:** `src/generator.zig`
-
-**Tests added:**
-
-- `RFC Appendix A.1 — V1 test vector (F-6)` → `c232ab00-9414-11ec-b3c8-9f6bdeced846`
-- `RFC Appendix A.5 — V6 test vector (F-6)` → `1ec9414c-232a-6b00-b3c8-9f6bdeced846`
-- `RFC Appendix A.6 — V7 test vector (F-6)` → `017f22e2-79b0-7cc3-98c4-dc0c0c07398f`
-
----
-
-### F-7 — `Timestamp.now()` unchecked cast on pre-1970 system clock
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** `Timestamp.now()` changed from `Timestamp` to `Error!Timestamp`.
-Returns `Error.InvalidTimestamp` when `std.time.nanoTimestamp()` returns a
-negative value (system clock before 1970). `Timestamp.fromUnixNano` and
-`Timestamp.fromUnixMs` also guard against negative input. `Error.InvalidTimestamp`
-added to the error set in `src/uuid.zig`. Callers in `generator.zig`
-(`newV1`, `newV6`) updated to `try Timestamp.now()`.
-
-**Files:** `src/uuid.zig`, `src/timestamp.zig`, `src/generator.zig`
-
-**Tests added:**
-
-- `Timestamp now() pre-1970 guard (F-7)`
-- `Timestamp fromUnixMs: negative ms returns error (F-7)`
-
----
-
-### F-8 — Shared V1/V6 clock_seq state is undocumented
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added a comprehensive doc comment to the `Generator` struct
-explaining the shared V1/V6 clock domain, the default random-node behaviour
-(F-1), and the node-caching behaviour (F-6/G-6).
-
-**Files:** `src/generator.zig`
-
----
-
-### F-9 — No persistent state across process restarts
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added `Generator.saveState(path)` and `Generator.loadState(path)`.
-The state is serialised as a 22-byte binary blob: 4-byte magic `"UUID"`,
-1-byte format version, 1-byte flags, u16 clock_seq, u64 last_v1_ts, and
-optional 6-byte node_cache. Returns `Error.InvalidFormat` on corrupt or
-version-mismatched files.
-
-**Files:** `src/generator.zig`
-
-**Tests added:**
-
-- `Generator.saveState and loadState round-trip (F-9)`
-- `Generator.loadState: corrupt magic returns error (F-9)`
+> **Status:** All F-1..F-9 entries are closed. Full Closed / Implemented text
+> has been migrated to `docs/GAP_ANALYSIS_RESOLVED.md` under "Legacy F-Series
+> (RFC-9562 Compliance) — Closed 2026-04-19".
 
 ---
 
 ## Feature Gaps vs gofrs/uuid
 
-### G-1 — No binary marshal / unmarshal
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added `UUID.toBytes() [16]u8` — returns a value copy of `.bytes`.
-`UUID.fromBytes` already existed. Together they form the full binary marshal
-interface.
-
-**Files:** `src/uuid.zig`
-
-**Tests added:**
-
-- `toBytes returns 16-byte copy (G-1)`
-
----
-
-### G-2 — No `fmt`-style format verbs / uppercase output
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added four output methods:
-
-- `toStringUpper(buf: *[36]u8) []u8` — uppercase with dashes
-- `toStringUpperAlloc(alloc) ![]u8` — allocating uppercase with dashes
-- `toHex(buf: *[32]u8) []u8` — lowercase no dashes
-- `toHexUpper(buf: *[32]u8) []u8` — uppercase no dashes
-
-All four share `toStringImpl`/`toHexImpl` private helpers parameterised on
-the hex alphabet string.
-
-**Files:** `src/uuid.zig`
-
-**Tests added:**
-
-- `toStringUpper produces uppercase with dashes (G-2)`
-- `toHex produces lowercase without dashes (G-2)`
-- `toHexUpper produces uppercase without dashes (G-2)`
-- `toStringUpperAlloc (G-2)`
-
----
-
-### G-3 — No URN output
-
-**Status: ✅ Closed / Implemented** (same as F-5)
-
----
-
-### G-4 — `timestampFromV7` returns `i64` ms, not `Timestamp`
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** `timestampFromV7` now returns `Error!Timestamp` (consistent with
-`timestampFromV1`/`timestampFromV6`). It converts the embedded Unix ms to a
-Gregorian 100-ns `Timestamp` value via `Timestamp.fromUnixMs`. Callers use
-`.toUnixMs()` to recover the raw millisecond value. All callers updated
-(`tests/integration.zig`, `examples/basic.zig`, `src/generator.zig` test).
-
-**Files:** `src/timestamp.zig`, `tests/integration.zig`, `examples/basic.zig`,
-`src/generator.zig`
-
-**Tests added:**
-
-- `timestampFromV7: returns Timestamp with correct Unix ms (G-4)`
-- `timestampFromV7: large real-world timestamp (G-4)`
-- `integration: timestampFromV7 returns Timestamp (G-4)`
-
----
-
-### G-5 — No `Timestamp` → wall clock conversion
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added three conversion helpers to `Timestamp`:
-
-- `toUnixMs() i64` — Unix milliseconds
-- `toUnixSec() i64` — Unix seconds
-- The existing `toUnixNano() i128` already covered nanoseconds
-
-**Files:** `src/timestamp.zig`
-
-**Tests added:**
-
-- `Timestamp.toUnixMs round-trip (G-5)`
-- `Timestamp.toUnixSec round-trip (G-5)`
-- `Timestamp.toUnixNano is consistent with toUnixMs (G-5)`
-
----
-
-### G-6 — MAC address fetched on every V1/V6 generation
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added `node_cache: ?[6]u8 = null` to `Generator`. `getNode()`
-returns the cached value immediately on subsequent calls. `clearNodeCache()`
-sets `node_cache = null`, forcing a re-fetch on the next V1/V6 generation.
-
-**Files:** `src/generator.zig`
-
-**Tests added:**
-
-- `Generator.newV1: node is cached across calls (F-6/G-6)`
-- `Generator.clearNodeCache refreshes node (F-6/G-6)`
-
----
-
-### G-7 — No `fromStringOrNil` / `fromBytesOrNil` convenience variants
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added:
-
-- `UUID.fromStringOrNil(s) UUID` — returns nil UUID on parse error
-- `UUID.fromBytesOrNil(b) UUID` — returns nil UUID on wrong length
-
-**Files:** `src/uuid.zig`
-
-**Tests added:**
-
-- `fromStringOrNil: valid input returns UUID (G-7)`
-- `fromStringOrNil: invalid input returns nil (G-7)`
-- `fromBytesOrNil: valid 16 bytes (G-7)`
-- `fromBytesOrNil: wrong length returns nil (G-7)`
-
----
-
-### G-8 — No `Generator` interface / abstraction
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added `GeneratorInterface` — a vtable-based polymorphism type
-that wraps any `*Generator` (or future concrete implementation). Exposes all
-10 generation methods. `GeneratorInterface.fromGenerator(gen: *Generator)`
-creates a `GeneratorInterface` backed by the concrete `Generator` via the
-`generator_vtable` constant.
-
-**Files:** `src/generator.zig`, `src/root.zig`
-
-**Tests added:**
-
-- `GeneratorInterface.fromGenerator: newV4 dispatches correctly (G-8)`
-- `GeneratorInterface: newV3 dispatches correctly (G-8)`
-- `GeneratorInterface: newV7AtTime dispatches correctly (G-8)`
-- `integration: GeneratorInterface dispatches newV4 (G-8)`
-
----
-
-### G-9 — No `IsZero()` alias
-
-**Status: ✅ Closed / Implemented**
-
-**Change:** Added `UUID.isZero() bool` as a direct alias for `isNil()`.
-
-**Files:** `src/uuid.zig`
-
-**Tests added:**
-
-- `isZero alias for isNil (G-9)`
-- `integration: isZero is an alias for isNil (G-9)`
-
----
-
-### G-10 — `version()` unsafe for unknown nibbles (also RFC F-2)
-
-**Status: ✅ Closed / Implemented** (same as F-2)
+> **Status:** All G-1..G-10 entries are closed. Full Closed / Implemented text
+> has been migrated to `docs/GAP_ANALYSIS_RESOLVED.md` under "Legacy G-Series
+> (gofrs/uuid Feature Parity) — Closed 2026-04-19".
 
 ---
 
@@ -4270,5 +3958,208 @@ glab issue create \
 | GAP-DOC-08 | `tests/integration.zig` zero black-box coverage of new API | Test | High | 🟡 Partial 2026-04-18 | 4/5 tests landed (`de8ee68`, `0f38d0c`, `92f7afa`, `a22c007`); 5th test XFAIL-guarded (`5fe1771`) pending SEC-P4-01 |
 | GAP-DOC-09 | CVSS v3.1 vs v4.0 drift across 3 doc files | Docs | Low | ✅ Closed 2026-04-18 (`ca990fc`) | Primary version CVSS v4.0 with v3.1 cross-reference to SECURITY.md |
 | GAP-DOC-10 | `glab` auth broken — tracker cross-reference unavailable | CI-CD | Medium | ✅ Closed 2026-04-18 (`ccb2bd4`) | Runbook at docs/runbooks/glab-auth.md; token rotation is operator action |
+
+---
+
+## Phase 5 Gap-Detector Sync (2026-04-19)
+
+> **HEAD at detection:** `7e57b2b` (main).
+> **Scope:** Third-pass gap-detector sweep. Legacy F-1..F-9 + G-1..G-10 sections
+> (already marked Closed inline) migrated to `docs/GAP_ANALYSIS_RESOLVED.md`
+> under new "Legacy F-Series" and "Legacy G-Series" groupings. 4 new open gaps
+> recorded this cycle — 1 Critical CI blocker + 3 Low doc-drift.
+> **Tracker status:** `glab` authentication is DEGRADED (invalid token, per
+> GAP-DOC-10). No GitLab mutations performed. Local docs are the source of
+> truth for this cycle; re-mirror to the tracker once `glab auth status`
+> reports green.
+
+### New Gaps (4)
+
+#### GAP-CI-01 — CI references removed build step `check-cross` [CLOSED]
+
+- **Issue:** (none — `glab` auth DEGRADED this cycle)
+- **Category:** CI-CD
+- **Severity:** Critical
+- **Status:** ✅ Closed 2026-04-19 (`87c4a0e`) — `fix(ci): close GAP-CI-01 — invoke cross-compile via -Dtarget per triple`. Migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle.
+- **Resolution:** Replaced the single `zig build check-cross` invocation with a matrix of `zig build check -Dtarget=<triple>` calls across 5 targets (linux-x86_64, linux-aarch64, macos-aarch64, windows-x86_64-gnu, freestanding-arm). Restored the CI contract without reintroducing the removed build step. Side-fix: Windows portability for `generator.zig` (+ `generator_state_test.zig` conditional) required to keep all 5 cross-compile targets green.
+- **Evidence:** `.gitlab-ci.yml` (matrix invocation); `build.zig` (no `check-cross` step needed); `src/generator.zig` + `src/generator_state_test.zig` (Windows portability side-fix); CI pipeline: 5/5 targets pass `zig build check`.
+
+#### GAP-DOC-11 — Stale test counts in `docs/REQUIREMENTS.md`
+
+- **Issue:** (none — create once `glab` auth restored)
+- **Category:** Docs
+- **Severity:** Low
+- **Status:** Not Implemented
+- **Current state (evidence):**
+  - `docs/REQUIREMENTS.md` cites 172 unit tests and 32 integration tests.
+  - Actual counts on HEAD `7e57b2b`: 241 unit tests and 37 integration tests (run `zig build test` to confirm).
+- **Impact/Risk:** Readers under-estimate coverage; "flatfile mirrors tracker" contract weakened.
+- **Recommended fix:** Re-run `zig build test` and refresh the counts (and any prose that references them) in a targeted commit. Low priority — fold into next docs refresh.
+
+#### GAP-DOC-12 — `docs/REQUIREMENTS.md` misrepresents `jsonMarshal` / `jsonUnmarshal` as UUID methods
+
+- **Issue:** (none — create once `glab` auth restored)
+- **Category:** Docs
+- **Severity:** Low
+- **Status:** Not Implemented
+- **Current state (evidence):**
+  - `docs/REQUIREMENTS.md` lists `jsonMarshal` / `jsonUnmarshal` as methods on the `UUID` struct.
+  - Actual definitions: free functions in a separate `uuid_json` module (`src/uuid_json.zig`), not methods on `UUID`.
+- **Impact/Risk:** Misleads integrators on the JSON API shape and import path; encourages `uuid.UUID.jsonMarshal(…)` syntax that does not compile.
+- **Recommended fix:** Rewrite the JSON subsection in `docs/REQUIREMENTS.md` to cite `@import("uuid_json")` and the free-function signatures from `src/uuid_json.zig`. Bundle with GAP-DOC-11.
+
+#### GAP-DOC-13 — Legacy F-/G-series closures not migrated to the resolved file
+
+- **Issue:** (none — self-resolving via this cycle)
+- **Category:** Docs
+- **Severity:** Low
+- **Status:** ✅ Closed 2026-04-19 (in-band with this sync)
+- **Current state (evidence):**
+  - `docs/GAP_ANALYSIS.md` previously carried the full Closed rationale for F-1..F-9 and G-1..G-10 inline in the "RFC-9562 Compliance Gaps" and "Feature Gaps vs gofrs/uuid" sections, violating the "open-only" invariant for `GAP_ANALYSIS.md`.
+  - Sections migrated to `docs/GAP_ANALYSIS_RESOLVED.md` this cycle; the two headings above now carry only a pointer stub.
+- **Impact/Risk:** Closed-item clutter inflated the open-gap file; reviewers had to grep per-entry status to separate open from closed.
+- **Recommended fix:** Closed in-band with this audit — the migration is the fix. Verification: `grep -n "^### [FG]-" docs/GAP_ANALYSIS.md` returns zero matches.
+
+### Phase 5 Summary
+
+| Gap-ID | Title | Category | Severity | Status | Next action |
+|--------|-------|----------|----------|--------|-------------|
+| GAP-CI-01 | `.gitlab-ci.yml` invokes removed `check-cross` build step | CI-CD | Critical | ✅ Closed 2026-04-19 (`87c4a0e`) | Replaced with per-triple `zig build check -Dtarget=…` matrix; 5/5 targets pass |
+| GAP-DOC-11 | Stale test counts (172/32 listed vs actual 241/37) in REQUIREMENTS.md | Docs | Low | Open | Refresh counts after `zig build test` |
+| GAP-DOC-12 | `jsonMarshal`/`jsonUnmarshal` listed as UUID methods (are free functions in `uuid_json`) | Docs | Low | Open | Rewrite JSON subsection to cite `src/uuid_json.zig` |
+| GAP-DOC-13 | F-1..F-9 + G-1..G-10 inline closures not migrated to RESOLVED file | Docs | Low | ✅ Closed 2026-04-19 | Migration landed in this sync |
+
+### Ready-to-run `glab` commands (documentation only — DO NOT execute; token broken)
+
+> **Prerequisite:** `glab auth status` must report green first. See GAP-DOC-10 (closed; runbook at `docs/runbooks/glab-auth.md`).
+> Skipped from this block: **GAP-DOC-13** (closed in-band this cycle).
+
+```bash
+# Pre-requisite — confirm auth is healthy before mutating.
+glab auth status
+
+# GAP-CI-01 — Critical — CI references removed build step check-cross.
+glab issue create \
+  --title "GAP-CI-01: .gitlab-ci.yml invokes removed build step check-cross" \
+  --label "quality,category::ci-cd,severity::critical,confidence::confirmed,status::triage"
+
+# GAP-DOC-11 — Low — Stale test counts in docs/REQUIREMENTS.md.
+glab issue create \
+  --title "GAP-DOC-11: docs/REQUIREMENTS.md stale test counts (172/32 vs actual 241/37)" \
+  --label "quality,category::docs,severity::low,confidence::confirmed,status::triage"
+
+# GAP-DOC-12 — Low — jsonMarshal/jsonUnmarshal misrepresented as UUID methods.
+glab issue create \
+  --title "GAP-DOC-12: docs/REQUIREMENTS.md lists jsonMarshal/jsonUnmarshal as UUID methods" \
+  --label "quality,category::docs,severity::low,confidence::confirmed,status::triage"
+```
+
+---
+
+## Phase 4 follow-up audit (2026-04-19 cycle 3)
+
+> **HEAD at detection:** `7e57b2b` (post-Plan 2 / Plan 3 closure).
+> **Scope:** Phase-2/3 adversarial re-review — `Generator.reseed()` atomic-state residue, Windows state-load symlink handling, V3/V5 CPU-DoS inputs, timestamp bit-packing brittleness, lockfree V7 saturation under injected clock, and CI component supply-chain pin integrity. Findings cross-referenced in `docs/SECURITY_REVIEW_NOTES.md` Phase 4 cycle 3.
+> **Tracker status:** `glab` authentication is DEGRADED (invalid token — see GAP-DOC-10 in `docs/GAP_ANALYSIS_RESOLVED.md`). No GitLab mutations performed this cycle; the `glab` block at the end of `docs/SECURITY_REVIEW_NOTES.md` Phase 4 cycle 3 is documentation-only and must be replayed after `glab auth status` is green.
+> **ID continuation:** SEC-P4-10 … SEC-P4-14 (SEC-P4-14 chosen over SEC-CI-01 to keep the existing SEC-P4 taxonomy; no SEC-CI-* namespace exists yet). Adversarial re-review findings retain the `SEC-P4-A*` tag.
+
+### New Gaps (6)
+
+#### SEC-P4-10 — `Generator.reseed()` does not clear `v7_atomic_state` [CLOSED]
+
+- **Issue:** (none — `glab` auth DEGRADED this cycle)
+- **Category:** Security / Bug
+- **Severity:** Medium (Risk 12; confidence::confirmed)
+- **CWE/OWASP:** CWE-665 (Improper Initialization), CWE-331 (Insufficient Entropy in context)
+- **Status:** ✅ Closed 2026-04-19 (`5202714`) — `fix(security): close SEC-P4-10/A1 — reseed clears v7 atomic; CAS budget = 4096`. Co-closed SEC-P4-A1 in the same commit.
+- **Resolution:** `reseed()` now calls `self.v7_atomic_state.store(0, .release)` under both mutexes so the packed `(ms, seq)` word is zeroed alongside all other generator-internal entropy-derived state. Restores the SEC-P3-01 fork-safety contract end-to-end. Additionally tightens the `newV7Atomic` CAS retry budget from 32_768 to 4096 (RFC-9562 §6.2 counter width), which closes the SEC-P4-A1 saturation sleep-loop DoS concern.
+- **Evidence:** `src/generator.zig` (`reseed` atomic clear; `max_retries = 4096`); `src/generator_test.zig` (pre/post reseed sequence disjointness; saturation bounded-time assertion). Migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle.
+
+#### SEC-P4-11 — Windows `loadState` lacks NOFOLLOW-equivalent [CLOSED]
+
+- **Issue:** (none — `glab` auth DEGRADED this cycle)
+- **Category:** Security / Hardening
+- **Severity:** Low (Risk 2; confidence::confirmed)
+- **CWE/OWASP:** CWE-61 (UNIX Symbolic Link Following — analog for NTFS junction/reparse)
+- **Status:** ✅ Closed 2026-04-19 (`f67e8bf`) — `fix(security): close SEC-P4-11 — reject reparse-point state files on Windows`.
+- **Resolution:** Post-open `NtQueryInformationFile` check rejects any file with `FILE_ATTRIBUTE_REPARSE_POINT` set on the Windows branch of `loadState`. Brings the Windows code path to parity with the POSIX `O_NOFOLLOW` contract enforced in SEC-R11-04.
+- **Evidence:** `src/generator.zig` (Windows reparse-point reject in `openStateFileAndReadHeader`); Windows-only test (skipped on non-Windows runners as noted in the cross-compile matrix).
+
+#### SEC-P4-12 — `newV3` / `newV5` accept unbounded `name` [CLOSED]
+
+- **Issue:** (none — `glab` auth DEGRADED this cycle)
+- **Category:** Security / Hardening
+- **Severity:** Low (Risk 6; confidence::confirmed)
+- **CWE/OWASP:** CWE-400 (Uncontrolled Resource Consumption)
+- **Status:** ✅ Closed 2026-04-19 (`904d352`) — `feat(security): close SEC-P4-12 — bounded v3/v5 hash input; docstring caveat`.
+- **Resolution:** Added `newV3Bounded(ns, name, max_len) !UUID` and `newV5Bounded(ns, name, max_len) !UUID` sibling APIs that return the new `Error.NameTooLong` when `name.len > max_len`. Docstrings on the unbounded `newV3` / `newV5` now cite CWE-400 and direct callers at the `*Bounded` variants when the input is attacker-controlled.
+- **Evidence:** `src/generator.zig` (`newV3Bounded`, `newV5Bounded`, `Error.NameTooLong`, CWE-400 docstrings); `src/generator_test.zig` (boundary tests at `max_len` and `max_len + 1`).
+
+#### SEC-P4-13 — `@intCast((hi<<16)|lo)` refactor-fragile at `src/timestamp.zig:154`
+
+- **Issue:** (none — create once `glab` auth restored)
+- **Category:** Security / Hardening
+- **Severity:** Very Low (Risk 1; confidence::suspected)
+- **CWE/OWASP:** CWE-704 (Incorrect Type Conversion or Cast)
+- **Current state (evidence):**
+  - `src/timestamp.zig:154` — silently relies on `hi <= 2^48-1` and `lo <= 2^16-1`. A future refactor widening either half would produce a truncating cast with no compile-time warning in ReleaseFast.
+- **Impact/Risk:** Silent truncation on a future refactor; no current defect.
+- **Recommended fix:** Add `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0);` + single-line invariant comment.
+- **Plan:** append task to `docs/superpowers/plans/2026-04-18-security-minor-hardening.md`.
+
+#### SEC-P4-A1 — Lockfree V7 saturation sleep-loop DoS via injected `withClock` [CLOSED]
+
+- **Issue:** (none — co-closed with SEC-P4-10)
+- **Category:** Security / Hardening
+- **Severity:** Low (Risk 4; confidence::suspected)
+- **CWE/OWASP:** CWE-400 (Uncontrolled Resource Consumption)
+- **Status:** ✅ Closed 2026-04-19 (`5202714`) — folded into the SEC-P4-10 commit.
+- **Resolution:** CAS retry budget in `newV7Atomic` tightened from 32_768 to 4096 (RFC-9562 §6.2 counter width). Under an attacker-pinned clock the loop now exits after 4096 retries to the mutex fallback path rather than entering an unbounded sleep. Docstring on `InitOptions.clock` updated to forbid non-monotone clocks.
+- **Evidence:** `src/generator.zig` (`max_retries = 4096`; `InitOptions.clock` docstring); `src/generator_test.zig` (bounded-time assertion under frozen clock).
+
+#### SEC-P4-14 — CI catalog components pinned by moving tag `@v1.7.1` [BLOCKED]
+
+- **Issue:** (none — create once `glab` auth restored; **file as confidential**)
+- **Category:** Security / Supply-chain / CI-CD
+- **Severity:** Medium-High (Risk 40; confidence::confirmed)
+- **CWE/OWASP:** CWE-494 (Download of Code Without Integrity Check), CWE-1357 (Reliance on Insufficiently Trustworthy Component); OWASP A08:2021 (Software & Data Integrity Failures)
+- **Status:** 🚧 **Blocked** — no-op this cycle. The project does not currently hold valid credentials for `gitlab.com/devnw/ci-catalog`, and `git ls-remote https://gitlab.com/devnw/ci-catalog refs/tags/v1.7.1` fails with `fatal: could not read Username for 'https://gitlab.com'`. Without the tag→SHA mapping for the 8 catalog components this work cannot land.
+- **Current state (evidence):**
+  - `.gitlab-ci.yml:11-24` — eight `include:` entries reference `gitlab.com/devnw/ci-catalog/*@v1.7.1` by tag.
+  - A compromised catalog maintainer can force-push `v1.7.1` → next pipeline pulls malicious YAML under `CI_JOB_TOKEN` (SAST / SBOM / gitleaks all run with it).
+- **Unblock steps (operator action required):**
+  1. Operator runs `git ls-remote https://gitlab.com/devnw/ci-catalog refs/tags/v1.7.1` with valid credentials, OR provides the 40-char SHA mapping for the 8 components directly, OR authorizes `git ls-remote` against the public repo.
+  2. Replace each `@v1.7.1` at `.gitlab-ci.yml:11-24` with the corresponding 40-char SHA.
+  3. Add new runbook `docs/runbooks/ci-catalog-sha-rotation.md` (template: `docs/runbooks/glab-auth.md`).
+  4. Verify CI pipeline still green after the pin change.
+- **Impact/Risk:** Compromise propagates to every pipeline on `main`; secret-adjacent jobs can be weaponized. Internet-facing CI exposure.
+- **Recommended fix:** Replace `@v1.7.1` with `@<40-char-SHA>` for each of the 8 includes; add a quarterly rotation runbook mirroring `docs/runbooks/glab-auth-rotation.md`.
+- **Plan:** `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md`.
+- **Taxonomy note:** SEC-P4-14 retained over SEC-CI-01 to keep the existing SEC-P4 taxonomy; the `type::supply-chain` + `type::ci-cd` labels preserve discoverability.
+
+### Phase 4 cycle 3 Summary
+
+| Gap-ID | Title | Category | Severity | Risk | Status | Next action |
+|--------|-------|----------|----------|------|--------|-------------|
+| SEC-P4-10 | `Generator.reseed()` does not clear `v7_atomic_state` | Security | Medium | 12 | ✅ Closed 2026-04-19 (`5202714`) | `reseed` zeroes atomic under both mutexes; co-closed SEC-P4-A1 |
+| SEC-P4-11 | Windows `loadState` lacks NOFOLLOW-equivalent | Security | Low | 2 | ✅ Closed 2026-04-19 (`f67e8bf`) | `NtQueryInformationFile` reparse-point reject on Windows open path |
+| SEC-P4-12 | `newV3` / `newV5` accept unbounded `name` | Security | Low | 6 | ✅ Closed 2026-04-19 (`904d352`) | `newV3Bounded`/`newV5Bounded` + `Error.NameTooLong`; CWE-400 docstring |
+| SEC-P4-13 | `@intCast((hi<<16)\|lo)` refactor-fragile | Security | Very Low | 1 | Open | Append to `2026-04-18-security-minor-hardening.md` — `std.debug.assert` invariant |
+| SEC-P4-A1 | Lockfree V7 saturation sleep-loop DoS via injected `withClock` | Security | Low | 4 | ✅ Closed 2026-04-19 (`5202714`) | Co-closed with SEC-P4-10; CAS retry budget 32_768 → 4096 |
+| SEC-P4-14 | CI catalog components pinned by moving tag `@v1.7.1` | Security / Supply-chain | Medium-High | 40 | 🚧 Blocked | Unblock: operator provides 40-char SHA map for 8 components at `gitlab.com/devnw/ci-catalog@v1.7.1` |
+
+### Ready-to-run `glab` commands (documentation only — DO NOT execute; `glab` auth DEGRADED)
+
+> Full command block with `--confidential` flag on SEC-P4-14 lives in `docs/SECURITY_REVIEW_NOTES.md` Phase 4 cycle 3. Mirrored here for quick reference:
+
+```bash
+# Pre-requisite — confirm auth is healthy before mutating.
+glab auth status
+
+# SEC-P4-14 MUST be filed with --confidential (supply-chain exploit path).
+# SEC-P4-10, -11, -12, -13, -A1 are standard severity labels — see SECURITY_REVIEW_NOTES.md for full invocations.
+```
+
+_Phase 4 cycle 3 net delta: +6 security findings (SEC-P4-10, SEC-P4-11, SEC-P4-12, SEC-P4-A1 closed 2026-04-19; SEC-P4-14 Blocked pending operator-provided ci-catalog SHA map; SEC-P4-13 remains Open as Very-Low follow-up). No tracker mutations; all findings require `glab auth status` green before issue filing._
 
 ---

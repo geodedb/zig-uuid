@@ -5,12 +5,13 @@
 > Zig version audited: 0.16.0
 > Reviewer: Performance review agent
 >
-> Last updated: 2026-04-18 (Phase 4 follow-up audit, cycle 2 — HEAD `bcde186`; 7 new findings: PERF-33 through PERF-39. PERF-33/34/35 recommended for in-band closure; PERF-36 deferred pending multi-threaded bench validation.)
+> Last updated: 2026-04-19 (Phase-2/3 follow-up — 5 new findings: PERF-40 through PERF-44; Phase-3 corrections applied to PERF-37 diagnosis and to the stale "single `Generator.mutex`" claim in Appendix methodology. **Closure cycle 2026-04-19:** PERF-40 closed (`beb00ba`); PERF-43 closed (`4a7b3fd`); PERF-42 co-closed (`5202714`, folded with SEC-P4-A1 — CAS retry budget 32_768 → 4096). Remaining open: PERF-41, PERF-44.)
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
 > Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
 > Cycle 4 appended: 2026-03-22 (2 new findings: PERF-19 through PERF-20)
 > Cycle 5 appended: 2026-04-18 (12 new findings: PERF-21 through PERF-32 — Phase 2 gap-scanner confirmed PERF-19/PERF-20 closed)
 > Phase 4 follow-up appended: 2026-04-18 (7 new findings: PERF-33 through PERF-39; PERF-29 regression witness)
+> Phase-2/3 follow-up appended: 2026-04-19 (5 new findings: PERF-40 through PERF-44 — false-sharing correction on dispatch-pointer line, prehashed-wrapper ergonomics, CAS retry-ceiling, CI bench-regression coverage gaps)
 
 ---
 
@@ -271,7 +272,8 @@ The primary `test` and `test-integration` CI jobs run at Debug optimization. `te
 - **Build confirmed**: 107/107 tests pass at Debug optimization
 - **Benchmarks run**: None (no benchmark suite exists — see PERF-03)
 - **Optimization level for analysis**: ReleaseFast characteristics inferred from source code; no empirical measurement performed
-- **Thread model**: Single `Generator.mutex` protecting all mutable state; V4 is lock-free (confirmed: no mutex call in `newV4`)
+- **Thread model** (STALE as of PERF-19 closure — kept for historical context; see correction below): Single `Generator.mutex` protecting all mutable state; V4 is lock-free (confirmed: no mutex call in `newV4`).
+  - **Corrected (2026-04-19)**: Per PERF-19 (closed), the generator was split into **two independent mutexes**: `v7.mutex` protects V7 timestamp/counter state, and `v1v6.mutex` protects V1/V6 clock+node state. V4 remains lock-free. See `src/generator.zig:201-238` for the current cluster layout. V7 generation no longer serializes with V1/V6 generation.
 
 ---
 
@@ -1386,11 +1388,11 @@ try dir.sync(io);
 
 **In-band recommendation**: ⏸ Defer — needs bench infra (PERF-22 lockfree_fallbacks histogram extension) before a responsible default-flip.
 
-#### PERF-37: `v7_lockfree_fallbacks` counter shares cache line with `last_ms` (P2, confirmed)
+#### PERF-37: `v7_lockfree_fallbacks` counter shares the dispatch-pointer cache line (P2, confirmed)
 
-**File**: `src/generator.zig:184`.
+**File**: `src/generator.zig:199`.
 
-`v7_lockfree_fallbacks` is declared at line 184 without an explicit `align(64)`. Given the PERF-33 cluster-layout work, the counter currently lives on cache line 2 alongside `last_ms @ 192`. Every fallback path does a `fetchAdd` on the counter, invalidating the line for any thread reading `last_ms` — precisely the field the lockfree fast path reads on every CAS attempt.
+> **Phase-3 correction (2026-04-19)**: Earlier diagnosis claimed the counter shared a line with `last_ms @ 192`. That layout was **stale** — after the PERF-33 cluster refactor, `v7_atomic_state` sits at offset 0 alone on line 0 (V7 cluster is `align(64)` with 56B padding), so `last_ms` is no longer the relevant neighbor. The real problem is that `_v7_lockfree_fallbacks` lands on **cache line 3** (offsets 192-255) alongside the dispatch pointers: `clock @ 192`, `rand @ 200`, `rand_impl @ 208`, `hwaddr_fn @ 232`, and `clock_rollback_tolerance_ms @ 240`. The dispatch-pointer line is read on **every** `newV*` call, so every fallback `fetchAdd` invalidates the cache line that all other generators must re-fetch on the next dispatch. See PERF-40 below for the expanded diagnosis and concrete fix.
 
 **Fix** (one of):
 
@@ -1500,3 +1502,216 @@ glab issue create --title "PERF-39: saveState retry-backoff uses .real (wall-clo
 - **Cross-check**: Phase 3 perf-reviewer agent findings reconciled against tree state; offsets verified via `@sizeOf` / `@offsetOf` at compile time.
 - **Benchmarks run**: None this cycle (source + offset-evidence driven). PERF-36 and PERF-38 explicitly call for new bench runs as their validation gate.
 - **GitLab mutation**: None — per caller directive. All `glab` commands documented above are ready-to-run but not executed.
+
+---
+
+## Performance Review Phase-2/3 Follow-up (2026-04-19)
+
+> Reviewer: Performance review agent (Phase-2 scan + Phase-3 offset re-verification)
+> Date: 2026-04-19
+> Scope: False-sharing re-diagnosis (supersedes PERF-37 stale claim), prehashed-namespace ergonomics, CAS retry ceiling, CI bench-regression coverage.
+> Tracker status: `glab` auth DEGRADED — issue mutations skipped this cycle. Documentation-only update.
+
+### Summary
+
+**5 new findings** (0 P1, 2 P2, 3 P3):
+
+| Severity | Count | Description | Status |
+|----------|-------|-------------|--------|
+| P2 | 2 | False sharing on dispatch-pointer line (PERF-40); CI bench-regression skips state+micro suites (PERF-43) | 📝 Open |
+| P3 | 3 | V3/V5 wrappers bypass prehashed fast path (PERF-41); V7 CAS retries 8× RFC width (PERF-42); bench-regression main-only (PERF-44) | 📝 Open |
+
+**Corrections applied this cycle** (stale content rewritten in place):
+
+1. **PERF-37 diagnosis**: Claim "counter shares cache line with `last_ms @ 192`" was wrong post-PERF-33 cluster refactor. The real neighbor is the dispatch-pointer cluster on line 3 (`clock @ 192`, `rand @ 200`, `rand_impl @ 208`, `hwaddr_fn @ 232`, `clock_rollback_tolerance_ms @ 240`). See rewrite above; expanded diagnosis in PERF-40.
+2. **Appendix methodology**: Claim "Single `Generator.mutex` protecting all mutable state" was stale as of PERF-19 closure. Corrected to reflect the split `v7.mutex` / `v1v6.mutex` model at `src/generator.zig:201-238`.
+
+### Stack-Ranked Findings (Phase-2/3)
+
+| Rank | Severity | PerfScore | Finding | Component | Evidence | Measurement | GitLab Issue | Status |
+|------|----------|-----------|---------|-----------|----------|-------------|--------------|--------|
+| 1 | P2 | 48 | PERF-40: False sharing on dispatch-pointer cache line (line 3, offsets 192-255) | `src/generator.zig:199` | Confirmed | Est. 5-15% lockfree-V7 throughput loss at 16T+ on x86 | N/A (glab DEGRADED) | ✅ Closed 2026-04-19 (`beb00ba`) |
+| 2 | P2 | 36 | PERF-43: `bench-regression` skips `bench-state` + `bench-micro-{parse,format,hash}` despite baselines existing | `.gitlab-ci.yml:288-289` | Confirmed | Parse/format/hash/state regressions enter main undetected | N/A | ✅ Closed 2026-04-19 (`4a7b3fd`) |
+| 3 | P3 | 20 | PERF-44: `bench-regression` fires only on `main` + scheduled, not MRs | `.gitlab-ci.yml:300-302` | Confirmed | Regressions caught post-merge instead of pre-merge | DEFERRED | 📝 Open — extend `2026-04-18-perf-hardening.md` |
+| 4 | P3 | 16 | PERF-41: V3/V5 convenience wrappers skip prehashed namespace fast path | `src/versions.zig:33,59`; `src/generator.zig:1162,1194` vs `:1279,1290` | Confirmed | ~60 ns MD5-init + 16 B update per call wasted in tight loops | DEFERRED | 📝 Open — extend `2026-04-18-perf-hardening.md` |
+| 5 | P3 | 12 | PERF-42: V7 lockfree CAS `max_retries = 32_768` is 8× RFC-9562 per-ms counter width (4096) | `src/generator.zig:709` | Confirmed | ~8 ms saved wedged-clock wall-time on ceiling exhaustion | N/A | ✅ Closed 2026-04-19 (`5202714`, co-closed with SEC-P4-A1) |
+
+### Findings
+
+#### PERF-40: False sharing on the dispatch-pointer cache line (P2, confirmed) — ✅ Closed 2026-04-19 (`beb00ba`)
+
+**Status:** Closed via `perf: close PERF-40 — isolate fallback counter to own cache line`. The `_v7_lockfree_fallbacks` counter now lives in an `align(64)` stats sub-struct with trailing padding, isolating it from the dispatch-pointer cluster on cache line 3. Offset-witness assertion extended per the plan. Migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle.
+
+**File**: `src/generator.zig:199` — `_v7_lockfree_fallbacks: std.atomic.Value(u64) = .init(0)`.
+
+**Correction vs. Phase-2 claim**: Phase-2 asserted `_v7_lockfree_fallbacks` shared a line with `v7_atomic_state @ 0`. That was wrong. Offset re-verification at HEAD shows:
+
+- `v7_atomic_state` is at **offset 0**, alone on cache line 0. The V7 cluster that follows is `align(64)`, which inserts ~56 B of padding after the atomic — so the atomic is already isolated. **v7_atomic_state is safe.**
+- `_v7_lockfree_fallbacks` lives at **offset 248**, which places it on **cache line 3 (offsets 192-255)**. Line 3 holds the dispatch-pointer cluster:
+  - `clock @ 192`
+  - `rand @ 200`
+  - `rand_impl @ 208`
+  - `hwaddr_fn @ 232`
+  - `clock_rollback_tolerance_ms @ 240`
+  - `_v7_lockfree_fallbacks @ 248`
+
+**Root cause**: Every `newV*` call reads the dispatch-pointer line (to invoke `clock` / `rand` / `rand_impl` / `hwaddr_fn`). Every V7 lockfree-fallback path does a `fetchAdd` on `_v7_lockfree_fallbacks`, which invalidates line 3 on all other cores. Readers doing dispatch reloads must then re-fetch the line from the fallback-writer's L1. Under contention this is a ping-pong on a line the hot path reads on **every** call — far worse than the stale PERF-37 diagnosis suggested.
+
+**Fix**: Isolate the counter in its own `align(64)` stats sub-struct with trailing padding:
+
+```zig
+stats: struct {
+    _v7_lockfree_fallbacks: std.atomic.Value(u64) align(64) = .init(0),
+    _pad: [56]u8 = undefined,
+} align(64) = .{},
+```
+
+Both the outer `stats` and the inner atomic are `align(64)` — this defends against the Zig field-reorder-past-`[N]u8-align(64)` gotcha that PERF-33 already burned us on. Extend PERF-34's offset-witness test to cover `@offsetOf(Generator, "stats") % 64 == 0` and `@offsetOf(Generator, "stats") / 64 != @offsetOf(Generator, "clock") / 64`.
+
+**Validation plan**: `zig build bench-contention -Doptimize=ReleaseFast` at 16T and 32T on x86; compare median of 10 across three sessions. Expect **5-15 %** throughput improvement on `newV7` under contention where the fallback path fires. ARM64 re-run optional (weaker memory model; likely smaller but same-direction delta).
+
+**Rollout risk**: Low. Layout-only change + new witness assertion.
+
+**Plan doc**: New plan file `docs/plans/2026-04-19-perf-40-false-sharing.md`.
+
+**In-band recommendation**: Next cycle — pairs cleanly with PERF-34 witness expansion.
+
+#### PERF-41: V3/V5 convenience wrappers bypass the prehashed namespace fast path (P3, confirmed)
+
+**Files**: `src/versions.zig:33` (V3), `src/versions.zig:59` (V5), `src/generator.zig:1162` (`Generator.newV3`), `src/generator.zig:1194` (`Generator.newV5`).
+
+**Root cause**: `initV3Namespace` / `initV5Namespace` at `src/generator.zig:1279` / `:1290` return a `PrehashedV3` / `PrehashedV5` handle with the namespace already consumed into a cloned hasher state. The convenience wrappers `newV3(namespace, name)` / `newV5(namespace, name)` ignore this fast path — every call does a fresh `Md5.init()` + `update(namespace)` (16 B) before the name update. Callers looping over a single namespace (common for `DNS` or `URL` derivations) pay **~60 ns MD5-init + the 16-byte namespace update on every call** that they would otherwise amortize to zero.
+
+**Fix (doc + ergonomics, no API break)**:
+
+1. **Documentation**: Add a perf-section note to `README.md` (and/or generated API docs) pointing users at `Generator.initV3Namespace` / `initV5Namespace` when looping over one namespace.
+2. **Optional ergonomics**: Add an inline wrapper type `NamespacedGenerator(comptime ns: UUID)` that stores the prehashed handle and exposes `.v3(name)` / `.v5(name)`. Keeps ABI stable; gives an opt-in single-namespace-loop API.
+
+**Validation plan**: Add `benchV5PrehashedLoop` (10 K iterations, one namespace, 16-byte names) vs `benchV5ConvenienceLoop` to `bench/main.zig`. Expect 4-8× speedup on the prehashed path. Use the delta to justify the doc note even if (1) alone lands.
+
+**Rollout risk**: None — purely additive.
+
+**Plan doc**: Extend existing `docs/plans/2026-04-18-perf-hardening.md`.
+
+**In-band recommendation**: Defer — schedule with next docs-update or bench-expansion pass.
+
+#### PERF-42: V7 lockfree CAS `max_retries = 32_768` is 8× RFC-9562 counter width (P3, confirmed) — ✅ Closed 2026-04-19 (`5202714`, co-closed with SEC-P4-A1)
+
+**Status:** Closed as a co-closure of the SEC-P4-10 / SEC-P4-A1 commit (`fix(security): close SEC-P4-10/A1 — reseed clears v7 atomic; CAS budget = 4096`). The `max_retries` constant was tightened to `4096` (RFC-9562 §6.2 per-ms counter width) with the expanded explanatory comment outlined below. The perf-axis rationale ("~8 ms saved wedged-clock wall-time") and the security-axis rationale (SEC-P4-A1 saturation DoS) share the same one-line change; this entry is retained for cross-reference and migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle.
+
+**File**: `src/generator.zig:709` — `const max_retries = 32_768;` inside the V7 atomic CAS loop.
+
+**Root cause**: RFC-9562 §6.2 caps the V7 per-millisecond counter at 12 bits (4096 values). The only legitimate reason to retry the CAS beyond 4096 times in the same millisecond is livelock masking — and 4096 CASes in a single ms already implies severe contention that `newV7Locked` would recover from faster anyway. The current `32_768` ceiling means on a **wedged clock** (stepped backward by NTP, for example) the lockfree path spins for **32,768 CAS attempts × ~250 ns** ≈ **8 ms** before falling through to the mutex path.
+
+**Fix**: Tighten to `4096` with an expanded explanatory comment:
+
+```zig
+// RFC-9562 §6.2 caps the per-ms counter at 12 bits (4096). If we fail 4096
+// CASes in the same ms, either (a) >4096 concurrent writers are saturating
+// this millisecond (fall through to mutex path which handles it in one lock)
+// or (b) the wall clock is wedged (same fall-through is correct — mutex path
+// will yield/sleep until clock advances). No legitimate workload needs more.
+const max_retries = 4096;
+```
+
+**Validation plan**: Unit test that installs a wedged-clock fn (returns constant ms), spawns 8 threads each generating 1 M V7s, asserts all threads complete within **< 2 s** total (current ceiling would allow up to ~8 s per-thread of pure CAS spin before each falls through). No baseline-bench change expected on happy path.
+
+**Rollout risk**: Low. Happy path is unchanged (typical CAS succeeds in 1-3 retries). Ceiling only fires on pathological wedged-clock or extreme contention, and the mutex fallback path already handles both correctly.
+
+**Plan doc**: Extend existing `docs/plans/2026-04-18-perf-hardening.md`.
+
+**In-band recommendation**: Defer — one-line change, safe to bundle with PERF-40/41/44.
+
+#### PERF-43: `bench-regression` runs only 2 of 5 available bench suites (P2, confirmed) — ✅ Closed 2026-04-19 (`4a7b3fd`)
+
+**Status:** Closed via `perf(ci): close PERF-43 — extend bench-regression to state+micro suites`. The CI `bench-regression` stage now exercises `bench-state` and the `bench-micro-{parse,format,hash}` suites in addition to `bench` and `bench-contention`. Baseline files already existed; this wires them into the regression gate. Migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle.
+
+**File**: `.gitlab-ci.yml:288-289`.
+
+**Root cause**: The `bench-regression` job invokes `zig build bench` and `zig build bench-contention` but skips `bench-state`, `bench-micro-parse`, `bench-micro-format`, and `bench-micro-hash` — despite baseline files `baseline_state.json`, `baseline_micro_parse.json`, `baseline_micro_format.json`, and `baseline_micro_hash.json` already existing in the repo root. Any parse-path, format-path, hash-path, or saveState-path regression slips into `main` undetected by CI, exactly the scenario the baseline files were created to prevent.
+
+**Fix**: Split bench-regression into a coverage matrix:
+
+- **On MR**: `bench-check` (smoke) + `bench-micro-{parse,format,hash}` (cheap, catch micro-regressions).
+- **On `main` merge**: `bench` + `bench-contention` + `bench-state` (full regression gate).
+- **Nightly scheduled**: `bench-all` (every suite, tighter thresholds, archive results).
+
+This preserves MR latency while closing the parse/format/hash/state coverage gap on `main`.
+
+**Validation plan**: Deliberately introduce a 20% regression in `toString` on a throwaway branch; CI should fail the MR under the new coverage. Revert before merge.
+
+**Rollout risk**: Low. CI job tuning only; zero product-code impact. MR latency increase from adding bench-micro on MR should be < 30 s per suite on the current runner.
+
+**Plan doc**: Extend existing `docs/plans/2026-04-18-perf-hardening.md` (CI hardening section).
+
+**In-band recommendation**: Defer — same commit as PERF-44 (both are `.gitlab-ci.yml` edits).
+
+#### PERF-44: `bench-regression` fires only on `main` + scheduled — no MR coverage (P3, confirmed)
+
+**File**: `.gitlab-ci.yml:300-302` — `rules:` clause restricts to `$CI_COMMIT_BRANCH == "main"` and `$CI_PIPELINE_SOURCE == "schedule"`.
+
+**Root cause**: MRs never run any bench-regression gate. Regressions are caught **post-merge**, when recovery requires a revert commit rather than a force-push-amend. This is the opposite of the shift-left posture the rest of the repo takes.
+
+**Fix**: Add a cheap MR-only bench subset with tighter thresholds:
+
+```yaml
+bench-micro-mr:
+  extends: .bench-base
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - zig build bench-micro-parse -Doptimize=ReleaseFast
+    - zig build bench-micro-format -Doptimize=ReleaseFast
+    - zig build bench-micro-hash -Doptimize=ReleaseFast
+    # Tighter 10 % threshold on MR (vs 15 % on main) — catch regressions early.
+    - ./scripts/bench-regression-check.sh --threshold 10
+```
+
+Pairs naturally with PERF-43's suite expansion.
+
+**Validation plan**: Same as PERF-43 — intentional regression on a throwaway MR should block the MR pipeline.
+
+**Rollout risk**: Low. MR latency increase capped by the 3 cheap bench-micro suites (~90 s total on current runner).
+
+**Plan doc**: Extend existing `docs/plans/2026-04-18-perf-hardening.md`.
+
+**In-band recommendation**: Defer — bundle with PERF-43.
+
+### Ready-to-run `glab` commands (DOCUMENTATION-ONLY — NOT EXECUTED THIS CYCLE)
+
+> `glab` auth is DEGRADED (invalid token). Commands are committed for traceability; execute in a follow-up cycle after auth rotation.
+
+```bash
+# PERF-40 (P2, confirmed) — false sharing on dispatch-pointer line
+glab issue create --title "PERF-40: _v7_lockfree_fallbacks shares dispatch-pointer cache line — isolate in stats sub-struct" \
+  --label "performance,perf-severity::P2,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-40. Phase-3 correction: neighbor is dispatch-pointer line (clock/rand/rand_impl/hwaddr_fn), NOT v7_atomic_state. Fix: wrap counter in align(64) stats sub-struct. Plan: docs/plans/2026-04-19-perf-40-false-sharing.md."
+
+# PERF-41 (P3, confirmed) — V3/V5 wrappers skip prehashed fast path
+glab issue create --title "PERF-41: V3/V5 convenience wrappers bypass initV3Namespace/initV5Namespace fast path" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,docs" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-41. Fix: document initV3Namespace/initV5Namespace in README perf section; consider NamespacedGenerator(comptime ns) wrapper. Plan: extend docs/plans/2026-04-18-perf-hardening.md."
+
+# PERF-42 (P3, confirmed) — CAS max_retries 8× RFC counter width
+glab issue create --title "PERF-42: V7 lockfree CAS max_retries = 32_768 is 8× RFC-9562 counter width — tighten to 4096" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-42. Fix: max_retries = 4096 with expanded comment at src/generator.zig:709. Saves ~8ms wedged-clock wall-time. Plan: extend docs/plans/2026-04-18-perf-hardening.md."
+
+# PERF-43 (P2, confirmed) — bench-regression coverage gap
+glab issue create --title "PERF-43: bench-regression skips bench-state + bench-micro-{parse,format,hash} despite baselines existing" \
+  --label "performance,perf-severity::P2,category::perf,confidence::confirmed,status::triage,ci" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-43. Fix: matrix — bench-check + bench-micro on MR; bench/bench-contention/bench-state on main; bench-all nightly. Plan: extend docs/plans/2026-04-18-perf-hardening.md."
+
+# PERF-44 (P3, confirmed) — bench-regression main-only, no MR coverage
+glab issue create --title "PERF-44: bench-regression fires only on main + scheduled — add MR-only bench-micro subset" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,ci" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-44. Fix: MR-only bench-micro job with 10% threshold. Plan: extend docs/plans/2026-04-18-perf-hardening.md."
+```
+
+### Methodology (Phase-2/3 follow-up)
+
+- **HEAD**: inherits Phase-4 HEAD `bcde186` plus in-flight fixes.
+- **Verification**: offsets re-checked against source layout (`@offsetOf` reasoning); dispatch-pointer line confirmed as offsets 192-255.
+- **Benchmarks run**: None this cycle (offset-evidence + source-pattern driven). PERF-40 and PERF-41 explicitly call for new bench runs as their validation gate.
+- **GitLab mutation**: **None** — `glab` auth is DEGRADED (invalid token) per caller directive. Commands above are ready-to-run after auth rotation.
+- **Stale-content corrections applied in place**: PERF-37 diagnosis rewritten; Appendix "Single `Generator.mutex`" note corrected to reflect the split `v7.mutex` / `v1v6.mutex` model landed in PERF-19.

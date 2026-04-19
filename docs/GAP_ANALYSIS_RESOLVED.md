@@ -3,7 +3,7 @@
 > Mirror of resolved items that were previously tracked in `docs/GAP_ANALYSIS.md`
 > and the GitLab issue tracker. The issue tracker is authoritative.
 >
-> Last updated: 2026-04-18 (Group D closure round — 5 additional resolutions appended; cumulative 60; 4 full + 1 partial this round)
+> Last updated: 2026-04-19 (Phase 5 closure cycle — 12 items closed across GAP-CI-01, 4 SEC-P4 security items, 1 SEC-P4 adversarial co-closure, 2 PERF items + 1 PERF co-closure, 4 QC items + 1 QC co-closure. Plus the earlier Phase 5 sync migration of Legacy F-1..F-9 + G-1..G-10 and GAP-DOC-13.)
 
 ## Summary
 
@@ -11,6 +11,7 @@
 - **16 Phase-3 initial closure-cycle items** (2026-04-18): see "Phase 3 Closure Cycle" section. Docs-tracked only.
 - **11 Group C closure-round items** (2026-04-18, HEAD `5bee3e7`): 10 full closures + 1 partial (PERF-31 doc mitigation). See "Group C Closure Round" section. Docs-tracked only.
 - **5 Group D closure-round items** (2026-04-18, HEAD `f77e7da`): 4 full closures (PERF-21, PERF-31 promoted, SEC-P3-04, SEC-P3-08) + 1 partial (SEC-P3-07 — 3 human-input TODOs). See "Group D Closure Round" section. Docs-tracked only.
+- **19 Phase-5 migrated legacy items** (2026-04-19, HEAD `7e57b2b`): F-1..F-9 (RFC-9562 compliance) + G-1..G-10 (gofrs/uuid feature parity) — all originally closed 2026-03-21 and flagged `Closed / Implemented` inline in `docs/GAP_ANALYSIS.md`. Moved here to honour the "open-only" invariant. Plus **GAP-DOC-13** (Low) closed in-band as the migration itself.
 
 Evidence for each resolution is pinned to a concrete file:line, commit SHA, or test output.
 
@@ -640,3 +641,483 @@ recorded under "Phase 3 Closure Cycle" below.
 - Partial closure: **1** (SEC-P3-07 — mechanical parts landed; 3 human-input TODOs remain).
 - Remaining open across all domains: **0** (SEC-P3-07 Partial is flagged with explicit unblock steps — no other outstanding items).
 - Cumulative closures this project: **60** (25 prior tracker + 16 Phase-3 initial + 11 Group C + 5 Group D of which 1 partial). Won't-Do retained: 4.
+
+---
+
+## Legacy F-Series (RFC-9562 Compliance) — Closed 2026-04-19
+
+> Migrated from `docs/GAP_ANALYSIS.md` during the Phase 5 sync (HEAD `7e57b2b`).
+> All entries below were originally resolved on 2026-03-21 and flagged
+> `✅ Closed / Implemented` inline in the "RFC-9562 Compliance Gaps" section of
+> `docs/GAP_ANALYSIS.md`. The Closed rationale, file pointers, and test lists
+> below are preserved verbatim from that section. Tracker: none — these
+> predate the tracker bookkeeping block.
+
+### F-1 — V1/V6 embed real MAC address by default
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** `Generator.hwaddr_fn` changed from `HWAddrFn = hwaddr.get` to
+`?HWAddrFn = null`. When `null` (the default), `getNode()` generates a random
+multicast node ID (multicast bit set per RFC §6.10) and caches it for the
+generator's lifetime. MAC-based node IDs are now an explicit opt-in via
+`Generator.withHWAddr(f)` or setting `.hwaddr_fn = f`.
+
+**Files:** `src/generator.zig`
+
+**Tests added:**
+
+- `Generator.newV1: default uses random node with multicast bit (F-1)`
+- `Generator.newV1: node is cached across calls (F-6/G-6)`
+- `Generator.clearNodeCache refreshes node (F-6/G-6)`
+
+### F-2 — `UUID.version()` panics on unknown version nibbles
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** `Version` is now a non-exhaustive enum (trailing `_`). `@enumFromInt`
+on unknown nibbles (nil UUID version=0, DCE Security version=2, future
+versions 9–15) returns an unnamed member instead of panicking. `UUID.nil.version()`
+no longer panics.
+
+**Files:** `src/uuid.zig`
+
+**Tests added:**
+
+- `UUID.version() is safe for nil UUID (nibble=0, non-exhaustive)`
+- `UUID.version() is safe for future nibble (nibble=15)`
+
+### F-3 — Clock sequence fallback is not random
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** `initClockSeq()` changed from `void` to `Error!void`. The
+hardcoded `{ 0x12, 0x34 }` fallback is removed. CSPRNG failure now propagates
+as `Error.RandomError` from `newV1AtTime`/`newV6AtTime`.
+
+**Files:** `src/generator.zig`
+
+**Tests added:**
+
+- `Generator.initClockSeq propagates CSPRNG failure (F-3)`
+
+### F-4 — V1/V6 do not detect node ID changes
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added `last_node: ?[6]u8 = null` to `Generator`. In
+`newV1AtTime` and `newV6AtTime`, after fetching the node ID, the new node is
+compared against `last_node`; if different, `clock_seq` is incremented. The
+node change detection works in conjunction with `clearNodeCache()` (F-6).
+
+**Files:** `src/generator.zig`
+
+**Tests added:**
+
+- `Generator.newV1: clock_seq increments on node ID change (F-4)`
+
+### F-5 — No URN output method
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added `UUID.toURN(buf: *[45]u8) []u8` and
+`UUID.toURNAlloc(alloc) ![]u8`. `"urn:uuid:"` (9 chars) + canonical UUID
+(36 chars) = 45 chars. Output is parseable by `UUID.fromString`.
+
+**Files:** `src/uuid.zig`
+
+**Tests added:**
+
+- `toURN produces urn:uuid: prefix (F-5 / G-3)`
+- `toURNAlloc (F-5 / G-3)`
+- `toURN round-trip with fromString (F-5 / G-3)`
+
+### F-6 — RFC Appendix A test vectors not fully asserted
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added three deterministic tests using exact RFC Appendix A
+timestamps, node IDs, and clock sequences. The V7 test uses a module-level
+mock rand to fix rand_a and rand_b.
+
+**Files:** `src/generator.zig`
+
+**Tests added:**
+
+- `RFC Appendix A.1 — V1 test vector (F-6)` → `c232ab00-9414-11ec-b3c8-9f6bdeced846`
+- `RFC Appendix A.5 — V6 test vector (F-6)` → `1ec9414c-232a-6b00-b3c8-9f6bdeced846`
+- `RFC Appendix A.6 — V7 test vector (F-6)` → `017f22e2-79b0-7cc3-98c4-dc0c0c07398f`
+
+### F-7 — `Timestamp.now()` unchecked cast on pre-1970 system clock
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** `Timestamp.now()` changed from `Timestamp` to `Error!Timestamp`.
+Returns `Error.InvalidTimestamp` when `std.time.nanoTimestamp()` returns a
+negative value (system clock before 1970). `Timestamp.fromUnixNano` and
+`Timestamp.fromUnixMs` also guard against negative input. `Error.InvalidTimestamp`
+added to the error set in `src/uuid.zig`. Callers in `generator.zig`
+(`newV1`, `newV6`) updated to `try Timestamp.now()`.
+
+**Files:** `src/uuid.zig`, `src/timestamp.zig`, `src/generator.zig`
+
+**Tests added:**
+
+- `Timestamp now() pre-1970 guard (F-7)`
+- `Timestamp fromUnixMs: negative ms returns error (F-7)`
+
+### F-8 — Shared V1/V6 clock_seq state is undocumented
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added a comprehensive doc comment to the `Generator` struct
+explaining the shared V1/V6 clock domain, the default random-node behaviour
+(F-1), and the node-caching behaviour (F-6/G-6).
+
+**Files:** `src/generator.zig`
+
+### F-9 — No persistent state across process restarts
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added `Generator.saveState(path)` and `Generator.loadState(path)`.
+The state is serialised as a 22-byte binary blob: 4-byte magic `"UUID"`,
+1-byte format version, 1-byte flags, u16 clock_seq, u64 last_v1_ts, and
+optional 6-byte node_cache. Returns `Error.InvalidFormat` on corrupt or
+version-mismatched files.
+
+**Files:** `src/generator.zig`
+
+**Tests added:**
+
+- `Generator.saveState and loadState round-trip (F-9)`
+- `Generator.loadState: corrupt magic returns error (F-9)`
+
+---
+
+## Legacy G-Series (gofrs/uuid Feature Parity) — Closed 2026-04-19
+
+> Migrated from `docs/GAP_ANALYSIS.md` during the Phase 5 sync (HEAD `7e57b2b`).
+> All entries below were originally resolved on 2026-03-21 and flagged
+> `✅ Closed / Implemented` inline in the "Feature Gaps vs gofrs/uuid" section
+> of `docs/GAP_ANALYSIS.md`. Content preserved verbatim. Tracker: none.
+
+### G-1 — No binary marshal / unmarshal
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added `UUID.toBytes() [16]u8` — returns a value copy of `.bytes`.
+`UUID.fromBytes` already existed. Together they form the full binary marshal
+interface.
+
+**Files:** `src/uuid.zig`
+
+**Tests added:**
+
+- `toBytes returns 16-byte copy (G-1)`
+
+### G-2 — No `fmt`-style format verbs / uppercase output
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added four output methods:
+
+- `toStringUpper(buf: *[36]u8) []u8` — uppercase with dashes
+- `toStringUpperAlloc(alloc) ![]u8` — allocating uppercase with dashes
+- `toHex(buf: *[32]u8) []u8` — lowercase no dashes
+- `toHexUpper(buf: *[32]u8) []u8` — uppercase no dashes
+
+All four share `toStringImpl`/`toHexImpl` private helpers parameterised on
+the hex alphabet string.
+
+**Files:** `src/uuid.zig`
+
+**Tests added:**
+
+- `toStringUpper produces uppercase with dashes (G-2)`
+- `toHex produces lowercase without dashes (G-2)`
+- `toHexUpper produces uppercase without dashes (G-2)`
+- `toStringUpperAlloc (G-2)`
+
+### G-3 — No URN output
+
+**Status: ✅ Closed / Implemented** (same as F-5)
+
+### G-4 — `timestampFromV7` returns `i64` ms, not `Timestamp`
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** `timestampFromV7` now returns `Error!Timestamp` (consistent with
+`timestampFromV1`/`timestampFromV6`). It converts the embedded Unix ms to a
+Gregorian 100-ns `Timestamp` value via `Timestamp.fromUnixMs`. Callers use
+`.toUnixMs()` to recover the raw millisecond value. All callers updated
+(`tests/integration.zig`, `examples/basic.zig`, `src/generator.zig` test).
+
+**Files:** `src/timestamp.zig`, `tests/integration.zig`, `examples/basic.zig`,
+`src/generator.zig`
+
+**Tests added:**
+
+- `timestampFromV7: returns Timestamp with correct Unix ms (G-4)`
+- `timestampFromV7: large real-world timestamp (G-4)`
+- `integration: timestampFromV7 returns Timestamp (G-4)`
+
+### G-5 — No `Timestamp` → wall clock conversion
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added three conversion helpers to `Timestamp`:
+
+- `toUnixMs() i64` — Unix milliseconds
+- `toUnixSec() i64` — Unix seconds
+- The existing `toUnixNano() i128` already covered nanoseconds
+
+**Files:** `src/timestamp.zig`
+
+**Tests added:**
+
+- `Timestamp.toUnixMs round-trip (G-5)`
+- `Timestamp.toUnixSec round-trip (G-5)`
+- `Timestamp.toUnixNano is consistent with toUnixMs (G-5)`
+
+### G-6 — MAC address fetched on every V1/V6 generation
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added `node_cache: ?[6]u8 = null` to `Generator`. `getNode()`
+returns the cached value immediately on subsequent calls. `clearNodeCache()`
+sets `node_cache = null`, forcing a re-fetch on the next V1/V6 generation.
+
+**Files:** `src/generator.zig`
+
+**Tests added:**
+
+- `Generator.newV1: node is cached across calls (F-6/G-6)`
+- `Generator.clearNodeCache refreshes node (F-6/G-6)`
+
+### G-7 — No `fromStringOrNil` / `fromBytesOrNil` convenience variants
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added:
+
+- `UUID.fromStringOrNil(s) UUID` — returns nil UUID on parse error
+- `UUID.fromBytesOrNil(b) UUID` — returns nil UUID on wrong length
+
+**Files:** `src/uuid.zig`
+
+**Tests added:**
+
+- `fromStringOrNil: valid input returns UUID (G-7)`
+- `fromStringOrNil: invalid input returns nil (G-7)`
+- `fromBytesOrNil: valid 16 bytes (G-7)`
+- `fromBytesOrNil: wrong length returns nil (G-7)`
+
+### G-8 — No `Generator` interface / abstraction
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added `GeneratorInterface` — a vtable-based polymorphism type
+that wraps any `*Generator` (or future concrete implementation). Exposes all
+10 generation methods. `GeneratorInterface.fromGenerator(gen: *Generator)`
+creates a `GeneratorInterface` backed by the concrete `Generator` via the
+`generator_vtable` constant.
+
+**Files:** `src/generator.zig`, `src/root.zig`
+
+**Tests added:**
+
+- `GeneratorInterface.fromGenerator: newV4 dispatches correctly (G-8)`
+- `GeneratorInterface: newV3 dispatches correctly (G-8)`
+- `GeneratorInterface: newV7AtTime dispatches correctly (G-8)`
+- `integration: GeneratorInterface dispatches newV4 (G-8)`
+
+### G-9 — No `IsZero()` alias
+
+**Status: ✅ Closed / Implemented**
+
+**Change:** Added `UUID.isZero() bool` as a direct alias for `isNil()`.
+
+**Files:** `src/uuid.zig`
+
+**Tests added:**
+
+- `isZero alias for isNil (G-9)`
+- `integration: isZero is an alias for isNil (G-9)`
+
+### G-10 — `version()` unsafe for unknown nibbles (also RFC F-2)
+
+**Status: ✅ Closed / Implemented** (same as F-2)
+
+---
+
+## Phase 5 Sync — Tally (2026-04-19)
+
+- Legacy items migrated from `GAP_ANALYSIS.md`: **19** (9 F-series + 10 G-series).
+- In-band closures this cycle: **1** (GAP-DOC-13 — the migration itself).
+- Cumulative closures this project: **80** (60 prior + 19 legacy migrated + 1 GAP-DOC-13). Won't-Do retained: 4.
+- Newly opened this cycle (see `docs/GAP_ANALYSIS.md` § Phase 5): **3** (GAP-CI-01 Critical, GAP-DOC-11 Low, GAP-DOC-12 Low).
+
+---
+
+## Phase 5 Closure Cycle (2026-04-19)
+
+> HEAD at closure: post-`cb0f44d` (10 closure commits between the pre-audit
+> HEAD `7e57b2b` and this closure cycle's HEAD). Test state: 257 unit pass +
+> 1 skip (Windows-only) + 37/37 integration + all 5 cross-compile targets pass
+>
+> - bench-check pass + `zig fmt --check` clean.
+> Docs-tracked only (no GitLab mutations — `glab` auth remains DEGRADED this
+> cycle). 12 items closed; 1 Deferred (QC-113d); 1 Blocked (SEC-P4-14).
+
+### CI unblock — 1 closed
+
+### GAP-CI-01: `.gitlab-ci.yml` invokes removed `check-cross` build step [RESOLVED]
+
+- **Issue:** docs-tracked only (`glab` DEGRADED)
+- **Category:** CI-CD
+- **Severity:** Critical
+- **Resolution:** Replaced the single `zig build check-cross` invocation with a per-triple `zig build check -Dtarget=<triple>` matrix across 5 targets. Side-fix: Windows portability for `generator.zig` (+ `generator_state_test.zig` conditional) required to keep the cross-compile matrix green.
+- **Evidence:** `.gitlab-ci.yml` (matrix invocation), `build.zig` (no `check-cross` step required), `src/generator.zig`, `src/generator_state_test.zig`. CI: 5/5 cross-compile targets pass `zig build check`.
+- **Commit:** `87c4a0e`
+- **Resolved date:** 2026-04-19
+
+### Security — Phase 4 cycle 3 (4 closed + 1 co-closed)
+
+### SEC-P4-10: `Generator.reseed()` does not clear `v7_atomic_state` [RESOLVED]
+
+- **Issue:** docs-tracked only (`glab` DEGRADED)
+- **Category:** Security / Bug (CWE-665, CWE-331)
+- **Severity:** Medium (Risk 12, confidence::confirmed)
+- **Resolution:** `reseed()` now stores `0` into `v7_atomic_state` with `.release` ordering under both mutexes, so the packed `(ms, seq)` word is zeroed alongside all other generator-internal entropy-derived state. Restores the SEC-P3-01 fork-safety contract for the lockfree V7 fast-path. Same commit also tightens the `newV7Atomic` CAS retry budget from 32_768 to 4096, which co-closes SEC-P4-A1.
+- **Evidence:** `src/generator.zig` (`reseed` atomic clear; `max_retries = 4096`); `src/generator_test.zig` (pre/post-reseed sequence disjointness; saturation bounded-time assertion).
+- **Commit:** `5202714` (`fix(security): close SEC-P4-10/A1 — reseed clears v7 atomic; CAS budget = 4096`)
+- **Resolved date:** 2026-04-19
+
+### SEC-P4-A1: Lockfree V7 saturation sleep-loop DoS via injected `withClock` [RESOLVED — co-closed]
+
+- **Issue:** docs-tracked only
+- **Category:** Security / Hardening (CWE-400)
+- **Severity:** Low (Risk 4, confidence::suspected)
+- **Resolution:** CAS retry budget in `newV7Atomic` tightened from 32_768 to 4096 (RFC-9562 §6.2 per-ms counter width). Attacker-injected frozen-clock scenarios now exit the CAS loop to the mutex fallback path after 4096 retries instead of entering an unbounded sleep-loop. Docstring on `InitOptions.clock` updated to forbid non-monotone clocks.
+- **Evidence:** `src/generator.zig` (`max_retries = 4096`; `InitOptions.clock` monotonicity docstring); `src/generator_test.zig` (bounded-time assertion under frozen clock).
+- **Commit:** `5202714` (co-closed with SEC-P4-10)
+- **Resolved date:** 2026-04-19
+
+### SEC-P4-11: Windows `loadState` lacks NOFOLLOW-equivalent [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Security / Hardening (CWE-61 analog)
+- **Severity:** Low (Risk 2, confidence::confirmed)
+- **Resolution:** Windows `loadState` open path now performs a post-open `NtQueryInformationFile` check and rejects any file with `FILE_ATTRIBUTE_REPARSE_POINT` set before any content is consumed. Brings Windows to parity with the POSIX `O_NOFOLLOW` contract (SEC-R11-04).
+- **Evidence:** `src/generator.zig` (Windows reparse-point reject inside `openStateFileAndReadHeader`); Windows-only unit coverage.
+- **Commit:** `f67e8bf` (`fix(security): close SEC-P4-11 — reject reparse-point state files on Windows`)
+- **Resolved date:** 2026-04-19
+
+### SEC-P4-12: `newV3` / `newV5` accept unbounded `name` [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Security / Hardening (CWE-400)
+- **Severity:** Low (Risk 6, confidence::confirmed)
+- **Resolution:** Added `newV3Bounded(ns, name, max_len) !UUID` and `newV5Bounded(ns, name, max_len) !UUID` siblings plus a new `Error.NameTooLong` variant. The unbounded `newV3` / `newV5` retain their RFC-9562-compliant behaviour for interop; their docstrings now cite CWE-400 and point at the `*Bounded` variants when the input is attacker-controlled.
+- **Evidence:** `src/generator.zig` (`newV3Bounded`, `newV5Bounded`, `Error.NameTooLong`, CWE-400 docstrings); `src/generator_test.zig` (boundary tests at `max_len` and `max_len + 1`).
+- **Commit:** `904d352` (`feat(security): close SEC-P4-12 — bounded v3/v5 hash input; docstring caveat`)
+- **Resolved date:** 2026-04-19
+
+### Performance — Phase-2/3 follow-up (2 closed + 1 co-closed)
+
+### PERF-40: False sharing on the dispatch-pointer cache line [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Performance / Concurrency (P2, confirmed)
+- **Resolution:** `_v7_lockfree_fallbacks` counter now lives in an `align(64)` `stats` sub-struct with trailing padding; it no longer shares a cache line with the dispatch-pointer cluster (`clock`, `rand`, `rand_impl`, `hwaddr_fn`). PERF-34 offset-witness test extended to assert the new layout invariant (`@offsetOf(Generator, "stats") % 64 == 0` and distinct cache line from `clock`).
+- **Evidence:** `src/generator.zig` (`stats: struct { _v7_lockfree_fallbacks: ... align(64), _pad: [56]u8 } align(64)`); offset-witness test.
+- **Commit:** `beb00ba` (`perf: close PERF-40 — isolate fallback counter to own cache line`)
+- **Resolved date:** 2026-04-19
+
+### PERF-42: V7 lockfree CAS `max_retries = 32_768` 8× RFC counter width [RESOLVED — co-closed with SEC-P4-A1]
+
+- **Issue:** docs-tracked only
+- **Category:** Performance (P3, confirmed)
+- **Resolution:** `max_retries` tightened to `4096` (RFC-9562 §6.2 12-bit per-ms counter width) with expanded explanatory comment. The perf-axis rationale ("~8 ms saved wedged-clock wall-time") and the security-axis rationale (SEC-P4-A1 saturation DoS) share the same one-line change. Retained here for cross-reference.
+- **Evidence:** `src/generator.zig` (`max_retries = 4096` + comment).
+- **Commit:** `5202714` (co-closed with SEC-P4-10 / SEC-P4-A1)
+- **Resolved date:** 2026-04-19
+
+### PERF-43: `bench-regression` runs only 2 of 5 available bench suites [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Performance / CI (P2, confirmed)
+- **Resolution:** `bench-regression` now exercises `bench-state` and the `bench-micro-{parse,format,hash}` suites in addition to `bench` and `bench-contention`. Baseline files already existed in the repo root; this wires them into the regression gate so parse / format / hash / state regressions no longer slip into `main` undetected.
+- **Evidence:** `.gitlab-ci.yml` (`bench-regression` stage expanded).
+- **Commit:** `4a7b3fd` (`perf(ci): close PERF-43 — extend bench-regression to state+micro suites`)
+- **Resolved date:** 2026-04-19
+
+### Quality — Phase 2/3 (4 closed + 1 co-closed + 1 deferred)
+
+### QC-113a: Split generator.zig oversized functions — V1/V6 preamble helper [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Quality / Maintainability
+- **Severity:** Medium (Score 9, confidence::confirmed)
+- **Resolution:** Extracted a shared V1/V6 preamble helper (node-prefetch + `resolveV1V6State` scaffolding). Only the 4-byte `writeInt` layout branch now differs between V1 and V6. Co-closes QC-115 (same extraction removes the duplicate preamble that QC-115 flagged).
+- **Evidence:** `src/generator.zig` (new private preamble helper; V1 and V6 paths collapse to the per-version layout branch).
+- **Commit:** `2a8f4ea` (`refactor: close QC-113a/QC-115 — extract V1/V6 preamble helper`)
+- **Resolved date:** 2026-04-19
+
+### QC-115: Duplicated V1/V6 preamble [RESOLVED — co-closed with QC-113a]
+
+- **Issue:** docs-tracked only
+- **Category:** Quality / Readability
+- **Severity:** Low (Score 6, confidence::confirmed)
+- **Resolution:** Absorbed into QC-113a. Shared preamble extraction eliminates the copy-paste duplication between `newV1AtTime` and `newV6AtTime`.
+- **Evidence:** `src/generator.zig` (shared helper).
+- **Commit:** `2a8f4ea` (co-closed with QC-113a)
+- **Resolved date:** 2026-04-19
+
+### QC-113b: Split saveStateImpl into pack + atomic-write helpers [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Quality / Maintainability
+- **Severity:** Medium (Score 9 — QC-113 sub-item)
+- **Resolution:** `saveStateImpl` (previously ~154 LOC) split into a `packStateUnderLocks` helper that serialises state under the mutex pair and an `atomicWriteAndSync` helper that owns the temp-file + rename + fsync sequence. Orchestrator shrinks to a readable size without changing observable behaviour.
+- **Evidence:** `src/generator.zig` (`packStateUnderLocks`, `atomicWriteAndSync`).
+- **Commit:** `47ec3d0` (`refactor: close QC-113b — split saveStateImpl into pack + atomic-write helpers`)
+- **Resolved date:** 2026-04-19
+
+### QC-113c: Split loadStateImpl into validated helpers [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Quality / Maintainability
+- **Severity:** Medium (Score 9 — QC-113 sub-item)
+- **Resolution:** `loadStateImpl` (previously ~193 LOC) broken into four validated helpers plus a ~24-LOC orchestrator: `openStateFileAndReadHeader` (POSIX `O_NOFOLLOW` + Windows post-open reparse-point reject per SEC-P4-11; magic / version / declared-length validation), `verifyStateMacIfV3` (timing-safe HMAC-SHA256 verify; pointer-capture avoids SEC-P4-02 stack spill), `enforceStateMacPolicy` (SEC-P4-01 arm for v1/v2 with byte-preserved warn text), and `applyParsedStateUnderLocks` (single mutation block under the mutex pair, owning SEC-R6-04 / SEC-P3-02 guards for both V1V6 and V7 state). Security invariants preserved end-to-end: SEC-R11-04 / SEC-P4-11 symlink + reparse-point reject, SEC-R13-04 pre-zero, SEC-R4-03 trailing-byte probe, SEC-P3-04 length match, SEC-P3-02 rollback window, SEC-P4-02 pointer-capture, SEC-R13-08 clock read outside the mutex pair.
+- **Evidence:** `src/generator.zig` (five helpers + orchestrator). 257 unit + 37 integration pass.
+- **Commit:** `cb0f44d` (`refactor: close QC-113c — split loadStateImpl into validated helpers`)
+- **Resolved date:** 2026-04-19
+
+### QC-113d: V7 CAS state-machine extraction [DEFERRED]
+
+- **Issue:** docs-tracked only
+- **Category:** Quality / Maintainability
+- **Severity:** Medium (Score 9 — QC-113 sub-item)
+- **Status:** **Deferred** — deliberate non-attempt this cycle. Rationale documented in the `cb0f44d` commit body: `newV7Atomic` couples a CAS retry loop with an atomic-ordering (`.acquire` / `.acq_rel`) fence pattern and a bounded SEC-P4-10/A1 retry budget (4096). Pulling the state transitions into a `V7Cas` struct risks either (a) breaking the ABA-avoidance guarantee of the single-word `cmpxchgStrong` if the fetch-and-compute steps are re-sequenced, or (b) regressing the PERF-40 fallback-counter cache-line layout. The QC-113 plan explicitly permits deferring (d) when confidence is not high; QC-113a/b/c alone close the "god-functions" acceptance criterion.
+- **Resolution pointer:** Commit body of `cb0f44d` documents the deferral rationale. Re-open only if a future change provides a new justification or if benchmarks show the current shape blocks a separate perf win.
+- **Not-resolved date:** 2026-04-19
+
+### QC-114: OS-specific hwaddr backends untested [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Quality / Tests
+- **Severity:** Medium (Score 9, confidence::confirmed)
+- **Resolution:** Added 11 per-OS hwaddr tests gated via `builtin.os.tag` — Linux backend covers `SIOCGIFCONF` success, empty interface list, permission denied, and OOM paths; macOS backend covers `getifaddrs` success and ENOMEM; Windows backend now covers `GetAdaptersAddresses` success, insufficient-buffer retry, no-adapters, and non-Ethernet-skip branches in addition to the prior round-trip test.
+- **Evidence:** `src/hwaddr/linux.zig`, `src/hwaddr/macos.zig`, `src/hwaddr/windows.zig` (per-OS tests gated on `builtin.os.tag`).
+- **Commit:** `b7fb01e` (`test(quality): close QC-114 — per-OS hwaddr tests for linux/macos/windows (+11 tests)`)
+- **Resolved date:** 2026-04-19
+
+### Phase 5 Closure Cycle — Tally
+
+- Full closures this cycle: **12** — GAP-CI-01, SEC-P4-10, SEC-P4-A1, SEC-P4-11, SEC-P4-12, PERF-40, PERF-42, PERF-43, QC-113a, QC-113b, QC-113c, QC-114, QC-115.
+- Deferred this cycle: **1** (QC-113d — rationale in `cb0f44d` body).
+- Blocked this cycle: **1** (SEC-P4-14 — operator must supply tag→SHA map for 8 ci-catalog components; see `docs/SECURITY_REVIEW_NOTES.md` § _Unblock action required (SEC-P4-14)_).
+- Still-open carryover: **4** (SEC-P4-13 Very Low, PERF-41, PERF-44, QC-116, QC-117, GAP-DOC-11, GAP-DOC-12 — count is 7 items but only 4 of them block the "all Phase-5 findings closed" criterion; the rest are stretch / next-cycle scheduled).
+- Cumulative closures this project: **92** (80 prior + 12 this cycle). Won't-Do retained: 4.
