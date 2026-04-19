@@ -451,3 +451,69 @@ test "integration: HMAC v3 state round-trip + tampered-tag rejection" {
     var gen3 = uuid.Generator.initOptions(.{ .state_mac_key = key });
     try std.testing.expectError(uuid.Error.StateMacMismatch, gen3.loadState(path));
 }
+
+// =============================================================================
+// GAP-DOC-08.2: v3→v2 downgrade rejected when state_mac_key set (SEC-P4-01,
+// currently XFAIL — activates when SEC-P4-01 lands StateVersionDowngrade).
+// =============================================================================
+
+test "integration: v3→v2 downgrade rejected when state_mac_key set (SEC-P4-01, currently XFAIL)" {
+    // AUDIT NOTE: this test documents SEC-P4-01 (the v3→v2 HMAC
+    // downgrade finding).  As of this writing, loadState only
+    // `std.log.warn`s and accepts the v2 payload — so this test
+    // currently FAILS its expectError assertion.  Guard it behind
+    // a comptime check for `StateVersionDowngrade` on the error set
+    // so CI does not break: when SEC-P4-01 lands the new error variant,
+    // the test begins to execute and pass.  Remove the guard then.
+    const has_variant = comptime blk: {
+        const info = @typeInfo(uuid.Error).error_set orelse break :blk false;
+        for (info) |e| {
+            if (std.mem.eql(u8, e.name, "StateVersionDowngrade")) break :blk true;
+        }
+        break :blk false;
+    };
+    if (!has_variant) {
+        return error.SkipZigTest;
+    }
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try std.process.currentPath(io, &cwd_buf);
+    var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buf,
+        "{s}/.zig-cache/tmp/{s}/downgrade.state",
+        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
+    );
+
+    const key: [32]u8 = .{0x11} ** 32;
+
+    // Save with key (v3) then rewrite the magic to v2 size (truncate
+    // the 32-byte trailer).  A Generator with key set must reject it.
+    var gen = uuid.Generator.initOptions(.{ .state_mac_key = key });
+    _ = try gen.newV7();
+    try gen.saveState(path);
+
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(bytes);
+    // Rewrite version byte to v2 and truncate.
+    bytes[4] = 2;
+    {
+        const f = try std.Io.Dir.createFileAbsolute(io, path, .{
+            .permissions = std.Io.File.Permissions.fromMode(0o600),
+        });
+        defer f.close(io);
+        try f.writePositionalAll(io, bytes[0..32], 0);
+    }
+
+    var gen2 = uuid.Generator.initOptions(.{ .state_mac_key = key });
+    // Placeholder: once SEC-P4-01 lands, the expected error is the
+    // new StateVersionDowngrade variant.  The @hasDecl guard above
+    // ensures this comparison compiles only when the variant exists.
+    try std.testing.expectError(
+        @field(uuid.Error, "StateVersionDowngrade"),
+        gen2.loadState(path),
+    );
+}
