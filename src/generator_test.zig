@@ -1256,6 +1256,71 @@ test "PERF-34: V7 and V1V6 clusters occupy distinct cache lines" {
     try std.testing.expectEqual(v7_mutex_line, v7_mono_seq_line);
 }
 
+// SEC-P4-10: reseed() must clear the lock-free V7 atomic state alongside
+// every other generator-internal counter.  The lock-free path keeps its
+// monotonicity word in `v7_atomic_state` (12-bit seq under a 52-bit ms).
+// If reseed() leaves that word non-zero, a forked child that inherits the
+// parent's seq gains a deterministic 12-bit suffix on the first ≤ 4096
+// V7 emits — RFC-9562 §6.2 entropy regression and SEC-P3-01 fork-safety
+// contract violation.  Witness: bump the atomic via newV7 on a generator
+// with v7_lockfree=true, observe non-zero, call reseed(), observe zero.
+test "SEC-P4-10: reseed clears v7_atomic_state lockfree sequence" {
+    var gen = Generator.initOptions(.{ .v7_lockfree = true });
+
+    // Drive at least one V7 emit through the lockfree path so the atomic
+    // word is updated to a non-zero (ms, seq) packing.
+    _ = try gen.newV7();
+    const before = gen.v7_atomic_state.load(.acquire);
+    try std.testing.expect(before != 0);
+
+    gen.reseed();
+
+    const after = gen.v7_atomic_state.load(.acquire);
+    try std.testing.expectEqual(@as(u64, 0), after);
+}
+
+// SEC-P4-A1: bounded CAS retry budget under a frozen clock.  An injected
+// clock that returns the same i128 every call must not let newV7Atomic
+// spin forever on saturation: once the 12-bit seq saturates and the clock
+// refuses to advance, the retry budget (≤ 4096 per RFC-9562 §6.2 counter
+// width) trips and `Error.InvalidTimestamp` is returned.  Test fires
+// max_retries+1 calls and asserts at least one call returns the error
+// (in practice ALL calls after the 4096-th saturate).
+test "SEC-P4-A1: bounded CAS retries on frozen clock" {
+    const FrozenClock = struct {
+        // Pick a stable in-range timestamp (year 2023ish) so clockToMs
+        // succeeds and the saturation branch is the only failure mode.
+        fn clock() i128 {
+            return @as(i128, 1_700_000_000_000) * 1_000_000;
+        }
+    };
+
+    var gen = Generator.initOptions(.{
+        .v7_lockfree = true,
+        .clock = FrozenClock.clock,
+    });
+
+    // First call seeds (ms, seq=rand_a).  Subsequent calls bump seq by 1
+    // each iteration of the CAS loop.  After at most 4096 emits + the
+    // retry-budget exhaust on the next call, the bounded-budget branch
+    // must fire.  Iterate generously and assert at least one error.
+    var saw_invalid_timestamp: bool = false;
+    var i: usize = 0;
+    while (i < 8_192) : (i += 1) {
+        if (gen.newV7()) |_| {
+            // emit OK — seq incremented within the same ms
+        } else |err| {
+            if (err == Error.InvalidTimestamp) {
+                saw_invalid_timestamp = true;
+                break;
+            } else {
+                return err;
+            }
+        }
+    }
+    try std.testing.expect(saw_invalid_timestamp);
+}
+
 test "SEC-P4-09: initOptions accepts a well-formed std.Random (debug assertion passes)" {
     // The known-weak check must accept a well-formed std.Random
     // derived from a CSPRNG — the expected safe source for

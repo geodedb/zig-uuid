@@ -558,6 +558,13 @@ pub const Generator = struct {
         self.v1v6.last_v1_ts = 0;
         self.v7.last_ms = 0;
         self.v7.mono_seq = 0;
+        // SEC-P4-10 (CWE-665 / CWE-331): the lock-free V7 path keeps its
+        // own (ms, seq) packed monotonicity word in `v7_atomic_state`.
+        // reseed() must zero this alongside the mutex-path counters so a
+        // forked child does not inherit the parent's seq and emit ≤ 4096
+        // V7 IDs with a deterministic 12-bit suffix.  Release ordering
+        // pairs with the acquire load at the top of `newV7Atomic`.
+        self.v7_atomic_state.store(0, .release);
         self.clearNodeCacheLocked(); // forces node re-fetch (and re-randomise if default)
         self.last_node = null;
     }
@@ -702,11 +709,22 @@ pub const Generator = struct {
     fn newV7Atomic(self: *Generator) Error!UUID {
         const io_h = gio();
 
-        // Total retry budget across all CAS attempts (including spin-wait
-        // retries on saturation).  4096 is the RFC-9562 per-ms counter
-        // width × 1 — in the adversarial case where another thread wins
-        // every CAS, we still eventually converge within one ms.
-        const max_retries: usize = 32_768;
+        // SEC-P4-A1: total retry budget across all CAS attempts (including
+        // spin-wait retries on saturation).  Tightened from 32_768 → 4096:
+        // RFC-9562 §6.2 fixes the per-ms `rand_a` counter width at 12 bits,
+        // so 4096 emits exhaust the same-ms slot by pigeonhole.  An injected
+        // clock that freezes time can otherwise drive the spin-sleep branch
+        // 32_768 times — each iteration sleeps ~1 ms — collapsing observed
+        // throughput by ~8× when the adversary holds the clock.  4096 still
+        // accommodates legitimate contention (every CAS-loss thread sees
+        // monotonic progress within a single ms-window) while bounding the
+        // worst-case wall clock to a few ms.
+        //
+        // Note: a separate wall-clock budget would be a stronger guarantee
+        // but is more invasive; deferred.  4096 is an upper bound on the
+        // *legitimate* same-ms throughput per RFC-9562, so any retry beyond
+        // it is by definition a malformed clock or pathological contention.
+        const max_retries: usize = 4096;
         var retries: usize = 0;
 
         var committed_ms: u64 = 0;
