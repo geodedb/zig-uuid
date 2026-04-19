@@ -1755,7 +1755,35 @@ pub const Generator = struct {
         try self.saveState(path);
     }
 
-    fn loadStateImpl(self: *Generator, path: []const u8) !void {
+    /// QC-113c: result of opening the state file and validating its
+    /// framing (magic, version byte, and declared-vs-actual length).
+    /// `file_version` is one of `state_format_version_v{1,2,3}`; callers
+    /// may rely on the version byte range already being validated.
+    const ParsedStateHeader = struct {
+        file_version: u8,
+        read_len: usize,
+    };
+
+    /// QC-113c: open the state file, reject symlink / reparse-point
+    /// redirection on every supported platform, read up to
+    /// `state_size_v3` bytes into the caller-supplied buffer, and
+    /// validate the file-format framing.  Pure over the filesystem
+    /// handle; does not touch Generator state.
+    ///
+    /// Security invariants preserved:
+    ///   - SEC-R11-04 / SEC-P4-11 (CWE-61): POSIX O_NOFOLLOW on open;
+    ///     Windows post-open REPARSE_POINT attribute reject via
+    ///     NtQueryInformationFile (survives TOCTOU because the check
+    ///     runs against the *source* handle's inode attributes).
+    ///   - SEC-R13-04 (CWE-908): buffer pre-zeroed by the caller so
+    ///     unread trailing bytes in v1 / v2 files stay zero.
+    ///   - SEC-R4-03: one-byte probe read after the main read so that
+    ///     oversized files (larger than state_size_v3) cannot be
+    ///     silently truncated to a valid-looking length.
+    ///   - SEC-P3-04: version byte is validated AND the on-disk length
+    ///     must exactly match the version's declared size — rejects a
+    ///     v3 header glued to a v2-length file or vice versa.
+    fn openStateFileAndReadHeader(path: []const u8, buf: *[state_size_v3]u8) !ParsedStateHeader {
         // SEC-R11-04 / SEC-P4-11 (CWE-61): Reject symlink / reparse-point
         // redirection of the state file on every supported platform.  An
         // attacker who can place a symlink (POSIX) or NTFS junction /
@@ -1811,13 +1839,10 @@ pub const Generator = struct {
             if (basic.FileAttributes.REPARSE_POINT) return Error.InvalidFormat;
         }
 
-        // SEC-R13-04 (CWE-908): Zero-initialize to prevent uninitialized reads.
-        // For v1 state files (22 bytes), bytes 22–63 are never written by readAll.
-        // The version-2 guard prevents consumption, but zeroing eliminates the
-        // latent risk if that guard is weakened in a future refactor.
-        // SEC-P3-04: the buffer is sized to hold v3 (payload + HMAC trailer).
-        var buf: [state_size_v3]u8 = std.mem.zeroes([state_size_v3]u8);
-        const n = try f.readPositionalAll(io, &buf, 0);
+        // SEC-R13-04 (CWE-908): caller zero-initialized buf to prevent
+        // uninitialized reads for shorter file versions (bytes 22-63 are
+        // never written by readAll for a v1 file).
+        const n = try f.readPositionalAll(io, buf, 0);
 
         // Accept v1 (22 bytes), v2 (32 bytes), and v3 (64 bytes).
         if (n != state_size_v1 and n != state_size and n != state_size_v3)
@@ -1846,86 +1871,101 @@ pub const Generator = struct {
         };
         if (n != expected_len) return Error.InvalidFormat;
 
-        // SEC-P3-04: verify HMAC for v3 files. `state_mac_key` must be set;
-        // mismatch is reported as `StateMacMismatch` (distinct from
-        // `InvalidFormat` so callers can distinguish tampering from a
-        // corrupt file). Timing-safe equality protects against remote
-        // timing oracles.
-        if (file_version == state_format_version_v3) {
-            // SEC-P4-02: point into the Optional's payload directly;
-            // see saveStateImpl for the rationale.
-            const key_ptr: *const [32]u8 = if (self.state_mac_key) |*k| k else return Error.StateMacMismatch;
-            var expected: [state_mac_size]u8 = undefined;
-            std.crypto.auth.hmac.sha2.HmacSha256.create(&expected, buf[0..state_size], key_ptr);
-            const trailer = buf[state_size..state_size_v3];
-            if (!std.crypto.timing_safe.eql([state_mac_size]u8, expected, trailer.*)) {
-                return Error.StateMacMismatch;
-            }
-        } else {
-            // SEC-P4-01: enforce state_mac_policy against unauthenticated
-            // versions.  The authoritative decision tree is:
-            //
-            //   .any               → always accept; emit a warn when
-            //                         a key is set but the file has no
-            //                         tag, matching the pre-SEC-P4-01
-            //                         behaviour.
-            //   .require_mac_when_keyed (default)
-            //                      → reject with StateVersionDowngrade
-            //                         when a key is set; accept freely
-            //                         when no key is set.
-            //   .require_mac_always
-            //                      → reject with StateVersionDowngrade
-            //                         unconditionally.
-            //
-            // Rejection is tamper-resistant: a local attacker cannot
-            // downgrade a v3 file to v2 by stripping the trailer, since
-            // loadState now refuses to consume the stripped file under
-            // the default policy.
-            switch (self.state_mac_policy) {
-                .any => {
-                    if (self.state_mac_key != null) {
-                        std.log.warn(
-                            "uuid: loaded unauthenticated state file (version {d}); state_mac_key is set but file has no HMAC trailer",
-                            .{file_version},
-                        );
-                    }
-                },
-                .require_mac_when_keyed => {
-                    if (self.state_mac_key != null) {
-                        return Error.StateVersionDowngrade;
-                    }
-                },
-                .require_mac_always => {
-                    return Error.StateVersionDowngrade;
-                },
-            }
+        return .{ .file_version = file_version, .read_len = n };
+    }
+
+    /// QC-113c: verify the HMAC trailer of a v3 state file.  No-op for
+    /// v1 / v2 — those branches use `enforceStateMacPolicy` instead.
+    /// Mismatch is reported as `StateMacMismatch` (distinct from
+    /// `InvalidFormat` so callers can distinguish tampering from a
+    /// corrupt file).  Timing-safe equality protects against remote
+    /// timing oracles.
+    fn verifyStateMacIfV3(
+        bytes: *const [state_size_v3]u8,
+        file_version: u8,
+        key_opt: ?*const [32]u8,
+    ) !void {
+        if (file_version != state_format_version_v3) return;
+        // SEC-P4-02: caller passes a pointer into the Optional's payload;
+        // see saveStateImpl for the rationale.  A null key on a v3 file
+        // cannot be authenticated — treat as tampering.
+        const key_ptr = key_opt orelse return Error.StateMacMismatch;
+        var expected: [state_mac_size]u8 = undefined;
+        std.crypto.auth.hmac.sha2.HmacSha256.create(&expected, bytes[0..state_size], key_ptr);
+        const trailer = bytes[state_size..state_size_v3];
+        if (!std.crypto.timing_safe.eql([state_mac_size]u8, expected, trailer.*)) {
+            return Error.StateMacMismatch;
         }
+    }
 
-        // SEC-R13-08 (CWE-833): Read the clock BEFORE acquiring the mutex.
-        // If ClockFn blocks (network-backed NTP, slow hardware clock, test
-        // double with artificial delay), all concurrent UUID generation calls
-        // that contend on the mutexes would stall for the duration.  Reading
-        // clock outside the critical section eliminates this availability risk.
-        // QC-29: use the injectable clock (self.clock) instead of the raw
-        // syscall so that the fast-restart branch is testable via clock injection.
-        // Errors (negative/overflow clock) fall back to 0, which activates the
-        // conservative overflow path — the safe default.
-        const current_ms: i64 = clockToMs(self.clockCall()) catch 0;
+    /// QC-113c: SEC-P4-01 MAC policy enforcement for v1 / v2 files.
+    /// v3 files are authenticated by `verifyStateMacIfV3` and should
+    /// never reach this helper.  The three-arm decision tree:
+    ///
+    ///   .any               — always accept; emit a `std.log.warn`
+    ///                         when a key is set but the file has no
+    ///                         tag, matching the pre-SEC-P4-01
+    ///                         behaviour.
+    ///   .require_mac_when_keyed (default)
+    ///                      — reject with StateVersionDowngrade when
+    ///                         a key is set; accept freely when no
+    ///                         key is set.
+    ///   .require_mac_always
+    ///                      — reject with StateVersionDowngrade
+    ///                         unconditionally.
+    ///
+    /// Rejection is tamper-resistant: a local attacker cannot
+    /// downgrade a v3 file to v2 by stripping the trailer, since
+    /// loadState now refuses to consume the stripped file under the
+    /// default policy.
+    fn enforceStateMacPolicy(
+        file_version: u8,
+        policy: StateMacPolicy,
+        has_key: bool,
+    ) !void {
+        if (file_version == state_format_version_v3) return;
+        switch (policy) {
+            .any => {
+                if (has_key) {
+                    std.log.warn(
+                        "uuid: loaded unauthenticated state file (version {d}); state_mac_key is set but file has no HMAC trailer",
+                        .{file_version},
+                    );
+                }
+            },
+            .require_mac_when_keyed => {
+                if (has_key) return Error.StateVersionDowngrade;
+            },
+            .require_mac_always => return Error.StateVersionDowngrade,
+        }
+    }
 
+    /// QC-113c: mutate Generator state from the parsed buffer under the
+    /// V7 + V1V6 mutex pair (PERF-19 fixed acquisition order).  All
+    /// clock-rollback and out-of-range validation runs here so the
+    /// mutation block is monotonically safe.  Caller reads `current_ms`
+    /// BEFORE calling this helper (SEC-R13-08) so a blocking ClockFn
+    /// cannot stall generators contending on the mutexes.
+    fn applyParsedStateUnderLocks(
+        self: *Generator,
+        bytes: *const [state_size_v3]u8,
+        file_version: u8,
+        current_ms: i64,
+    ) !void {
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
         self.v7.mutex.lockUncancelable(gio());
         defer self.v7.mutex.unlock(gio());
         self.v1v6.mutex.lockUncancelable(gio());
         defer self.v1v6.mutex.unlock(gio());
 
-        const flags = buf[5];
-        self.v1v6.clock_seq = @truncate(std.mem.readInt(u16, buf[6..8], .little) & 0x3FFF);
+        const flags = bytes[5];
+        self.v1v6.clock_seq = @truncate(std.mem.readInt(u16, bytes[6..8], .little) & 0x3FFF);
         self.v1v6.clock_seq_initialized = (flags & 0x01) != 0;
         // SEC-R6-04: Reject out-of-range last_v1_ts rather than truncating
         // silently.  A u64 value above maxInt(u60) indicates a corrupt or
         // tampered state file; return InvalidFormat instead of truncating to
         // a valid-looking timestamp.
-        const raw_ts = std.mem.readInt(u64, buf[8..16], .little);
+        const raw_ts = std.mem.readInt(u64, bytes[8..16], .little);
         if (raw_ts > std.math.maxInt(u60)) return Error.InvalidFormat;
         const saved_v1_ts: u60 = @truncate(raw_ts);
 
@@ -1956,7 +1996,7 @@ pub const Generator = struct {
             self.v1v6.last_v1_ts = saved_v1_ts;
         }
         if ((flags & 0x02) != 0) {
-            self.storeNodeCache(buf[16..22][0..6].*);
+            self.storeNodeCache(bytes[16..22][0..6].*);
         } else {
             self.clearNodeCacheLocked();
         }
@@ -1967,7 +2007,7 @@ pub const Generator = struct {
         if (file_version == state_format_version_v2 or
             file_version == state_format_version_v3)
         {
-            const saved_ms = std.mem.readInt(i64, buf[22..30], .little);
+            const saved_ms = std.mem.readInt(i64, bytes[22..30], .little);
             // SEC-P3-02: apply the same clock-rollback guard to V7 state.
             // A saved last_ms far in the future relative to the current
             // clock means either the clock stepped back (NTP, VM migration)
@@ -1986,6 +2026,54 @@ pub const Generator = struct {
                 self.v7.mono_seq = std.math.maxInt(u12);
             }
         }
+    }
+
+    /// QC-113c: orchestrator for `loadState`.  Splits into four phases:
+    ///   1. openStateFileAndReadHeader — open (NOFOLLOW / reparse-reject),
+    ///      read, validate magic / version / length.
+    ///   2. verifyStateMacIfV3 — authenticate v3 files.
+    ///   3. enforceStateMacPolicy — SEC-P4-01 policy arm for v1 / v2.
+    ///   4. applyParsedStateUnderLocks — mutate generator state under
+    ///      the v7 + v1v6 mutex pair.
+    ///
+    /// Note: QC-113d (V7 CAS state machine) deferred to a follow-up
+    /// plan.  Extracting a `V7Cas` struct risks re-ordering acquire /
+    /// release fences around `v7_atomic_state` and is materially more
+    /// invasive than the saveState / loadState splits above; the
+    /// guidance in the QC-113 plan explicitly permits deferral here.
+    /// QC-113a-c alone satisfy the "split god-functions" closure
+    /// target.
+    fn loadStateImpl(self: *Generator, path: []const u8) !void {
+        // SEC-R13-04 (CWE-908): Zero-initialize to prevent uninitialized reads.
+        // For v1 state files (22 bytes), bytes 22–63 are never written by readAll.
+        // The version-2 guard prevents consumption, but zeroing eliminates the
+        // latent risk if that guard is weakened in a future refactor.
+        // SEC-P3-04: the buffer is sized to hold v3 (payload + HMAC trailer).
+        var buf: [state_size_v3]u8 = std.mem.zeroes([state_size_v3]u8);
+        const header = try openStateFileAndReadHeader(path, &buf);
+
+        // SEC-P4-02: pass the key as a pointer into the Optional's payload,
+        // NOT by value — see saveStateImpl for the CWE-316 rationale.
+        const key_opt: ?*const [32]u8 = if (self.state_mac_key) |*k| k else null;
+        try verifyStateMacIfV3(&buf, header.file_version, key_opt);
+        try enforceStateMacPolicy(
+            header.file_version,
+            self.state_mac_policy,
+            self.state_mac_key != null,
+        );
+
+        // SEC-R13-08 (CWE-833): Read the clock BEFORE acquiring the mutex.
+        // If ClockFn blocks (network-backed NTP, slow hardware clock, test
+        // double with artificial delay), all concurrent UUID generation calls
+        // that contend on the mutexes would stall for the duration.  Reading
+        // clock outside the critical section eliminates this availability risk.
+        // QC-29: use the injectable clock (self.clock) instead of the raw
+        // syscall so that the fast-restart branch is testable via clock injection.
+        // Errors (negative/overflow clock) fall back to 0, which activates the
+        // conservative overflow path — the safe default.
+        const current_ms: i64 = clockToMs(self.clockCall()) catch 0;
+
+        try self.applyParsedStateUnderLocks(&buf, header.file_version, current_ms);
     }
 };
 
