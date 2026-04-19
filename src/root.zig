@@ -47,6 +47,8 @@ pub const namespace_oid = @import("namespace.zig").namespace_oid;
 pub const namespace_x500 = @import("namespace.zig").namespace_x500;
 /// SEC-P3-05: closed-set namespace enum for `newV3Strict` / `newV5Strict`.
 pub const Namespace = @import("namespace.zig").Namespace;
+/// SEC-P4-04: runtime trusted-origin allowlist for `Namespace.fromConfig`.
+pub const registerTrustedNamespaceOrigin = @import("trusted_namespace_origins.zig").registerTrustedNamespaceOrigin;
 
 // Generator
 pub const Generator = @import("generator.zig").Generator;
@@ -126,4 +128,5 @@ test {
     _ = @import("null_uuid.zig");
     _ = @import("hwaddr/hwaddr.zig");
     _ = @import("fuzz.zig"); // SEC-R2-11: fuzz tests for UUID parsing
+    _ = @import("trusted_namespace_origins.zig"); // SEC-P4-04
 }

@@ -86,6 +86,36 @@ pub const Namespace = union(enum) {
             .custom => |b| UUID{ .bytes = b },
         };
     }
+
+    /// SEC-P4-04: runtime-driven constructor that consults the process
+    /// trusted-origin allowlist.  `origin` is a caller-defined string
+    /// tag identifying where the bytes came from (e.g.
+    /// "config.namespace", "vault.uuid-ns", "CLI --uuid-ns"); it must
+    /// be registered via `registerTrustedNamespaceOrigin` at process
+    /// startup before `fromConfig` will accept bytes carrying it.
+    ///
+    /// Returns `error.UnvettedNamespace` if the origin is not in the
+    /// allowlist.  This converts the compile-time-only Namespace
+    /// constraint into a startup-configurable runtime gate — callers
+    /// who load namespaces from config can still get the CWE-347
+    /// protection that `newV3Strict`/`newV5Strict` afford, without
+    /// hard-coding the bytes.
+    ///
+    /// Safe pattern:
+    /// ```zig
+    /// // Startup:
+    /// try uuid.registerTrustedNamespaceOrigin("config.tenant");
+    ///
+    /// // Later, config-driven:
+    /// const ns_bytes = parseConfig(...);
+    /// const ns = try Namespace.fromConfig(ns_bytes, "config.tenant");
+    /// const id = try uuid.newV3Strict(ns, name);
+    /// ```
+    pub fn fromConfig(bytes: [16]u8, origin: []const u8) error{UnvettedNamespace}!Namespace {
+        const trusted = @import("trusted_namespace_origins.zig");
+        if (!trusted.isTrusted(origin)) return error.UnvettedNamespace;
+        return Namespace{ .custom = bytes };
+    }
 };
 
 test "Namespace.asUUID round-trips the four RFC-9562 namespaces (SEC-P3-05)" {
@@ -125,4 +155,54 @@ test "namespace constants are distinct" {
 test "nil and max are correct" {
     try std.testing.expect(nil.isNil());
     for (max.bytes) |b| try std.testing.expectEqual(@as(u8, 0xFF), b);
+}
+
+test "SEC-P4-04: Namespace.fromConfig rejects unregistered origin" {
+    const trusted = @import("trusted_namespace_origins.zig");
+    trusted.resetForTest();
+    defer trusted.resetForTest();
+
+    const bytes: [16]u8 = .{0x01} ** 16;
+    try std.testing.expectError(
+        error.UnvettedNamespace,
+        Namespace.fromConfig(bytes, "unregistered.origin"),
+    );
+}
+
+test "SEC-P4-04: Namespace.fromConfig accepts registered origin" {
+    const trusted = @import("trusted_namespace_origins.zig");
+    trusted.resetForTest();
+    defer trusted.resetForTest();
+
+    try trusted.registerTrustedNamespaceOrigin("config.tenant");
+    const bytes: [16]u8 = .{0x02} ** 16;
+    const ns = try Namespace.fromConfig(bytes, "config.tenant");
+    try std.testing.expectEqualSlices(u8, &bytes, &ns.asUUID().bytes);
+}
+
+test "SEC-P4-04: registerTrustedNamespaceOrigin is idempotent" {
+    const trusted = @import("trusted_namespace_origins.zig");
+    trusted.resetForTest();
+    defer trusted.resetForTest();
+
+    try trusted.registerTrustedNamespaceOrigin("x");
+    try trusted.registerTrustedNamespaceOrigin("x"); // idempotent no-op
+    try std.testing.expect(trusted.isTrusted("x"));
+}
+
+test "SEC-P4-04: registerTrustedNamespaceOrigin enforces capacity" {
+    const trusted = @import("trusted_namespace_origins.zig");
+    trusted.resetForTest();
+    defer trusted.resetForTest();
+
+    var buf: [4]u8 = undefined;
+    var i: usize = 0;
+    while (i < trusted.max_trusted_origins) : (i += 1) {
+        const origin = try std.fmt.bufPrint(&buf, "o{d}", .{i});
+        try trusted.registerTrustedNamespaceOrigin(origin);
+    }
+    try std.testing.expectError(
+        error.TrustedOriginLimitExceeded,
+        trusted.registerTrustedNamespaceOrigin("overflow"),
+    );
 }
