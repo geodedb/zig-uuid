@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Release Notes -- 2026-04-18 SEC-P4-01 HMAC Downgrade Resistance (BEHAVIOUR CHANGE)
+
+Closes the HIGH-severity v3→v2 HMAC downgrade finding (SEC-P4-01). `loadState` now rejects unauthenticated v1/v2 state files with `Error.StateVersionDowngrade` when `state_mac_key` is configured, closing the trivial downgrade attack (CWE-757) where a local attacker strips the 32-byte HMAC trailer from a v3 file to silently bypass integrity verification. New `InitOptions.state_mac_policy` knob with three variants (`.any` / `.require_mac_when_keyed` / `.require_mac_always`); default is `.require_mac_when_keyed`. New `Generator.migrateStateToV3(path)` helper + module-level `uuid.migrateStateToV3(path)` for one-shot on-disk upgrade. The XFAIL integration guard at `tests/integration.zig` (GAP-DOC-08.2, commit `5fe1771`) activates with this release — integration suite is now 37/37 passing with zero skipped.
+
+**Migration:** callers that previously loaded v1/v2 files under a configured `state_mac_key` have two clean paths:
+
+1. Mid-rotation: set `InitOptions.state_mac_policy = .any` explicitly to restore the pre-SEC-P4-01 warn-and-accept behaviour.
+2. Permanent: call `uuid.migrateStateToV3(path)` once at startup after configuring the key; subsequent loads under the default policy succeed.
+
+### Added
+
+- `uuid.StateMacPolicy` enum (`.any` / `.require_mac_when_keyed` / `.require_mac_always`).
+- `InitOptions.state_mac_policy: StateMacPolicy = .require_mac_when_keyed` field.
+- `Generator.state_mac_policy: StateMacPolicy` instance field.
+- `Generator.migrateStateToV3(path: []const u8) Error!void` method.
+- `uuid.migrateStateToV3(path)` module-level wrapper.
+- `Error.StateVersionDowngrade` variant (distinct from `StateMacMismatch` so callers can pattern-match tampering vs downgrade separately).
+
+### Changed
+
+- **(BEHAVIOUR)** `loadState` default policy rejects unauthenticated v1/v2 files when `state_mac_key` is configured. The pre-SEC-P4-01 `std.log.warn` was a detection signal only; the new policy is a hard gate.
+
 ### Release Notes -- 2026-04-18 Benchmark Suite Rewrite
 
 Replaced the legacy `bench/main.zig` + `bench/baseline.txt` text harness with a structured JSON benchmark suite under `benchmarks/`, modelled after the sibling thread-pool repo. Every scenario runs 7 times (median-of-6 + stddev); results are emitted as JSON so the new `bench-compare` step can gate CI on both a hard 15% regression threshold and a per-row `max(threshold, 3*stddev)` noise floor (PERF-26 retained). New build steps: `bench`, `bench-check`, `bench-contention`, `bench-state`, `bench-micro-parse`, `bench-micro-format`, `bench-micro-hash`, `bench-micro`, `bench-all`, `bench-compare`. Added UUID-specific correctness witnesses: `duplicate_uuids` (must be 0 for contention scenarios) and `lockfree_fallbacks` (PERF-21 saturation counter). Baselines committed at `benchmarks/results/baseline*.json`.

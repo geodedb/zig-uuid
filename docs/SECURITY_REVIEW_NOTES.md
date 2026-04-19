@@ -822,7 +822,7 @@ Remediation: in Debug builds, assert against a known-weak-PRNG fingerprint (firs
 
 | Gap-ID | Severity | Risk | Session plan | One-commit? |
 | ------ | -------- | ---- | ------------ | ----------- |
-| SEC-P4-01 | HIGH | 7.4 | ⚠️ Requires user sign-off (InitOptions.state_mac_policy default = .require_mac_when_keyed is a **default-behavior change**). | Separate PR; pair with migration helper + changelog entry. |
+| SEC-P4-01 | HIGH | 7.4 | ✅ Closed 2026-04-18 (`0311ff5` error variant, `0b1e916` enum + field, `7b8ac7f` enforcement, `aab1215` migrateStateToV3 helper) — default policy `.require_mac_when_keyed` rejects v1/v2 with `Error.StateVersionDowngrade` when keyed. Migration recipe in CHANGELOG; `migrateStateToV3` provides one-shot upgrade. | Landed; CHANGELOG flags behaviour change. |
 | SEC-P4-02 | Medium | 5.1 | ✅ Closed 2026-04-18 (`6e1e37d` fix + guard `60690e6`) — pointer-capture via the optional-payload pointer syntax eliminates the 32-byte stack spill. | Yes. |
 | SEC-P4-03 | Medium | 4.6 | Implementable this session; one commit. | Yes. |
 | SEC-P4-04 | Low | 3.2 | Follow-up cycle (API addition). | No — coordinate with namespace docs. |
