@@ -151,7 +151,10 @@ pub fn timestampFromV7(u: UUID) Error!Timestamp {
     // unix_ts_ms is in bytes 0-5 (48 bits, big-endian)
     const hi: u64 = std.mem.readInt(u32, u.bytes[0..4], .big);
     const lo: u64 = std.mem.readInt(u16, u.bytes[4..6], .big);
-    const ms: i64 = @intCast((hi << 16) | lo);
+    const combined: u64 = (hi << 16) | lo;
+    // 48-bit unix_ts_ms fits in i64 positive range; guarded by assert for refactor safety (SEC-P4-13).
+    std.debug.assert((combined >> 48) == 0);
+    const ms: i64 = @intCast(combined);
     return Timestamp.fromUnixMs(ms);
 }
 
