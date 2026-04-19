@@ -1,0 +1,9 @@
+# Agent-authored design-phase planning docs use a deliberately loose
+# fenced-code-block style (bare ``` for console-output samples).  They
+# are trackable artifacts that document the TDD/per-gap-commit process
+# each plan drove, not shipped documentation that consumers read —
+# skip the shipped-doc lint discipline so the plans can carry the
+# output samples literally.  Shipped docs (README, CHANGELOG,
+# SECURITY.md, docs/GAP_ANALYSIS*.md, docs/*_REVIEW_NOTES.md,
+# docs/runbooks/) still lint normally.
+docs/superpowers/plans/
