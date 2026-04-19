@@ -1497,10 +1497,21 @@ pub const Generator = struct {
             //
             // exclusive:true → O_EXCL on POSIX: fails if any file or symlink
             // now exists at tmp_path, preventing symlink-following on create.
-            const f = try std.Io.Dir.createFileAbsolute(io, tmp_path, .{
-                .exclusive = true,
-                .permissions = std.Io.File.Permissions.fromMode(0o600),
-            });
+            //
+            // The `permissions` field is POSIX-only: std.Io.File.Permissions
+            // on Windows is a DWORD-backed enum without `fromMode`, so we
+            // only request 0o600 when targeting POSIX.  On Windows the state
+            // file inherits the default ACL of its parent directory (the
+            // intended user profile / appdata location); there is no POSIX
+            // mode concept to enforce.
+            const create_opts: std.Io.Dir.CreateFileOptions = if (comptime builtin.os.tag == .windows)
+                .{ .exclusive = true }
+            else
+                .{
+                    .exclusive = true,
+                    .permissions = std.Io.File.Permissions.fromMode(0o600),
+                };
+            const f = try std.Io.Dir.createFileAbsolute(io, tmp_path, create_opts);
             errdefer std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
             defer f.close(io);
             // SEC-P3-03: umask-proof fchmod to exactly 0o600 on POSIX. Windows

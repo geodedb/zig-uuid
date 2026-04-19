@@ -261,8 +261,10 @@ pub fn build(b: *std.Build) void {
     // Cross-compile check step removed — previously created per-target module
     // copies rooted at src/root.zig, which triggered duplicate-module diamond
     // errors in downstream consumers ("src/uuid.zig: file exists in modules
-    // 'json' and 'json0'"). Cross-target builds remain available via explicit
-    // `zig build -Dtarget=<triple>` invocations, matching the sibling-repo
-    // convention.
+    // 'json' and 'json0'").  Cross-target coverage is now driven by CI, which
+    // loops over the supported triples and invokes `zig build check
+    // -Dtarget=<triple>` once per target (see `test-cross-build` in
+    // .gitlab-ci.yml).  This matches the sibling-repo convention and avoids
+    // the diamond-import pathology.
     _ = &json_module; // silence unused when only the single public module uses it
 }

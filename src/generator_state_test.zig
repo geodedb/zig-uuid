@@ -832,9 +832,13 @@ test "Generator: v2 file still loads when state_mac_key is set (SEC-P3-04 backwa
     std.mem.writeInt(u16, blob[30..32], 0, .little);
 
     const io = std.Io.Threaded.global_single_threaded.io();
-    const fh = try std.Io.Dir.createFileAbsolute(io, path, .{
-        .permissions = std.Io.File.Permissions.fromMode(0o600),
-    });
+    // std.Io.File.Permissions exposes fromMode only on POSIX; on Windows the
+    // enum is a DWORD-backed attribute bag with no POSIX mode translation.
+    const create_opts: std.Io.Dir.CreateFileOptions = if (comptime builtin.os.tag == .windows)
+        .{}
+    else
+        .{ .permissions = std.Io.File.Permissions.fromMode(0o600) };
+    const fh = try std.Io.Dir.createFileAbsolute(io, path, create_opts);
     defer fh.close(io);
     try fh.writePositionalAll(io, &blob, 0);
 
@@ -956,9 +960,13 @@ test "SEC-P4-02: saveState HMAC tag stable for known key+payload" {
     // Flip a byte in the tag — loadState must reject.
     bytes[Generator.state_size_v3 - 1] ^= 0x01;
     {
-        const f = try std.Io.Dir.createFileAbsolute(io, state_path, .{
-            .permissions = std.Io.File.Permissions.fromMode(0o600),
-        });
+        // Windows lacks POSIX fromMode; omit .permissions when cross-compiling
+        // for windows (test is still exercised on POSIX runners).
+        const flip_opts: std.Io.Dir.CreateFileOptions = if (comptime builtin.os.tag == .windows)
+            .{}
+        else
+            .{ .permissions = std.Io.File.Permissions.fromMode(0o600) };
+        const f = try std.Io.Dir.createFileAbsolute(io, state_path, flip_opts);
         defer f.close(io);
         try f.writePositionalAll(io, &bytes, 0);
     }

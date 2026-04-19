@@ -180,17 +180,20 @@ build-examples:
     - zig build examples
   needs: []
 
-# Cross-compilation checks (QC-8, QC-19: use `zig build check-cross` which
-# compiles all five target triples in a single invocation via the check-cross
-# step defined in build.zig.  The previous `zig build -Dtarget=X` invocations
-# were no-ops for the same reason as QC-18 — no installArtifact in build.zig.)
+# Cross-compilation checks (QC-8, QC-19, GAP-CI-01): invoke the per-module
+# `zig build check` step once per target triple via `-Dtarget=<triple>`.
+# The former `check-cross` aggregate step was removed from build.zig because
+# it created per-target module copies rooted at src/root.zig, which triggered
+# duplicate-module diamond errors in sibling consumers ("src/uuid.zig: file
+# exists in modules 'json' and 'json0'").  The looped invocation below
+# preserves cross-target coverage without re-introducing that pathology.
 test-cross-build:
   stage: test
   image: debian:bookworm-slim
   before_script:
     - *install-zig
   script:
-    - zig build check-cross
+    - for t in x86_64-linux-gnu aarch64-linux-gnu x86_64-macos aarch64-macos x86_64-windows-gnu; do echo "=== $t ==="; zig build check -Dtarget=$t || exit 1; done
   needs:
     - build
 
