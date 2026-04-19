@@ -991,3 +991,92 @@ test "PERF-35: saveState round-trip still works after fsync additions" {
     try std.testing.expect(saved_last_ms > 0);
     try std.testing.expect(gen2.v7.last_ms == saved_last_ms or gen2.v7.last_ms == 0);
 }
+
+test "SEC-P4-01: default policy rejects v2 when state_mac_key is set" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version_v2;
+    blob[5] = 0x01;
+    std.mem.writeInt(u16, blob[6..8], 0x1111, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], 0, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+    try f.writePositionalAll(io, &blob, 0);
+    f.close(io);
+
+    const key: [32]u8 = .{0x77} ** 32;
+    var gen = Generator.initOptions(.{ .state_mac_key = key });
+    try std.testing.expectError(Error.StateVersionDowngrade, gen.loadState(path));
+}
+
+test "SEC-P4-01: .any policy accepts v2 when state_mac_key is set" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version_v2;
+    blob[5] = 0x01;
+    std.mem.writeInt(u16, blob[6..8], 0x2222, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], 0, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+    try f.writePositionalAll(io, &blob, 0);
+    f.close(io);
+
+    const key: [32]u8 = .{0x77} ** 32;
+    var gen = Generator.initOptions(.{
+        .state_mac_key = key,
+        .state_mac_policy = .any,
+    });
+    try gen.loadState(path);
+    try std.testing.expectEqual(@as(u14, 0x2222), gen.v1v6.clock_seq);
+}
+
+test "SEC-P4-01: .require_mac_always rejects v2 even without key" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/state.bin", .{dir_path});
+
+    var blob: [Generator.state_size]u8 = undefined;
+    @memcpy(blob[0..4], &Generator.state_magic);
+    blob[4] = Generator.state_format_version_v2;
+    blob[5] = 0x01;
+    std.mem.writeInt(u16, blob[6..8], 0x3333, .little);
+    std.mem.writeInt(u64, blob[8..16], 0, .little);
+    @memset(blob[16..22], 0);
+    std.mem.writeInt(i64, blob[22..30], 0, .little);
+    std.mem.writeInt(u16, blob[30..32], 0, .little);
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.createFileAbsolute(io, path, .{});
+    try f.writePositionalAll(io, &blob, 0);
+    f.close(io);
+
+    var gen = Generator.initOptions(.{
+        .state_mac_policy = .require_mac_always,
+    });
+    try std.testing.expectError(Error.StateVersionDowngrade, gen.loadState(path));
+}
