@@ -1153,3 +1153,21 @@ test "SEC-P4-01: migrateStateToV3 rejects when no key configured" {
         gen.migrateStateToV3(path),
     );
 }
+
+test "SEC-P4-03: default clock_rollback_tolerance_ms is 250 (tightened from 1000)" {
+    var gen = Generator.init();
+    try std.testing.expectEqual(@as(i64, 250), gen.clock_rollback_tolerance_ms);
+}
+
+test "SEC-P4-03: InitOptions.clock_rollback_tolerance_ms overrides the default" {
+    var gen = Generator.initOptions(.{ .clock_rollback_tolerance_ms = 500 });
+    try std.testing.expectEqual(@as(i64, 500), gen.clock_rollback_tolerance_ms);
+}
+
+test "SEC-P4-03: InitOptions caps rollback tolerance to [0, 60_000] range" {
+    var gen_lo = Generator.initOptions(.{ .clock_rollback_tolerance_ms = -100 });
+    try std.testing.expectEqual(@as(i64, 0), gen_lo.clock_rollback_tolerance_ms);
+
+    var gen_hi = Generator.initOptions(.{ .clock_rollback_tolerance_ms = 1_000_000 });
+    try std.testing.expectEqual(@as(i64, 60_000), gen_hi.clock_rollback_tolerance_ms);
+}
