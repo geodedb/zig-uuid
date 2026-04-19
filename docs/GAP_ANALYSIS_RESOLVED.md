@@ -3,7 +3,7 @@
 > Mirror of resolved items that were previously tracked in `docs/GAP_ANALYSIS.md`
 > and the GitLab issue tracker. The issue tracker is authoritative.
 >
-> Last updated: 2026-04-19 (Phase 5 closure cycle — 12 items closed across GAP-CI-01, 4 SEC-P4 security items, 1 SEC-P4 adversarial co-closure, 2 PERF items + 1 PERF co-closure, 4 QC items + 1 QC co-closure. Plus the earlier Phase 5 sync migration of Legacy F-1..F-9 + G-1..G-10 and GAP-DOC-13.)
+> Last updated: 2026-04-19 (Phase 5 closure cycle — 12 items closed across GAP-CI-01, 4 SEC-P4 security items, 1 SEC-P4 adversarial co-closure, 2 PERF items + 1 PERF co-closure, 4 QC items + 1 QC co-closure. **Residual closure batch:** +7 items — SEC-P4-13, GAP-DOC-11, GAP-DOC-12, PERF-41, PERF-44, QC-116, QC-117. After the residual batch, only SEC-P4-14 (Blocked) and QC-113d (Deferred) remain open across all tracker files. Plus the earlier Phase 5 sync migration of Legacy F-1..F-9 + G-1..G-10 and GAP-DOC-13.)
 
 ## Summary
 
@@ -1119,5 +1119,100 @@ creates a `GeneratorInterface` backed by the concrete `Generator` via the
 - Full closures this cycle: **12** — GAP-CI-01, SEC-P4-10, SEC-P4-A1, SEC-P4-11, SEC-P4-12, PERF-40, PERF-42, PERF-43, QC-113a, QC-113b, QC-113c, QC-114, QC-115.
 - Deferred this cycle: **1** (QC-113d — rationale in `cb0f44d` body).
 - Blocked this cycle: **1** (SEC-P4-14 — operator must supply tag→SHA map for 8 ci-catalog components; see `docs/SECURITY_REVIEW_NOTES.md` § _Unblock action required (SEC-P4-14)_).
-- Still-open carryover: **4** (SEC-P4-13 Very Low, PERF-41, PERF-44, QC-116, QC-117, GAP-DOC-11, GAP-DOC-12 — count is 7 items but only 4 of them block the "all Phase-5 findings closed" criterion; the rest are stretch / next-cycle scheduled).
+- Still-open carryover: **4** (SEC-P4-13 Very Low, PERF-41, PERF-44, QC-116, QC-117, GAP-DOC-11, GAP-DOC-12 — count is 7 items but only 4 of them block the "all Phase-5 findings closed" criterion; the rest are stretch / next-cycle scheduled). **UPDATE:** all 7 carryover items closed in the residual closure batch below; only SEC-P4-14 (Blocked) and QC-113d (Deferred) remain.
 - Cumulative closures this project: **92** (80 prior + 12 this cycle). Won't-Do retained: 4.
+
+---
+
+## Phase 5 Closure Cycle — Residual Batch (2026-04-19)
+
+> HEAD at closure: post-`0c56f13` (7 additional closure commits after the primary Phase-5 closure cycle).
+> Test state: 257 unit pass + 1 skip (Windows-only), 37/37 integration, all 5 cross-compile targets pass, warn-noise 3 → 0.
+> Docs-tracked only (`glab` auth remains DEGRADED). 7 items closed; no new Deferred; no new Blocked.
+> After this batch, **only SEC-P4-14 (Blocked) and QC-113d (Deferred) remain open** across all tracker files.
+
+### Security — 1 closed
+
+### SEC-P4-13: `@intCast((hi<<16)|lo)` refactor-fragile [RESOLVED]
+
+- **Issue:** docs-tracked only (`glab` DEGRADED)
+- **Category:** Security / Hardening (CWE-704 "Incorrect Type Conversion or Cast")
+- **Severity:** Very Low (Risk 1, confidence::suspected)
+- **Resolution:** Added `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0)` immediately before the packed-timestamp reconstruction `@intCast((hi << 16) | lo)`, plus an inline comment explaining the bit-width invariant. Debug builds now trap if either half overflows its field; ReleaseFast semantics unchanged. **Diagnosis reconciliation:** the finding text referenced `timestampFromV1`, but the actual site is `timestampFromV7` (V7 is the `unix_ts_ms` path where the packed `(hi << 16) | lo` reconstruction occurs). The commit message documents this reconciliation.
+- **Evidence:** `src/timestamp.zig` (`timestampFromV7` — assert + invariant comment on the packed reconstruction).
+- **Commit:** `3b338ab` (`fix(security): close SEC-P4-13 — guard timestampFromV7 @intCast with assert`)
+- **Resolved date:** 2026-04-19
+
+### Docs — 2 closed
+
+### GAP-DOC-11: Stale test counts in `docs/REQUIREMENTS.md` [RESOLVED]
+
+- **Issue:** docs-tracked only (`glab` DEGRADED)
+- **Category:** Docs
+- **Severity:** Low
+- **Resolution:** Refreshed `docs/REQUIREMENTS.md` test counts from the stale 172/32 figures to the actual 257/37 on HEAD (unit tests: 257 pass + 1 Windows-only skip; integration tests: 37/37).
+- **Evidence:** `docs/REQUIREMENTS.md` (test-count prose updated); `zig build test` — 257 pass / 1 skip; `zig build test-integration` — 37/37 pass.
+- **Commit:** `0c15b8b` (`docs: close GAP-DOC-11/12 — refresh REQUIREMENTS test counts and JSON API shape`)
+- **Resolved date:** 2026-04-19
+
+### GAP-DOC-12: `docs/REQUIREMENTS.md` misrepresents `jsonMarshal` / `jsonUnmarshal` as UUID methods [RESOLVED]
+
+- **Issue:** docs-tracked only (`glab` DEGRADED)
+- **Category:** Docs
+- **Severity:** Low
+- **Resolution:** Rewrote the JSON subsection in `docs/REQUIREMENTS.md` to cite `@import("uuid_json")` and the free-function signatures from `src/uuid_json.zig`, removing the incorrect `UUID.jsonMarshal(…)`-style method references. Added a new `§ JSON Adapter` section to `README.md` documenting the free-function API with usage example. Bundled with GAP-DOC-11 per the recommended-fix plan.
+- **Evidence:** `docs/REQUIREMENTS.md` (JSON subsection rewritten); `README.md` (new `§ JSON Adapter` section); `src/uuid_json.zig` (canonical source of the free-function signatures).
+- **Commit:** `0c15b8b` (co-closed with GAP-DOC-11)
+- **Resolved date:** 2026-04-19
+
+### Performance — 2 closed
+
+### PERF-41: V3/V5 convenience wrappers bypass the prehashed namespace fast path [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Performance (P3, confirmed)
+- **Severity:** P3, PerfScore 16
+- **Resolution:** Fix (1) from the plan landed: `README.md` now documents `Generator.initV3Namespace` / `initV5Namespace` as the fast path when looping over a single namespace, with the expected ~60 ns MD5-init + 16-byte update saved per call. Fix (2) — the optional `NamespacedGenerator(comptime ns)` wrapper — is deliberately **deferred**: no API break shipped, and the doc note is sufficient to unblock the perf-sensitive single-namespace-loop callers the finding targeted.
+- **Evidence:** `README.md` (perf-section note on `initV3Namespace` / `initV5Namespace`); `src/generator.zig:1279` / `:1290` (canonical prehashed handles unchanged).
+- **Commit:** `6d5804e` (`docs(perf): close PERF-41 — document prehashed v3/v5 fast path in README`)
+- **Resolved date:** 2026-04-19
+
+### PERF-44: `bench-regression` fires only on `main` + scheduled — no MR coverage [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Performance / CI (P3, confirmed)
+- **Severity:** P3, PerfScore 20
+- **Resolution:** New `bench-micro-mr` CI job fires on `merge_request_event` and runs the three `bench-micro-{parse,format,hash}` suites with a **10% threshold** (tighter than the 15% `main` threshold) so regressions block the MR instead of landing on `main`. Pairs with PERF-43's suite expansion — together they give MR-only coverage of parse/format/hash and `main`-only coverage of state/contention/full bench.
+- **Evidence:** `.gitlab-ci.yml` (`bench-micro-mr` job added with 0.10 threshold).
+- **Commit:** `38ffe49` (`perf(ci): close PERF-44 — MR-gated bench-micro-mr job with 0.10 threshold`)
+- **Resolved date:** 2026-04-19
+
+### Quality — 2 closed
+
+### QC-116: Pre-commit / CI parity gap [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Quality / CI-CD
+- **Severity:** Low (Score 4, confidence::confirmed)
+- **Resolution:** `.pre-commit-config.yaml` expanded with opt-in parity hooks for `gitleaks` (secret-scan), `test-integration` (integration gate), and `bench-check` (perf smoke). SAST and SBOM remain CI-only and are now explicitly documented as such (their scanners are not suitable for pre-commit execution). Local gate now catches the same correctness and secret-leak classes as CI, with opt-in control for the slower hooks.
+- **Evidence:** `.pre-commit-config.yaml` (hooks added); CONTRIBUTING note (SAST/SBOM CI-only trade-off documented).
+- **Commit:** `0c56f13` (`chore(quality): close QC-116 — expand pre-commit with gitleaks + test-integration + bench-check`)
+- **Resolved date:** 2026-04-19
+
+### QC-117: Test stderr noise during policy-downgrade tests [RESOLVED]
+
+- **Issue:** docs-tracked only
+- **Category:** Quality / Tests
+- **Severity:** Low (Score 4, confidence::confirmed)
+- **Resolution:** Expected warn during policy-downgrade tests now suppressed via `std.log.scoped` combined with a per-test `testing.log_level` override, so the intentional warn from `src/generator.zig:1710` is swallowed by the test instead of polluting `zig build test` output. `zig build test` warn-noise count reduced from 3 to 0 (verified).
+- **Evidence:** `src/generator_state_test.zig` (policy-downgrade tests — scoped log + log_level override); `zig build test` output shows zero unexpected warns (was 3).
+- **Commit:** `cfa9f04` (`test: close QC-117 — suppress expected warn noise in policy-downgrade tests`)
+- **Resolved date:** 2026-04-19
+
+### Residual Batch — Tally
+
+- Full closures this batch: **7** — SEC-P4-13, GAP-DOC-11, GAP-DOC-12, PERF-41, PERF-44, QC-116, QC-117.
+- Deferred this batch: **0**.
+- Blocked this batch: **0**.
+- **After this batch:** across every tracker file, only **SEC-P4-14 (Blocked — operator tag→SHA map required)** and **QC-113d (Deferred — ABA-avoidance + PERF-40 cache-layout risk)** remain open.
+- Cumulative closures this project: **99** (92 prior + 7 this batch). Won't-Do retained: 4.

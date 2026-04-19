@@ -937,12 +937,13 @@ Acceptance: test asserts `newV5Bounded` returns `error.NameTooLong` for `name.le
 References: CWE-400.
 Plan: append task to `docs/superpowers/plans/2026-04-18-security-minor-hardening.md`.
 
-**13. SEC-P4-13** (Very Low, CWE-704 "Incorrect Type Conversion or Cast", Risk **1**, confidence::suspected) — `@intCast((hi<<16)|lo)` refactor-fragile.
-Evidence: `src/timestamp.zig:154` — the packed-timestamp reconstruction `@intCast((hi << 16) | lo)` silently relies on `hi <= 2^48-1` and `lo <= 2^16-1`. A future refactor that widens either half (e.g., swaps sub-ms units) can produce a truncating cast with no compile-time warning in ReleaseFast.
-Remediation: add `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0);` immediately before the `@intCast`, plus a single-line comment explaining the invariant.
-Acceptance: debug build traps if either half overflows its field; ReleaseFast semantics unchanged.
+**13. SEC-P4-13** (Very Low, CWE-704 "Incorrect Type Conversion or Cast", Risk **1**, confidence::suspected) — `@intCast((hi<<16)|lo)` refactor-fragile. **✅ Closed 2026-04-19 (`3b338ab`).**
+Evidence: `src/timestamp.zig` — the packed-timestamp reconstruction `@intCast((hi << 16) | lo)` silently relies on `hi <= 2^48-1` and `lo <= 2^16-1`. (Diagnosis refinement during closure: the site flagged by the original finding text as `timestampFromV1` is actually `timestampFromV7` — V7 is the `unix_ts_ms` path where the packed `(hi << 16) | lo` reconstruction occurs. The `3b338ab` commit body documents this reconciliation.)
+Resolution: added `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0)` immediately before the `@intCast` in `timestampFromV7`, plus an inline comment explaining the bit-width invariant. Debug builds now trap if either half overflows its field; ReleaseFast semantics unchanged.
+Commit: `3b338ab` (`fix(security): close SEC-P4-13 — guard timestampFromV7 @intCast with assert`).
+Evidence (closure): `src/timestamp.zig` (assert + invariant comment on the packed-timestamp reconstruction).
 References: CWE-704.
-Plan: append task to `docs/superpowers/plans/2026-04-18-security-minor-hardening.md`.
+Plan: executed in-band — `docs/superpowers/plans/2026-04-18-security-minor-hardening.md` task retired.
 
 ### New Adversarial Findings (Phase 3 re-review)
 
@@ -970,7 +971,7 @@ Exploit surface: internet-facing (CI).
 | SEC-P4-10 | Medium | 12 | ✅ Closed 2026-04-19 (`5202714`) — `reseed` clears `v7_atomic_state` under both mutexes; co-closed SEC-P4-A1 (CAS budget 32_768 → 4096). | Landed. |
 | SEC-P4-11 | Low | 2 | ✅ Closed 2026-04-19 (`f67e8bf`) — Windows `loadState` post-open `NtQueryInformationFile` reparse-point reject. | Landed. |
 | SEC-P4-12 | Low | 6 | ✅ Closed 2026-04-19 (`904d352`) — `newV3Bounded` / `newV5Bounded` + `Error.NameTooLong`; CWE-400 docstring on unbounded variants. | Landed. |
-| SEC-P4-13 | Very Low | 1 | Open — `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0)` + comment at `src/timestamp.zig:154`. Append to `2026-04-18-security-minor-hardening.md`. Not closed this cycle (Very Low; stretch). | Yes (next cycle). |
+| SEC-P4-13 | Very Low | 1 | ✅ Closed 2026-04-19 (`3b338ab`) — `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0)` + comment landed in `src/timestamp.zig` `timestampFromV7` (V7 unix_ts_ms path; not V1). | Landed. |
 | SEC-P4-A1 | Low | 4 | ✅ Closed 2026-04-19 (`5202714`) — folded into SEC-P4-10 commit. CAS retry budget tightened from 32_768 to 4096; `InitOptions.clock` docstring forbids non-monotone clocks. | Landed. |
 | SEC-P4-14 | Medium-High | 40 | 🚧 **Blocked** — `git ls-remote https://gitlab.com/devnw/ci-catalog` fails: `fatal: could not read Username for 'https://gitlab.com'`. Plan `2026-04-19-sec-p4-ci-catalog-sha-pins.md` is ready but requires the operator-provided tag→SHA map for 8 components at `gitlab.com/devnw/ci-catalog@v1.7.1`. See § _Unblock action required (SEC-P4-14)_ below. | Yes once unblocked (CI YAML + runbook). |
 
@@ -1024,7 +1025,7 @@ glab issue create \
 | SEC-P4-10 | Medium | 12 | ✅ Closed | `5202714` | `src/generator.zig` (`reseed` atomic clear under both mutexes); `src/generator_test.zig` (pre/post-reseed sequence disjointness). |
 | SEC-P4-11 | Low | 2 | ✅ Closed | `f67e8bf` | `src/generator.zig` (Windows `NtQueryInformationFile` reparse-point reject). |
 | SEC-P4-12 | Low | 6 | ✅ Closed | `904d352` | `src/generator.zig` (`newV3Bounded`, `newV5Bounded`, `Error.NameTooLong`, CWE-400 docstrings); `src/generator_test.zig` (boundary tests). |
-| SEC-P4-13 | Very Low | 1 | Open | — | Not closed this cycle (stretch). Remains queued on `2026-04-18-security-minor-hardening.md`. |
+| SEC-P4-13 | Very Low | 1 | ✅ Closed | `3b338ab` | `src/timestamp.zig` `timestampFromV7` — `std.debug.assert((hi >> 48) == 0 and (lo >> 16) == 0)` + bit-width invariant comment. Commit body documents the finding-site reconciliation (V7 unix_ts_ms, not V1). |
 | SEC-P4-A1 | Low | 4 | ✅ Closed (co-closed) | `5202714` | `src/generator.zig` (`max_retries = 4096`; `InitOptions.clock` monotonicity docstring); bounded-time saturation test. |
 | SEC-P4-14 | Medium-High | 40 | 🚧 Blocked | — | See § _Unblock action required (SEC-P4-14)_ below. |
 
@@ -1041,4 +1042,4 @@ glab issue create \
 
 **Plan:** `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` (ready to execute once step 1 above is satisfied).
 
-_Last updated: 2026-04-19 — Phase 4 follow-up audit (cycle 3). 6 new findings added (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1): 1 Medium-High supply-chain (Risk 40), 1 Medium (Risk 12), 1 Low (Risk 6), 1 Low (Risk 4), 1 Low (Risk 2), 1 Very Low (Risk 1). `glab` auth DEGRADED — no tracker mutations performed._
+_Last updated: 2026-04-19 — Phase 4 follow-up audit (cycle 3) + closure cycle + residual closure batch. 6 new findings added (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1): 1 Medium-High supply-chain (Risk 40), 1 Medium (Risk 12), 1 Low (Risk 6), 1 Low (Risk 4), 1 Low (Risk 2), 1 Very Low (Risk 1). Outcomes — SEC-P4-10 + SEC-P4-A1 closed (`5202714`); SEC-P4-11 closed (`f67e8bf`); SEC-P4-12 closed (`904d352`); **SEC-P4-13 closed (`3b338ab`, residual batch)**; SEC-P4-14 Blocked (operator tag→SHA map required for 8 ci-catalog components). `glab` auth DEGRADED — no tracker mutations performed._

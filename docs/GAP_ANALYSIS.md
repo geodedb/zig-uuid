@@ -4,7 +4,7 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-04-19 — Phase 5 gap-detector sync + Phase 4 security cycle 3 + closure cycle. Legacy F-1..F-9 + G-1..G-10 closed sections migrated to `docs/GAP_ANALYSIS_RESOLVED.md`; 4 new quality gaps recorded (GAP-CI-01, GAP-DOC-11, GAP-DOC-12, GAP-DOC-13) plus 6 new security gaps from Phase-4 cycle 3 (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1). `glab` auth remains DEGRADED (see GAP-DOC-10 in the resolved file) — no tracker mutations performed this cycle. **Closure cycle 2026-04-19:** GAP-CI-01 closed (`87c4a0e`); SEC-P4-10 + SEC-P4-A1 closed (`5202714`); SEC-P4-11 closed (`f67e8bf`); SEC-P4-12 closed (`904d352`); SEC-P4-14 Blocked pending operator-provided SHAs for 8 ci-catalog components. **Remaining open: 4** (SEC-P4-13 Very Low, SEC-P4-14 Medium-High Blocked, GAP-DOC-11 Low, GAP-DOC-12 Low).
+> Last updated: 2026-04-19 — Phase 5 gap-detector sync + Phase 4 security cycle 3 + closure cycle (+ residual closure batch). Legacy F-1..F-9 + G-1..G-10 closed sections migrated to `docs/GAP_ANALYSIS_RESOLVED.md`; 4 new quality gaps recorded (GAP-CI-01, GAP-DOC-11, GAP-DOC-12, GAP-DOC-13) plus 6 new security gaps from Phase-4 cycle 3 (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1). `glab` auth remains DEGRADED (see GAP-DOC-10 in the resolved file) — no tracker mutations performed this cycle. **Closure cycle 2026-04-19:** GAP-CI-01 closed (`87c4a0e`); SEC-P4-10 + SEC-P4-A1 closed (`5202714`); SEC-P4-11 closed (`f67e8bf`); SEC-P4-12 closed (`904d352`). **Residual closure batch 2026-04-19:** SEC-P4-13 closed (`3b338ab`); GAP-DOC-11 + GAP-DOC-12 closed (`0c15b8b`); QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`); PERF-41 closed (`6d5804e`); PERF-44 closed (`38ffe49`). SEC-P4-14 remains Blocked pending operator-provided SHAs for 8 ci-catalog components. **Remaining open: 1 Blocked (SEC-P4-14 Medium-High) + 1 Deferred (QC-113d).**
 > Previously (2026-04-18): Group D closure round (HEAD `f77e7da`): 5 items closed (4 full + 1 partial SEC-P3-07). Phase-3 totals: 60 items tracked — 52 previously closed (16 Phase-3 initial + 25 Phase-2 bookkeeping + 11 Group C) + 4 Group D full + 1 Group D partial (SEC-P3-07 — 3 human-input TODOs) + 4 Won't-Do.
 
 ---
@@ -3984,55 +3984,46 @@ glab issue create \
 - **Resolution:** Replaced the single `zig build check-cross` invocation with a matrix of `zig build check -Dtarget=<triple>` calls across 5 targets (linux-x86_64, linux-aarch64, macos-aarch64, windows-x86_64-gnu, freestanding-arm). Restored the CI contract without reintroducing the removed build step. Side-fix: Windows portability for `generator.zig` (+ `generator_state_test.zig` conditional) required to keep all 5 cross-compile targets green.
 - **Evidence:** `.gitlab-ci.yml` (matrix invocation); `build.zig` (no `check-cross` step needed); `src/generator.zig` + `src/generator_state_test.zig` (Windows portability side-fix); CI pipeline: 5/5 targets pass `zig build check`.
 
-#### GAP-DOC-11 — Stale test counts in `docs/REQUIREMENTS.md`
+#### GAP-DOC-11 — Stale test counts in `docs/REQUIREMENTS.md` [CLOSED]
 
-- **Issue:** (none — create once `glab` auth restored)
+- **Issue:** (none — `glab` auth DEGRADED)
 - **Category:** Docs
 - **Severity:** Low
-- **Status:** Not Implemented
-- **Current state (evidence):**
-  - `docs/REQUIREMENTS.md` cites 172 unit tests and 32 integration tests.
-  - Actual counts on HEAD `7e57b2b`: 241 unit tests and 37 integration tests (run `zig build test` to confirm).
-- **Impact/Risk:** Readers under-estimate coverage; "flatfile mirrors tracker" contract weakened.
-- **Recommended fix:** Re-run `zig build test` and refresh the counts (and any prose that references them) in a targeted commit. Low priority — fold into next docs refresh.
+- **Status:** ✅ Closed 2026-04-19 (`0c15b8b`) — `docs: close GAP-DOC-11/12 — refresh REQUIREMENTS test counts and JSON API shape`. Migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle (residual batch).
+- **Resolution:** Refreshed `docs/REQUIREMENTS.md` test counts from the stale 172/32 figures to the actual 257/37 on HEAD (unit tests pass: 257 + 1 Windows-only skip; integration tests: 37/37).
+- **Evidence:** `docs/REQUIREMENTS.md` (test-count prose updated); `zig build test` — 257 pass / 1 skip; `zig build test-integration` — 37/37 pass.
 
-#### GAP-DOC-12 — `docs/REQUIREMENTS.md` misrepresents `jsonMarshal` / `jsonUnmarshal` as UUID methods
+#### GAP-DOC-12 — `docs/REQUIREMENTS.md` misrepresents `jsonMarshal` / `jsonUnmarshal` as UUID methods [CLOSED]
 
-- **Issue:** (none — create once `glab` auth restored)
+- **Issue:** (none — `glab` auth DEGRADED)
 - **Category:** Docs
 - **Severity:** Low
-- **Status:** Not Implemented
-- **Current state (evidence):**
-  - `docs/REQUIREMENTS.md` lists `jsonMarshal` / `jsonUnmarshal` as methods on the `UUID` struct.
-  - Actual definitions: free functions in a separate `uuid_json` module (`src/uuid_json.zig`), not methods on `UUID`.
-- **Impact/Risk:** Misleads integrators on the JSON API shape and import path; encourages `uuid.UUID.jsonMarshal(…)` syntax that does not compile.
-- **Recommended fix:** Rewrite the JSON subsection in `docs/REQUIREMENTS.md` to cite `@import("uuid_json")` and the free-function signatures from `src/uuid_json.zig`. Bundle with GAP-DOC-11.
+- **Status:** ✅ Closed 2026-04-19 (`0c15b8b`) — `docs: close GAP-DOC-11/12 — refresh REQUIREMENTS test counts and JSON API shape`. Migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle (residual batch).
+- **Resolution:** Rewrote the JSON subsection in `docs/REQUIREMENTS.md` to cite `@import("uuid_json")` and the free-function signatures from `src/uuid_json.zig`, removing the incorrect `UUID.jsonMarshal(…)`-style method references. Added a new `§ JSON Adapter` section to `README.md` documenting the free-function API with usage example. Bundled with GAP-DOC-11 per the recommended-fix plan.
+- **Evidence:** `docs/REQUIREMENTS.md` (JSON subsection rewritten); `README.md` (new `§ JSON Adapter` section); `src/uuid_json.zig` (canonical source of the free-function signatures).
 
-#### GAP-DOC-13 — Legacy F-/G-series closures not migrated to the resolved file
+#### GAP-DOC-13 — Legacy F-/G-series closures not migrated to the resolved file [CLOSED]
 
-- **Issue:** (none — self-resolving via this cycle)
+- **Issue:** (none — self-resolving via prior sync cycle)
 - **Category:** Docs
 - **Severity:** Low
-- **Status:** ✅ Closed 2026-04-19 (in-band with this sync)
-- **Current state (evidence):**
-  - `docs/GAP_ANALYSIS.md` previously carried the full Closed rationale for F-1..F-9 and G-1..G-10 inline in the "RFC-9562 Compliance Gaps" and "Feature Gaps vs gofrs/uuid" sections, violating the "open-only" invariant for `GAP_ANALYSIS.md`.
-  - Sections migrated to `docs/GAP_ANALYSIS_RESOLVED.md` this cycle; the two headings above now carry only a pointer stub.
-- **Impact/Risk:** Closed-item clutter inflated the open-gap file; reviewers had to grep per-entry status to separate open from closed.
-- **Recommended fix:** Closed in-band with this audit — the migration is the fix. Verification: `grep -n "^### [FG]-" docs/GAP_ANALYSIS.md` returns zero matches.
+- **Status:** ✅ Closed 2026-04-19 (in-band with the Phase 5 gap-detector sync — see `docs/GAP_ANALYSIS_RESOLVED.md` § "Phase-5 migrated legacy items" entry, landed in commit `7e57b2b` and recorded in tracker commit `1242e54`). Migration itself is the fix.
+- **Resolution:** F-1..F-9 and G-1..G-10 inline Closed rationale moved from `docs/GAP_ANALYSIS.md` to `docs/GAP_ANALYSIS_RESOLVED.md` under "Legacy F-Series (RFC-9562 Compliance)" and "Legacy G-Series (gofrs/uuid Feature Parity)". The two sections in this file now carry only pointer stubs (see `§ RFC-9562 Compliance Gaps` and `§ Feature Gaps vs gofrs/uuid` above). Restores the "open-only" invariant for `GAP_ANALYSIS.md`.
+- **Evidence:** `docs/GAP_ANALYSIS_RESOLVED.md` (Legacy F/G series sections); `docs/GAP_ANALYSIS.md:22-34` (pointer stubs only); verification — `grep -n "^### [FG]-" docs/GAP_ANALYSIS.md` returns zero matches.
 
 ### Phase 5 Summary
 
 | Gap-ID | Title | Category | Severity | Status | Next action |
 |--------|-------|----------|----------|--------|-------------|
 | GAP-CI-01 | `.gitlab-ci.yml` invokes removed `check-cross` build step | CI-CD | Critical | ✅ Closed 2026-04-19 (`87c4a0e`) | Replaced with per-triple `zig build check -Dtarget=…` matrix; 5/5 targets pass |
-| GAP-DOC-11 | Stale test counts (172/32 listed vs actual 241/37) in REQUIREMENTS.md | Docs | Low | Open | Refresh counts after `zig build test` |
-| GAP-DOC-12 | `jsonMarshal`/`jsonUnmarshal` listed as UUID methods (are free functions in `uuid_json`) | Docs | Low | Open | Rewrite JSON subsection to cite `src/uuid_json.zig` |
-| GAP-DOC-13 | F-1..F-9 + G-1..G-10 inline closures not migrated to RESOLVED file | Docs | Low | ✅ Closed 2026-04-19 | Migration landed in this sync |
+| GAP-DOC-11 | Stale test counts (172/32 listed vs actual 257/37) in REQUIREMENTS.md | Docs | Low | ✅ Closed 2026-04-19 (`0c15b8b`) | Counts refreshed from `zig build test` output (257 pass + 1 skip; 37/37 integration) |
+| GAP-DOC-12 | `jsonMarshal`/`jsonUnmarshal` listed as UUID methods (are free functions in `uuid_json`) | Docs | Low | ✅ Closed 2026-04-19 (`0c15b8b`) | JSON subsection rewritten to cite `@import("uuid_json")`; README `§ JSON Adapter` added |
+| GAP-DOC-13 | F-1..F-9 + G-1..G-10 inline closures not migrated to RESOLVED file | Docs | Low | ✅ Closed 2026-04-19 | Migration landed in Phase 5 sync (`7e57b2b`); recorded in `1242e54` |
 
 ### Ready-to-run `glab` commands (documentation only — DO NOT execute; token broken)
 
 > **Prerequisite:** `glab auth status` must report green first. See GAP-DOC-10 (closed; runbook at `docs/runbooks/glab-auth.md`).
-> Skipped from this block: **GAP-DOC-13** (closed in-band this cycle).
+> Skipped from this block: **GAP-DOC-11**, **GAP-DOC-12**, **GAP-DOC-13** (all closed — GAP-DOC-11/12 via `0c15b8b`, GAP-DOC-13 in-band with the Phase 5 sync). Commands retained for traceability only; do not file on auth restoration.
 
 ```bash
 # Pre-requisite — confirm auth is healthy before mutating.

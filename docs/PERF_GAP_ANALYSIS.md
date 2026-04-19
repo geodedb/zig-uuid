@@ -5,7 +5,7 @@
 > Zig version audited: 0.16.0
 > Reviewer: Performance review agent
 >
-> Last updated: 2026-04-19 (Phase-2/3 follow-up — 5 new findings: PERF-40 through PERF-44; Phase-3 corrections applied to PERF-37 diagnosis and to the stale "single `Generator.mutex`" claim in Appendix methodology. **Closure cycle 2026-04-19:** PERF-40 closed (`beb00ba`); PERF-43 closed (`4a7b3fd`); PERF-42 co-closed (`5202714`, folded with SEC-P4-A1 — CAS retry budget 32_768 → 4096). Remaining open: PERF-41, PERF-44.)
+> Last updated: 2026-04-19 (Phase-2/3 follow-up — 5 new findings: PERF-40 through PERF-44; Phase-3 corrections applied to PERF-37 diagnosis and to the stale "single `Generator.mutex`" claim in Appendix methodology. **Closure cycle 2026-04-19:** PERF-40 closed (`beb00ba`); PERF-43 closed (`4a7b3fd`); PERF-42 co-closed (`5202714`, folded with SEC-P4-A1 — CAS retry budget 32_768 → 4096). **Residual closure batch 2026-04-19:** PERF-41 closed (`6d5804e`, doc-only — README prehashed-fast-path note; wrapper option (b) deferred); PERF-44 closed (`38ffe49`, MR-gated `bench-micro-mr` job at 0.10 threshold). All 5 Phase-2/3 follow-up items closed.)
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
 > Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
 > Cycle 4 appended: 2026-03-22 (2 new findings: PERF-19 through PERF-20)
@@ -1518,8 +1518,8 @@ glab issue create --title "PERF-39: saveState retry-backoff uses .real (wall-clo
 
 | Severity | Count | Description | Status |
 |----------|-------|-------------|--------|
-| P2 | 2 | False sharing on dispatch-pointer line (PERF-40); CI bench-regression skips state+micro suites (PERF-43) | 📝 Open |
-| P3 | 3 | V3/V5 wrappers bypass prehashed fast path (PERF-41); V7 CAS retries 8× RFC width (PERF-42); bench-regression main-only (PERF-44) | 📝 Open |
+| P2 | 2 | False sharing on dispatch-pointer line (PERF-40); CI bench-regression skips state+micro suites (PERF-43) | ✅ All closed |
+| P3 | 3 | V3/V5 wrappers bypass prehashed fast path (PERF-41); V7 CAS retries 8× RFC width (PERF-42); bench-regression main-only (PERF-44) | ✅ All closed |
 
 **Corrections applied this cycle** (stale content rewritten in place):
 
@@ -1532,8 +1532,8 @@ glab issue create --title "PERF-39: saveState retry-backoff uses .real (wall-clo
 |------|----------|-----------|---------|-----------|----------|-------------|--------------|--------|
 | 1 | P2 | 48 | PERF-40: False sharing on dispatch-pointer cache line (line 3, offsets 192-255) | `src/generator.zig:199` | Confirmed | Est. 5-15% lockfree-V7 throughput loss at 16T+ on x86 | N/A (glab DEGRADED) | ✅ Closed 2026-04-19 (`beb00ba`) |
 | 2 | P2 | 36 | PERF-43: `bench-regression` skips `bench-state` + `bench-micro-{parse,format,hash}` despite baselines existing | `.gitlab-ci.yml:288-289` | Confirmed | Parse/format/hash/state regressions enter main undetected | N/A | ✅ Closed 2026-04-19 (`4a7b3fd`) |
-| 3 | P3 | 20 | PERF-44: `bench-regression` fires only on `main` + scheduled, not MRs | `.gitlab-ci.yml:300-302` | Confirmed | Regressions caught post-merge instead of pre-merge | DEFERRED | 📝 Open — extend `2026-04-18-perf-hardening.md` |
-| 4 | P3 | 16 | PERF-41: V3/V5 convenience wrappers skip prehashed namespace fast path | `src/versions.zig:33,59`; `src/generator.zig:1162,1194` vs `:1279,1290` | Confirmed | ~60 ns MD5-init + 16 B update per call wasted in tight loops | DEFERRED | 📝 Open — extend `2026-04-18-perf-hardening.md` |
+| 3 | P3 | 20 | PERF-44: `bench-regression` fires only on `main` + scheduled, not MRs | `.gitlab-ci.yml:300-302` | Confirmed | Regressions caught post-merge instead of pre-merge | N/A | ✅ Closed 2026-04-19 (`38ffe49`) — MR-gated `bench-micro-mr` job with 0.10 threshold |
+| 4 | P3 | 16 | PERF-41: V3/V5 convenience wrappers skip prehashed namespace fast path | `src/versions.zig:33,59`; `src/generator.zig:1162,1194` vs `:1279,1290` | Confirmed | ~60 ns MD5-init + 16 B update per call wasted in tight loops | N/A | ✅ Closed 2026-04-19 (`6d5804e`) — README doc note (fix (1)); wrapper option (b) deferred |
 | 5 | P3 | 12 | PERF-42: V7 lockfree CAS `max_retries = 32_768` is 8× RFC-9562 per-ms counter width (4096) | `src/generator.zig:709` | Confirmed | ~8 ms saved wedged-clock wall-time on ceiling exhaustion | N/A | ✅ Closed 2026-04-19 (`5202714`, co-closed with SEC-P4-A1) |
 
 ### Findings
@@ -1576,24 +1576,26 @@ Both the outer `stats` and the inner atomic are `align(64)` — this defends aga
 
 **In-band recommendation**: Next cycle — pairs cleanly with PERF-34 witness expansion.
 
-#### PERF-41: V3/V5 convenience wrappers bypass the prehashed namespace fast path (P3, confirmed)
+#### PERF-41: V3/V5 convenience wrappers bypass the prehashed namespace fast path (P3, confirmed) — ✅ Closed 2026-04-19 (`6d5804e`)
+
+**Status:** Closed via `docs(perf): close PERF-41 — document prehashed v3/v5 fast path in README`. Fix (1) from the plan landed: `README.md` § Performance (or equivalent perf-tips section) now documents `Generator.initV3Namespace` / `initV5Namespace` as the fast path when looping over a single namespace, with the expected ~60 ns MD5-init + 16-byte update saved per call. Fix (2) — the optional `NamespacedGenerator(comptime ns)` wrapper — is deliberately **deferred**: no API break shipped, and the doc note is sufficient to unblock the perf-sensitive single-namespace-loop callers the finding targeted. Re-file if future usage evidence justifies the wrapper. Migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle (residual batch).
 
 **Files**: `src/versions.zig:33` (V3), `src/versions.zig:59` (V5), `src/generator.zig:1162` (`Generator.newV3`), `src/generator.zig:1194` (`Generator.newV5`).
 
 **Root cause**: `initV3Namespace` / `initV5Namespace` at `src/generator.zig:1279` / `:1290` return a `PrehashedV3` / `PrehashedV5` handle with the namespace already consumed into a cloned hasher state. The convenience wrappers `newV3(namespace, name)` / `newV5(namespace, name)` ignore this fast path — every call does a fresh `Md5.init()` + `update(namespace)` (16 B) before the name update. Callers looping over a single namespace (common for `DNS` or `URL` derivations) pay **~60 ns MD5-init + the 16-byte namespace update on every call** that they would otherwise amortize to zero.
 
-**Fix (doc + ergonomics, no API break)**:
+**Fix (doc + ergonomics, no API break)** — (1) landed, (2) deferred:
 
-1. **Documentation**: Add a perf-section note to `README.md` (and/or generated API docs) pointing users at `Generator.initV3Namespace` / `initV5Namespace` when looping over one namespace.
-2. **Optional ergonomics**: Add an inline wrapper type `NamespacedGenerator(comptime ns: UUID)` that stores the prehashed handle and exposes `.v3(name)` / `.v5(name)`. Keeps ABI stable; gives an opt-in single-namespace-loop API.
+1. ✅ **Documentation**: Perf-section note added to `README.md` pointing users at `Generator.initV3Namespace` / `initV5Namespace` when looping over one namespace.
+2. ⏸️ **Optional ergonomics**: `NamespacedGenerator(comptime ns: UUID)` wrapper deferred. No API-surface change landed; the prehashed handles remain the canonical fast-path API.
 
 **Validation plan**: Add `benchV5PrehashedLoop` (10 K iterations, one namespace, 16-byte names) vs `benchV5ConvenienceLoop` to `bench/main.zig`. Expect 4-8× speedup on the prehashed path. Use the delta to justify the doc note even if (1) alone lands.
 
 **Rollout risk**: None — purely additive.
 
-**Plan doc**: Extend existing `docs/plans/2026-04-18-perf-hardening.md`.
+**Plan doc**: `docs/plans/2026-04-18-perf-hardening.md` (doc-fix task retired; wrapper task marked deferred).
 
-**In-band recommendation**: Defer — schedule with next docs-update or bench-expansion pass.
+**In-band recommendation**: Landed (doc-only slice).
 
 #### PERF-42: V7 lockfree CAS `max_retries = 32_768` is 8× RFC-9562 counter width (P3, confirmed) — ✅ Closed 2026-04-19 (`5202714`, co-closed with SEC-P4-A1)
 
@@ -1646,13 +1648,15 @@ This preserves MR latency while closing the parse/format/hash/state coverage gap
 
 **In-band recommendation**: Defer — same commit as PERF-44 (both are `.gitlab-ci.yml` edits).
 
-#### PERF-44: `bench-regression` fires only on `main` + scheduled — no MR coverage (P3, confirmed)
+#### PERF-44: `bench-regression` fires only on `main` + scheduled — no MR coverage (P3, confirmed) — ✅ Closed 2026-04-19 (`38ffe49`)
+
+**Status:** Closed via `perf(ci): close PERF-44 — MR-gated bench-micro-mr job with 0.10 threshold`. A new `bench-micro-mr` job fires on `merge_request_event` and runs the three bench-micro-{parse,format,hash} suites with a **10% threshold** (tighter than the 15% `main` threshold) so regressions block the MR instead of landing on `main`. Pairs with PERF-43's suite expansion — together the two give MR-only coverage of parse/format/hash and `main`-only coverage of state/contention/full bench. Migrated to `docs/GAP_ANALYSIS_RESOLVED.md` § Phase 5 Closure Cycle (residual batch).
 
 **File**: `.gitlab-ci.yml:300-302` — `rules:` clause restricts to `$CI_COMMIT_BRANCH == "main"` and `$CI_PIPELINE_SOURCE == "schedule"`.
 
 **Root cause**: MRs never run any bench-regression gate. Regressions are caught **post-merge**, when recovery requires a revert commit rather than a force-push-amend. This is the opposite of the shift-left posture the rest of the repo takes.
 
-**Fix**: Add a cheap MR-only bench subset with tighter thresholds:
+**Fix (landed)**: Added MR-only bench subset with tighter (0.10) threshold:
 
 ```yaml
 bench-micro-mr:
@@ -1673,9 +1677,9 @@ Pairs naturally with PERF-43's suite expansion.
 
 **Rollout risk**: Low. MR latency increase capped by the 3 cheap bench-micro suites (~90 s total on current runner).
 
-**Plan doc**: Extend existing `docs/plans/2026-04-18-perf-hardening.md`.
+**Plan doc**: `docs/plans/2026-04-18-perf-hardening.md` (MR-gate task retired).
 
-**In-band recommendation**: Defer — bundle with PERF-43.
+**In-band recommendation**: Landed.
 
 ### Ready-to-run `glab` commands (DOCUMENTATION-ONLY — NOT EXECUTED THIS CYCLE)
 
