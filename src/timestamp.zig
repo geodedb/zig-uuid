@@ -18,10 +18,13 @@ pub const Timestamp = struct {
 
     /// Current time as a Gregorian Timestamp (F-7).
     ///
-    /// **Note:** This function reads `std.time.nanoTimestamp()` directly and
-    /// is NOT affected by `Generator.withClock()`.  Tests that inject a custom
-    /// clock via `withClock` should use `Timestamp.fromUnixNano()` or
-    /// `Timestamp.fromUnixMs()` instead of `Timestamp.now()`.
+    /// **Note:** This function reads `std.os.linux.clock_gettime` directly
+    /// and is NOT affected by `Generator.withClock()`.  The generator's
+    /// V1/V6/V7 paths route their timestamps through `Timestamp.fromGeneratorClock`
+    /// (see PERF-59) so callers injecting a custom clock via `withClock`
+    /// observe consistent time across all version generators.  Standalone
+    /// callers of `Timestamp.now()` still read the real wall clock, which
+    /// is the documented behaviour for this convenience shim.
     ///
     /// Returns Error.InvalidTimestamp if the system clock reports a time
     /// before the Unix epoch (1970-01-01) or a time so far in the future
@@ -29,21 +32,35 @@ pub const Timestamp = struct {
     /// addition of `gregorian_offset` would overflow u64.  Both guards
     /// match those in `fromUnixNano` (SEC-R11-01, SEC-R12-02 / CWE-190).
     pub fn now() Error!Timestamp {
-        const ns: i128 = blk: {
-            var ts: std.os.linux.timespec = undefined;
-            const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
-            if (rc != 0) return Error.InvalidTimestamp;
-            break :blk @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
-        };
+        var ts: std.os.linux.timespec = undefined;
+        const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
+        if (rc != 0) return Error.InvalidTimestamp;
+        const ns: i128 = @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
+        return fromGeneratorClock(ns);
+    }
+
+    /// PERF-59: convert a nanosecond reading from the generator's injectable
+    /// clock (`Generator.clockCall()` returns `i128` ns since the Unix
+    /// epoch) into a Gregorian `Timestamp`.  Used by `Generator.newV1` /
+    /// `newV6` so V1/V6 respect `Generator.withClock()` the same way V7
+    /// does — prior to PERF-59 V1/V6 called `Timestamp.now()` which
+    /// bypassed the injection.
+    ///
+    /// **Errors:**
+    /// - `Error.InvalidTimestamp` — `ns < 0` (pre-Unix-epoch), the derived
+    ///   100-ns interval count overflows u64, or adding the Gregorian
+    ///   offset would overflow u64 (year ~60,037+ AD).
+    pub fn fromGeneratorClock(ns: i128) Error!Timestamp {
         if (ns < 0) return Error.InvalidTimestamp;
         const intervals: i128 = @divTrunc(ns, 100);
-        // SEC-R11-01 (CWE-190): guard against @intCast panic when the system clock
-        // is set to a far-future date (year >60,424). maxInt(u64) * 100 ns is the
-        // threshold.
+        // SEC-R11-01 (CWE-190): guard against @intCast panic when the clock
+        // is set to a far-future date (year >60,424).  maxInt(u64) * 100 ns
+        // is the threshold.
         if (intervals > std.math.maxInt(u64)) return Error.InvalidTimestamp;
         const intervals_since_unix: u64 = @intCast(intervals);
-        // SEC-R14-01 / SEC-R12-02 (CWE-190): guard against secondary u64 overflow
-        // in the addition.  Matches the identical guard in fromUnixNano().
+        // SEC-R14-01 / SEC-R12-02 (CWE-190): guard against secondary u64
+        // overflow in the addition.  Matches the identical guard in
+        // `fromUnixNano()`.
         const max_safe: u64 = std.math.maxInt(u64) - gregorian_offset;
         if (intervals_since_unix > max_safe) return Error.InvalidTimestamp;
         return .{ .value = @truncate(intervals_since_unix + gregorian_offset) };

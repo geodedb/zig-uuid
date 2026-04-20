@@ -419,33 +419,48 @@ test "Generator.newV6: sequential calls produce distinct UUIDs" {
     try std.testing.expectEqual(std.math.Order.lt, a.order(b));
 }
 
-test "Generator.newV1/newV6 use system clock, not injected clock (QC-88)" {
-    // V1/V6 call Timestamp.now() which reads std.time.nanoTimestamp() directly.
-    // The injectable clock (set via withClock) is only used by V7.  Verify
-    // this boundary by creating a generator with a frozen clock and confirming
-    // that V1/V6 timestamps still reflect real (advancing) wall-clock time,
-    // not the frozen value.
-    const frozen_clock = struct {
+test "Generator.newV1/newV6 respect injectable clock (PERF-59)" {
+    // PERF-59: V1/V6 timestamp must flow through `self.clockCall()` the
+    // same way V7 does, so a caller using `Generator.withClock(fixedClock)`
+    // observes the injected time across all version generators.  Before
+    // this fix `newV1` / `newV6` called `Timestamp.now()` which bypassed
+    // injection and read `clock_gettime` directly — see pre-fix QC-88 test.
+    //
+    // This test locks in the post-fix semantics: under a fixed clock the
+    // 48-bit V1 timestamp portion (time_low | time_mid | time_high<<48)
+    // must be identical across two calls made within the same injected
+    // time, proving the clock flows end-to-end into the V1/V6 encode
+    // sites instead of the wall clock.
+    const fixed_ns: i128 = 946_684_800_000_000_000; // Jan 1, 2000 UTC in ns
+    const fixed_clock = struct {
         fn clock() i128 {
-            // Return a fixed time: Jan 1, 2000 in nanoseconds
             return 946_684_800_000_000_000;
         }
     };
-    var gen = Generator.withClock(frozen_clock.clock);
-    // V1 should use Timestamp.now(), not the frozen clock
-    const u1a = try gen.newV1();
-    const ts1 = try @import("timestamp.zig").timestampFromV1(u1a);
-    // The V1 timestamp should be recent (after 2024), not at year-2000.
-    // Frozen clock → year 2000 → Gregorian intervals ≈ 1.25e17.
-    // Real clock → year 2025+ → Gregorian intervals ≈ 1.40e17+.
-    // Use gregorian_offset + year-2020 intervals as a threshold.
-    const threshold: u60 = @truncate(Timestamp.gregorian_offset + 15_778_800_000_000_000); // ~2020
-    try std.testing.expect(ts1.value > threshold);
+    var gen = Generator.withClock(fixed_clock.clock);
 
-    // V6 should also use Timestamp.now(), not the frozen clock
+    // V1: both calls must see the injected clock → identical 48-bit
+    // timestamp portion (time_low | time_mid | (time_high & 0x0FFF)).
+    const u1a = try gen.newV1();
+    const u1b = try gen.newV1();
+    const ts1a = try @import("timestamp.zig").timestampFromV1(u1a);
+    const ts1b = try @import("timestamp.zig").timestampFromV1(u1b);
+    try std.testing.expectEqual(ts1a.value, ts1b.value);
+
+    // The extracted u60 must match the fixed-clock value converted to
+    // 100-ns Gregorian intervals.  This is the strong post-fix witness:
+    // pre-fix the value would be the real wall-clock timestamp
+    // (post-2024), not the injected year-2000.
+    const expected = try Timestamp.fromUnixNano(fixed_ns);
+    try std.testing.expectEqual(expected.value, ts1a.value);
+
+    // V6: same invariant via the V6 bit layout.
     const u6a = try gen.newV6();
-    const ts6 = try @import("timestamp.zig").timestampFromV6(u6a);
-    try std.testing.expect(ts6.value > threshold);
+    const u6b = try gen.newV6();
+    const ts6a = try @import("timestamp.zig").timestampFromV6(u6a);
+    const ts6b = try @import("timestamp.zig").timestampFromV6(u6b);
+    try std.testing.expectEqual(ts6a.value, ts6b.value);
+    try std.testing.expectEqual(expected.value, ts6a.value);
 }
 
 test "Generator.newV8: version=8, variant=rfc9562" {

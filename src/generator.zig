@@ -1184,6 +1184,9 @@ pub const Generator = struct {
     /// Generate a UUIDv1 (Gregorian timestamp + node ID).
     ///
     /// Uses the generator's configured clock (default: system clock).
+    /// PERF-59: routes through `self.clockCall()` so callers using
+    /// `Generator.withClock(custom)` observe their injected clock here
+    /// the same way V7 does.
     ///
     /// **Errors:**
     /// - `Error.InvalidTimestamp` — clock reports a pre-Unix-epoch time or a
@@ -1194,7 +1197,11 @@ pub const Generator = struct {
     /// - `Error.NoHWAddressFound` — `hwaddr_fn` is configured but returned
     ///   no usable MAC (all interfaces down, loopback only, etc.).
     pub fn newV1(self: *Generator) Error!UUID {
-        const ts = try Timestamp.now();
+        // PERF-59: use the generator's injectable clock — the whole point of
+        // `withClock` is to let tests and callers deterministically drive
+        // the time source.  Pre-PERF-59 this called `Timestamp.now()`
+        // which bypassed injection and read clock_gettime unconditionally.
+        const ts = try Timestamp.fromGeneratorClock(self.clockCall());
         return self.newV1AtTime(ts);
     }
 
@@ -1223,13 +1230,17 @@ pub const Generator = struct {
     /// Generate a UUIDv6 (reordered Gregorian timestamp + node ID).
     ///
     /// Uses the generator's configured clock (default: system clock).
+    /// PERF-59: routes through `self.clockCall()` so callers using
+    /// `Generator.withClock(custom)` observe their injected clock here
+    /// the same way V7 does.
     ///
     /// **Errors:**
     /// - `Error.InvalidTimestamp` — clock reports pre-Unix-epoch or far-future.
     /// - `Error.RandomError` — CSPRNG failed seeding `clock_seq` / random node.
     /// - `Error.NoHWAddressFound` — `hwaddr_fn` configured but returned no MAC.
     pub fn newV6(self: *Generator) Error!UUID {
-        const ts = try Timestamp.now();
+        // PERF-59: use the injectable clock; see newV1 for rationale.
+        const ts = try Timestamp.fromGeneratorClock(self.clockCall());
         return self.newV6AtTime(ts);
     }
 
