@@ -831,37 +831,33 @@ pub const Generator = struct {
             const clock_ms_u: u64 = @intCast(clock_ms);
 
             const old = self.v7_atomic_state.load(.acquire);
-            const old_ms = v7UnpackMs(old);
-            const old_seq = v7UnpackSeq(old);
 
-            var new_ms: u64 = undefined;
-            var new_seq: u12 = undefined;
-            if (clock_ms_u > old_ms) {
-                // Clock advanced: seed seq from CSPRNG jitter per
-                // RFC-9562 §6.2.  Draw is cached at function scope so a
-                // CAS-lost thread that re-enters this branch does not
-                // burn more entropy (see the `rand_seq_drawn` comment
-                // above the loop).
-                if (!rand_seq_drawn) {
-                    var rand_seq: [2]u8 = undefined;
-                    self.randCall(&rand_seq) catch return Error.RandomError;
-                    rand_seq_cached = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
-                    rand_seq_drawn = true;
-                }
-                new_ms = clock_ms_u;
-                new_seq = rand_seq_cached;
-            } else {
-                // Clock at or behind old_ms — preserve old_ms for
-                // monotonicity (SEC-R14-02).  If the counter has saturated
-                // we sleep to the next ms boundary and retry; otherwise
-                // we bump the counter.
-                if (old_seq == std.math.maxInt(u12)) {
+            // QC-113d: draw cached entropy lazily — only if the clock
+            // appears to have advanced past old_ms at load time.  The
+            // transition helper is pure and consumes rand_seq only on
+            // the .advance arm, so drawing here (before the call)
+            // preserves the original semantics: same-ms and
+            // saturation-sleep retries never burn CSPRNG bytes.  If
+            // another thread wins the CAS and the next retry sees
+            // old_ms advanced further, the cached bits remain unused
+            // and never emit (see the `rand_seq_drawn` comment above
+            // the loop).
+            if (!rand_seq_drawn and clock_ms_u > v7UnpackMs(old)) {
+                var rand_seq: [2]u8 = undefined;
+                self.randCall(&rand_seq) catch return Error.RandomError;
+                rand_seq_cached = @truncate(std.mem.readInt(u16, &rand_seq, .little) & 0x0FFF);
+                rand_seq_drawn = true;
+            }
+
+            const t = V7Cas.transition(old, clock_ms_u, rand_seq_cached);
+            switch (t.kind) {
+                .sleep => {
+                    // SEC-R14-02 / PERF-12: seq saturated within the
+                    // current ms — sleep precisely to the next ms
+                    // boundary and retry.  bumpFallback is the
+                    // PERF-40-isolated counter; its cache-line
+                    // placement is enforced by the witness test.
                     self.bumpFallback();
-                    // Sleep precisely to the next ms boundary.  Use the
-                    // ns remainder of the current clock reading to pick
-                    // the sleep length (matches the mutex path's PERF-12
-                    // approach).  On the next loop iteration we re-read
-                    // the clock — it should now be >= old_ms + 1.
                     const ns_now = self.clockCall();
                     const sleep_ns: u64 = if (ns_now > 0) blk: {
                         const ns_frac: u64 = @intCast(@rem(ns_now, 1_000_000));
@@ -869,19 +865,20 @@ pub const Generator = struct {
                     } else 500_000;
                     io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .real) catch {};
                     continue; // retry with fresh clock reading
-                }
-                new_ms = old_ms;
-                new_seq = old_seq + 1;
+                },
+                .bump, .advance => {
+                    if (self.v7_atomic_state.cmpxchgStrong(old, t.new_state, .acq_rel, .acquire) == null) {
+                        committed_ms = v7UnpackMs(t.new_state);
+                        committed_seq = v7UnpackSeq(t.new_state);
+                        break;
+                    }
+                    // CAS lost — retry with fresh state.  The cached
+                    // rand_seq remains valid: if the next iteration
+                    // also takes the advance branch, reusing the same
+                    // 12 bits is safe (each successful CAS emits at
+                    // most one UUID with them).
+                },
             }
-
-            const new = v7PackState(new_ms, new_seq);
-            if (self.v7_atomic_state.cmpxchgStrong(old, new, .acq_rel, .acquire) == null) {
-                // CAS win — commit and emit outside the loop.
-                committed_ms = new_ms;
-                committed_seq = new_seq;
-                break;
-            }
-            // CAS lost — retry with fresh state.
         }
 
         // Emit the UUID outside the CAS loop.
