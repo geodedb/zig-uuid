@@ -23,6 +23,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = arena.allocator();
 
     const output = try common.parseOutputArg(allocator, init.minimal.args);
+    const runs = try common.parseRunsArg(allocator, init.minimal.args);
 
     // Matrix: (2, 4, 8, 16) × (mutex, lockfree).
     // 16T is the published ceiling; contention on larger hosts is clamped
@@ -44,7 +45,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "v7_contention_lockfree_8T", .variant = "lockfree", .thread_count = 8, .expected_iterations = per_thread_iters * 8, .runFn = runLockfree8, .run_count = contention_runs },
         .{ .name = "v7_contention_lockfree_16T", .variant = "lockfree", .thread_count = 16, .expected_iterations = per_thread_iters * 16, .runFn = runLockfree16, .run_count = contention_runs },
     };
-    try common.runScenarios(allocator, init.io, &specs, output);
+    try common.runScenariosOpts(allocator, init.io, &specs, .{ .output_path = output, .runs = runs });
 }
 
 // --------------------------------------------------------------------------

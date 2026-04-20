@@ -28,6 +28,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = arena.allocator();
 
     const output = try common.parseOutputArg(allocator, init.minimal.args);
+    const runs = try common.parseRunsArg(allocator, init.minimal.args);
 
     // Scenarios are declared in execution order.  The harness will re-run
     // each spec 7 times and pick the median throughput.  All scenarios here
@@ -58,7 +59,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "eql_differ_first_byte", .expected_iterations = fast_iters, .runFn = scenarioEqlDifferFirstByte },
     };
 
-    try common.runScenarios(allocator, init.io, &specs, output);
+    try common.runScenariosOpts(allocator, init.io, &specs, .{ .output_path = output, .runs = runs });
 }
 
 // --------------------------------------------------------------------------

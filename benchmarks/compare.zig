@@ -215,13 +215,25 @@ fn comparePair(
         };
         stats.rows_compared += 1;
 
-        const throughput_change_pct = pctChange(baseline.throughput_ops_per_sec, row.throughput_ops_per_sec);
+        // PERF-45: prefer across-run median + stddev when the bench harness
+        // was invoked with `--runs N > 1`.  Falls back transparently to the
+        // single-invocation fields for baselines captured under the
+        // pre-PERF-45 schema (both fields are optional and default to null,
+        // which is what json.Stringify emits for absent data).
+        const baseline_throughput = baseline.across_run_median_ops_per_sec orelse baseline.throughput_ops_per_sec;
+        const candidate_throughput = row.across_run_median_ops_per_sec orelse row.throughput_ops_per_sec;
+        const throughput_change_pct = pctChange(baseline_throughput, candidate_throughput);
 
         // Noise gate: 3× stddev-pct is the classic 99.7% confidence interval.
-        const stddev_pct = if (baseline.throughput_ops_per_sec != 0)
-            (baseline.throughput_stddev_ops_per_sec / baseline.throughput_ops_per_sec) * 100.0
-        else
-            0.0;
+        // Prefer the across-run stddev when the baseline has it; fall back
+        // to the within-run stddev converted to a percentage.
+        const stddev_pct = blk: {
+            if (baseline.across_run_stddev_pct) |s| break :blk s;
+            if (baseline.throughput_ops_per_sec != 0) {
+                break :blk (baseline.throughput_stddev_ops_per_sec / baseline.throughput_ops_per_sec) * 100.0;
+            }
+            break :blk 0.0;
+        };
         const noise_gate_pct = @max(threshold * 100.0, 3.0 * stddev_pct);
 
         var buf: [512]u8 = undefined;

@@ -18,6 +18,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = arena.allocator();
 
     const output = try common.parseOutputArg(allocator, init.minimal.args);
+    const runs = try common.parseRunsArg(allocator, init.minimal.args);
 
     const specs = [_]common.ScenarioSpec{
         .{ .name = "saveState_v2", .variant = "v2", .runFn = runSaveV2 },
@@ -26,7 +27,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "loadState_v3_hmac", .variant = "v3_hmac", .runFn = runLoadV3 },
         .{ .name = "loadState_v3_wrong_key", .variant = "v3_hmac", .runFn = runLoadV3WrongKey },
     };
-    try common.runScenarios(allocator, init.io, &specs, output);
+    try common.runScenariosOpts(allocator, init.io, &specs, .{ .output_path = output, .runs = runs });
 }
 
 // --------------------------------------------------------------------------
