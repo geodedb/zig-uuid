@@ -195,9 +195,20 @@ so the core `uuid` module does not import `json`. See
 | `Generator.withClock(f) Generator` | Inject a custom clock function |
 | `Generator.withRand(f) Generator` | Inject a custom random-bytes function (e.g. for testing) |
 | `Generator.withHWAddr(f) Generator` | Opt in to real MAC address embedding |
+| `gen.lockfreeFallbackCount() u64` | Diagnostic counter: V7 lock-free path fallbacks (PERF-21) |
+| `Generator.initOptions(opts) Generator` | Single entry point for `{random, clock, hwaddr_fn, state_mac_key, state_mac_policy, v7_lockfree}` (SEC-P3-08) |
 | `gen.clearNodeCache()` | Force re-sample of node ID |
+| `gen.reseed()` | Fork-safe CSPRNG re-seed; call post-`fork(2)` in the child (SEC-P3-01) |
+| `gen.secureWipeMacKey()` | Zero and clear `state_mac_key` (CWE-316); idempotent |
 | `gen.saveState(path) !void` | Persist clock state to file (mode 0o600) |
 | `gen.loadState(path) !void` | Restore clock state from file |
+| `gen.newV3Strict(ns, name) UUID` | V3 name-based UUID; `ns` is a vetted `Namespace` enum (SEC-P3-05) |
+| `gen.newV5Strict(ns, name) UUID` | V5 name-based UUID; `ns` is a vetted `Namespace` enum (SEC-P3-05) |
+| `gen.newV3Bounded(ns, name, max_len) !UUID` | V3 with hash-DoS cap; returns `NameTooLong` if `name.len > max_len` (SEC-P4-12) |
+| `gen.newV5Bounded(ns, name, max_len) !UUID` | V5 with hash-DoS cap; returns `NameTooLong` if `name.len > max_len` (SEC-P4-12) |
+| `gen.initV3Namespace(ns) PrehashedV3` | Pre-absorb namespace Md5 state for high-throughput V3-in-namespace loops (PERF-30) |
+| `gen.initV5Namespace(ns) PrehashedV5` | Pre-absorb namespace Sha1 state for high-throughput V5-in-namespace loops (PERF-30) |
+| `gen.migrateStateToV3(path) !void` | Rewrite a v1/v2 state file as v3 under the current `state_mac_key` (SEC-P4-01) |
 | `GeneratorInterface.fromGenerator(&gen)` | Obtain a type-erased generator interface |
 
 ### HashMap contexts
