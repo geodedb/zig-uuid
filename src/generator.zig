@@ -1601,24 +1601,46 @@ pub const Generator = struct {
     /// outside the mutexes, so the HMAC compute does not serialise
     /// generators on the HMAC code path).
     ///
-    /// Returns `true` if `state_mac_key` is configured so saveStateImpl
-    /// knows to emit wire-format v3 (payload + 32-byte HMAC trailer).
-    fn packStateIntoBuffer(self: *Generator, buf: *[state_size_v3]u8) bool {
+    /// QC-118 / SEC-P4-13: if `state_mac_key` is configured at the moment
+    /// the mutex is acquired, its 32 bytes are copied into `key_out.?` —
+    /// still under the mutex — and the caller uses that stack-local copy
+    /// for HMAC compute.  This closes the pre-fix save-during-wipe race
+    /// where `saveStateImpl` re-read `self.state_mac_key` outside the
+    /// mutex and a concurrent `secureWipeMacKey()` could panic the
+    /// downstream `else unreachable`.  When `state_mac_key` is null,
+    /// `key_out.*` is left untouched (still `null`).
+    ///
+    /// Returns `true` if `state_mac_key` is configured — used by
+    /// `saveStateImpl` to decide whether to emit wire-format v3 (payload
+    /// + 32-byte HMAC trailer).  Callers who set `key_out.* = null`
+    /// before the call and inspect `key_out.*` afterward get identical
+    /// information — the returned `bool` is retained for source
+    /// compatibility with the QC-113b refactor.
+    fn packStateIntoBuffer(self: *Generator, buf: *[state_size_v3]u8, key_out: *?[32]u8) bool {
         // Snapshot state under both mutexes; release before I/O.
         // PERF-19: acquire in fixed order (v7 first, then v1v6) to prevent deadlock.
         // SEC-P3-04: buffer is sized for v3 (payload + HMAC trailer) by the
         // caller.  When `state_mac_key` is null the trailer bytes are never
         // written, so the file length stays at `state_size`.
-        const is_v3 = self.state_mac_key != null;
-        const write_version: u8 = if (is_v3)
-            state_format_version_v3
-        else
-            state_format_version_v2;
-
         self.v7.mutex.lockUncancelable(gio());
         defer self.v7.mutex.unlock(gio());
         self.v1v6.mutex.lockUncancelable(gio());
         defer self.v1v6.mutex.unlock(gio());
+
+        // QC-118: read `state_mac_key` under the mutex and copy the 32
+        // bytes into the caller's stack-local `[32]u8` so the HMAC compute
+        // (which runs outside the mutex for PERF reasons — see
+        // saveStateImpl) cannot race with `secureWipeMacKey()`.  The
+        // caller is responsible for `secureZero`-ing the stack copy on
+        // return (CWE-316 residue) via a `defer` block.
+        const is_v3 = if (self.state_mac_key) |*k| blk: {
+            key_out.* = k.*;
+            break :blk true;
+        } else false;
+        const write_version: u8 = if (is_v3)
+            state_format_version_v3
+        else
+            state_format_version_v2;
 
         @memcpy(buf[0..4], &state_magic);
         buf[4] = write_version; // 2 or 3
@@ -1765,26 +1787,40 @@ pub const Generator = struct {
         // the file length stays at `state_size`. When non-null we append the
         // HMAC and write `state_size_v3` bytes.
         var buf: [state_size_v3]u8 = undefined;
-        const is_v3 = self.packStateIntoBuffer(&buf);
 
-        // SEC-P3-04: compute and append HMAC-SHA256 over the payload if a
-        // key is configured. HMAC runs outside the mutex — `buf[0..32]` is
-        // already a snapshot, and the key is an immutable field set at
-        // construction.
-        // SEC-P4-02: capture the key as a pointer (`|*key_ptr|`) into
-        // `self.state_mac_key`'s Optional payload, NOT by value.  A
-        // value capture (`|key|`) creates a 32-byte stack copy that
-        // Zig will not `secureZero` on function return — classic
-        // cleartext-in-memory residue (CWE-316).  The pointer capture
-        // dispatches HMAC directly through the Generator's own storage;
-        // `secureWipeMacKey` (the authoritative wipe path) already
-        // volatile-zeros that storage.  `HmacSha256.create` takes the
-        // key as `*const [32]u8`, so the pointer capture is a drop-in
-        // signature match.
-        const write_len: usize = if (is_v3) blk: {
-            const key_ptr: *const [32]u8 = if (self.state_mac_key) |*k| k else unreachable;
+        // QC-118 / SEC-P4-13: pass a stack-local key Optional into
+        // `packStateIntoBuffer` so the mutexed snapshot carries the key
+        // material out of the locked section.  The caller-side copy is
+        // the only thing the HMAC compute reads, so a concurrent
+        // `secureWipeMacKey()` on `self.state_mac_key` cannot race with
+        // the HMAC key pointer derivation (pre-fix this re-read the
+        // Optional field outside the mutex and could hit
+        // `else unreachable`).
+        //
+        // CWE-316 (cleartext residue): the 32-byte copy is scrubbed via
+        // `std.crypto.secureZero` on all return paths including the
+        // try-propagated error from `atomicWriteStateFile`.
+        var key_copy: ?[32]u8 = null;
+        defer if (key_copy) |*k| std.crypto.secureZero(u8, k);
+
+        // Discard the returned bool — `key_copy != null` is the
+        // authoritative v3 signal post-QC-118 (see packStateIntoBuffer).
+        _ = self.packStateIntoBuffer(&buf, &key_copy);
+
+        // SEC-P3-04 / SEC-P4-02: pointer-capture the stack-local copy's
+        // payload and dispatch HMAC-SHA256 directly through it.  A value
+        // capture (`|key|`) would spill another copy Zig does not
+        // secure-zero; the pointer capture keys HmacSha256.create off
+        // the same `[32]u8` we scrub via the `defer` above.
+        //
+        // QC-118: the pre-fix `else unreachable` branch was on
+        // `self.state_mac_key` and could fire under a save-during-wipe
+        // race.  Here we switch on `key_copy` which is a stack-local
+        // the current thread just set under the mutex — no external
+        // observer can null it.
+        const write_len: usize = if (key_copy) |*k| blk: {
             var mac: [state_mac_size]u8 = undefined;
-            std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, buf[0..state_size], key_ptr);
+            std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, buf[0..state_size], k);
             @memcpy(buf[state_size..state_size_v3], &mac);
             break :blk state_size_v3;
         } else state_size;

@@ -1225,3 +1225,126 @@ test "SEC-P4-03: InitOptions caps rollback tolerance to [0, 60_000] range" {
     const gen_hi = Generator.initOptions(.{ .clock_rollback_tolerance_ms = 1_000_000 });
     try std.testing.expectEqual(@as(i64, 60_000), gen_hi.clock_rollback_tolerance_ms);
 }
+
+// QC-118 / SEC-P4-13: save-during-wipe race guard.
+//
+// Pre-fix, `saveStateImpl` captured `is_v3` from `packStateIntoBuffer` (which
+// ran under the mutex) but then re-read `self.state_mac_key` outside any
+// lock at `src/generator.zig:1739` to produce the HMAC key pointer.  A
+// concurrent `secureWipeMacKey()` could flip that Optional to null between
+// the two accesses, forcing `else unreachable` to fire — panic in Debug /
+// ReleaseSafe, undefined behaviour in ReleaseFast.
+//
+// The fix passes the key material out of the locked section as a stack
+// local `[32]u8` copy (secure-zeroed on return via defer).  The
+// `else unreachable` at :1739 is removed in the same change.
+//
+// These tests lock in two invariants:
+//   (1) serial save → wipe → save still round-trips cleanly across the
+//       v3 → v2 wire-format transition.
+//   (2) a tight loop of concurrent save-while-wipe never panics, even
+//       when the wipe thread hits the race window many times.
+
+test "QC-118: serial save → wipe → save succeeds across v3 → v2 transition" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/qc118.state", .{dir_path});
+
+    const key: [32]u8 = .{0xA5} ** 32;
+    var gen = Generator.initOptions(.{ .state_mac_key = key });
+    gen.v1v6.last_v1_ts = 0xCAFE;
+
+    // Round 1: with key → wire-format v3.
+    try gen.saveState(path);
+
+    // Wipe — after this call `state_mac_key` is null.  Subsequent saves
+    // must take the v2 branch without observing the pre-fix
+    // `else unreachable` that assumed a non-null key when `is_v3` was
+    // captured under the mutex.
+    gen.secureWipeMacKey();
+    try std.testing.expect(gen.state_mac_key == null);
+
+    // Round 2: without key → wire-format v2.  This is the critical path
+    // for the QC-118 fix: `packStateIntoBuffer` now copies the key out
+    // of the mutex, so the outer HMAC branch consults the stack-local
+    // copy rather than re-reading `self.state_mac_key`.  Must not panic.
+    try gen.saveState(path);
+
+    // File is now v2: byte 4 (version) must be 2.
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const f = try std.Io.Dir.openFileAbsolute(io, path, .{});
+    defer f.close(io);
+    var header: [5]u8 = undefined;
+    _ = try f.readPositionalAll(io, &header, 0);
+    try std.testing.expectEqualSlices(u8, "UUID", header[0..4]);
+    try std.testing.expectEqual(@as(u8, 2), header[4]);
+}
+
+// Thread harness for the concurrent-race guard.  Kept at module scope so
+// std.Thread.spawn can take a pointer-to-struct as context.
+const Qc118Ctx = struct {
+    gen: *Generator,
+    path: []const u8,
+    iters: usize,
+    err: ?anyerror = null,
+};
+
+fn qc118SaveWorker(ctx: *Qc118Ctx) void {
+    var i: usize = 0;
+    while (i < ctx.iters) : (i += 1) {
+        // Ignore StateIoFailure from races on the tmp rename path — the
+        // invariant under test is that the wipe race never produces a
+        // panic / UB via `else unreachable`.  Actual I/O errors (e.g.
+        // two concurrent renames racing at the filesystem layer) are
+        // recoverable and not what QC-118 was about.
+        ctx.gen.saveState(ctx.path) catch |e| switch (e) {
+            Error.StateIoFailure => {},
+            else => {
+                ctx.err = e;
+                return;
+            },
+        };
+    }
+}
+
+fn qc118WipeWorker(ctx: *Qc118Ctx) void {
+    var i: usize = 0;
+    while (i < ctx.iters) : (i += 1) {
+        ctx.gen.secureWipeMacKey();
+        // No re-install: the point is to exercise the save-path
+        // transitioning from "key was set when packStateIntoBuffer ran"
+        // to "key got wiped before the HMAC compute would have read it".
+    }
+}
+
+test "QC-118: threaded save-loop + concurrent wipe does not panic" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try dirAbsPath(tmp.dir, &dir_buf);
+    var path_buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/qc118-race.state", .{dir_path});
+
+    const key: [32]u8 = .{0x5A} ** 32;
+    var gen = Generator.initOptions(.{ .state_mac_key = key });
+
+    // Tight loop: 256 saves + 256 wipes overlapping maximises the
+    // chance of hitting the race window pre-fix.  Post-fix the wipe
+    // has no effect on an in-flight save because the key was already
+    // copied out of the locked section.
+    var save_ctx = Qc118Ctx{ .gen = &gen, .path = path, .iters = 256 };
+    var wipe_ctx = Qc118Ctx{ .gen = &gen, .path = path, .iters = 256 };
+    const save_thread = try std.Thread.spawn(.{}, qc118SaveWorker, .{&save_ctx});
+    const wipe_thread = try std.Thread.spawn(.{}, qc118WipeWorker, .{&wipe_ctx});
+    save_thread.join();
+    wipe_thread.join();
+
+    // Only Error-typed failures other than StateIoFailure are fatal;
+    // the save worker already swallows StateIoFailure.  Any other
+    // error escaping here indicates a regression.
+    if (save_ctx.err) |e| return e;
+    if (wipe_ctx.err) |e| return e;
+}
