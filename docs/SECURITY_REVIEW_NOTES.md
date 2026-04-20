@@ -1167,11 +1167,18 @@ glab issue update <iid> \
 #### O-1 issue creation (QUEUED — optional; Low severity, deferrable)
 
 ```bash
-# O-1 — Low, CWE-320 (rotateStateMacKey primitive missing). Deferrable; file only if maintainer wants it tracked externally.
-glab issue create \
-  --title "O-1: rotateStateMacKey primitive missing — forces .any downgrade for HMAC key rotation (CWE-320)" \
-  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
-  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 4 — O-1. Risk 6. Add rotateStateMacKey(self, path, new_key) Error!void that verifies the existing MAC under the caller's configured state_mac_policy (no .any override), swaps self.state_mac_key, re-saves v3 under the new key. No wire-format change."
+# O-1 — Low, CWE-320 (rotateStateMacKey primitive missing). ✅ Closed in-band 2026-04-20 (`5a6f747`).
+# O-1 was NEVER filed as a GitLab issue (glab auth DEGRADED through Phase 4 cycle 4).
+# In-doc closure with ✅ marker + commit SHA is authoritative; retroactive filing is optional.
+#
+# If the maintainer chooses to retroactively file + close for external record-keeping:
+# glab issue create \
+#   --title "O-1: rotateStateMacKey primitive missing — [CLOSED at filing]" \
+#   --label "security,severity::low,type::hardening,confidence::confirmed,status::closed" \
+#   --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 4 — O-1. Risk 6. ✅ Closed 2026-04-20 (5a6f747) — rotateStateMacKey(self, path, new_key) Error!void primitive added; 4 new tests covering key rotation, MAC verification under caller's policy (no .any override), v3 re-save, and cross-key rejection."
+# # Then: glab issue close <iid> --comment "Closed at creation — record-keeping only. See commit 5a6f747."
+#
+# Default (no-file) disposition: in-doc closure is authoritative; no GitLab issue ever existed.
 ```
 
 #### O-2 / H-1 — NOT queued for GitLab creation
@@ -1183,10 +1190,10 @@ glab issue create \
 
 | Gap-ID  | Severity | Risk | Status / disposition | Queued `glab` action |
 |---------|----------|------|----------------------|-----------------------|
-| O-1     | Low      | 6    | Not filed this cycle; remediation deferrable | Optional `glab issue create` (queued) |
+| O-1     | Low      | 6    | ✅ Closed 2026-04-20 (`5a6f747`) — `rotateStateMacKey(self, path, new_key)` primitive landed; verifies MAC under caller's configured policy, swaps key, re-saves v3 | `glab issue create` now unnecessary — close commentary queued below |
 | O-2     | Info     | 4    | Not filed this cycle; tracked in-doc only | None |
 | H-1     | Info     | 2    | Folded into SEC-P4-14 scope | None |
 | SEC-P4-14 | Medium-High | 40 | 🚧 Still Blocked — operator-dependency | Relabel `status::blocked-external-dependency` when auth restores |
 | #154, #156, #158, #159, #161, #164, #167 | — | — | Closed in docs; closure-drift on tracker | 7× `glab issue close` (queued) |
 
-_Last updated: 2026-04-20 — Phase 4 audit cycle 4 (issue-tracker). 3 new findings (all Info/Low, non-blocking): O-1 Risk 6 (deferrable), O-2 Risk 4 (doc-only), H-1 Risk 2 (folded into SEC-P4-14). Sole open structural gap remains SEC-P4-14 (🚧 Blocked — recommend relabel `status::blocked-external-dependency`). 7 closure-drift tickets (#154, #156, #158, #159, #161, #164, #167) queued for batch close when `glab` auth is restored. `glab` auth DEGRADED — no tracker mutations performed._
+_Last updated: 2026-04-20 — Phase 4 audit cycle 4 (issue-tracker) + closure round. 3 new findings (all Info/Low, non-blocking): **O-1 ✅ Closed (`5a6f747`)** — `rotateStateMacKey` primitive landed with 4 new tests; O-2 Risk 4 (doc-only, open); H-1 Risk 2 (folded into SEC-P4-14, open). Sole open structural gap remains SEC-P4-14 (🚧 Blocked — recommend relabel `status::blocked-external-dependency`). 7 closure-drift tickets (#154, #156, #158, #159, #161, #164, #167) queued for batch close when `glab` auth is restored. `glab` auth DEGRADED — no tracker mutations performed._

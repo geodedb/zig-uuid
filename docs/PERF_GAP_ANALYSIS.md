@@ -1763,9 +1763,9 @@ Ready-to-run `glab issue close` commands prepared below; `glab` auth is DEGRADED
 
 | Rank | Severity | PerfScore | Finding | Component | Evidence | Measurement | GitLab Issue | Fix Summary | Status |
 |------|----------|-----------|---------|-----------|----------|-------------|--------------|-------------|--------|
-| 1 | P3 | 36 | No across-run median in bench harness (within-run stddev only) | `bench/bench.zig` | Confirmed | Blocks statistical validation of Phase-2-A-class regression claims | Not filed (glab degraded) | Add `--runs N` flag; emit median + p50/p95 across runs | Open |
-| 2 | P3 | 32 | No CI regression gate on `v7_contention_*T` throughput | `.gitlab-ci.yml`, `scripts/bench-regression-check.sh` | Confirmed | Silent 1-5% drift possible; Phase-2-A would have been caught | Not filed (glab degraded) | Add contention-throughput column to regression gate; 5% threshold on `main` | Open |
-| 3 | P3 | 28 | `Timestamp.now()` bypasses injectable `clockCall()` — divergence risk (V1/V6 vs V7) | `src/timestamp.zig:31-50`, `src/generator.zig` | Confirmed | `withClock(custom)` callers get inconsistent behavior; no perf regression today | Not filed (glab degraded) | Route `Timestamp.now()` through `self.clockCall()` or inject clockFn into V1/V6 paths | Open |
+| 1 | P3 | 36 | No across-run median in bench harness (within-run stddev only) | `bench/bench.zig` | Confirmed | Blocks statistical validation of Phase-2-A-class regression claims | Not filed (glab degraded) | Add `--runs N` flag; emit median + p50/p95 across runs | ✅ Closed (`5c420d6`) |
+| 2 | P3 | 32 | No CI regression gate on `v7_contention_*T` throughput | `.gitlab-ci.yml`, `scripts/bench-regression-check.sh` | Confirmed | Silent 1-5% drift possible; Phase-2-A would have been caught | Not filed (glab degraded) | Add contention-throughput column to regression gate; 5% threshold on `main` | ✅ Closed (`0379bb2`) |
+| 3 | P3 | 28 | `Timestamp.now()` bypasses injectable `clockCall()` — divergence risk (V1/V6 vs V7) | `src/timestamp.zig:31-50`, `src/generator.zig` | Confirmed | `withClock(custom)` callers get inconsistent behavior; no perf regression today | Not filed (glab degraded) | Route `Timestamp.now()` through `self.clockCall()` or inject clockFn into V1/V6 paths | ✅ Closed (`2bd3a18`) |
 | 4 | P3 | 24 | `clockToMs` recomputed on every CAS retry (redundant with `old_state`) | `src/generator.zig` (V7Cas.transition) | Suspected | ~20-30 ns/contended-retry saved on pure-bump arm | Not filed (glab degraded) | Extract `old_ms` from `old_state` before branch; skip `clockToMs` on bump-only path | Open |
 | 5 | P3 | 24 | 4096 retry budget unvalidated at 32T+ contention | `src/generator.zig` (V7Cas.max_retries) | Suspected | Budget may be insufficient under 64T contention — fallback triggers | Not filed (glab degraded) | Extend `v7_contention_*T` to 32T/64T (PERF-47); measure fallback rate | Open |
 | 6 | P3 | 18 | Bench contention scenarios stop at 16T; 32T/64T behavior unknown | `bench/contention.zig` | Confirmed | Scaling cliff at 32T+ would be undetected | Not filed (glab degraded) | Add 32T/64T rows; conditional on `$CI_RUNNER_VCPU >= 32` | Open |
@@ -2119,6 +2119,25 @@ glab issue create --title "PERF-58: openDirAbsolute per-saveState open+close ove
 glab issue create --title "PERF-59: Timestamp.now() bypasses clockCall() — V1/V6 divergent from V7 under Generator.withClock(custom)" \
   --label "performance,perf-severity::P3,category::correctness,confidence::confirmed,status::triage,area::app" \
   --description "See docs/PERF_GAP_ANALYSIS.md PERF-59. Fix: route Timestamp.now() through injectable ClockFn, or add newV1AtTimeWithClock/newV6AtTimeWithClock internal overloads. Priority 3 for Phase 5."
+
+# --- Phase 4 cycle 4 closure round (2026-04-20) — 3 perf gaps closed in-band ---
+# PERF-45, PERF-46, PERF-59 were NEVER filed as GitLab issues (glab auth DEGRADED through cycles 3-4).
+# No `glab issue close <iid>` command exists. If the maintainer wants retroactive external tracking:
+#
+# glab issue create --title "PERF-45: bench harness lacks across-run median — [CLOSED at filing]" \
+#   --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::closed,area::bench" \
+#   --description "See docs/PERF_GAP_ANALYSIS.md PERF-45. ✅ Closed 2026-04-20 (5c420d6) — multi-run median across-run statistics landed."
+# # Capture IID from output, then: glab issue close <iid> --comment "Closed at creation — record-keeping only. See commit 5c620d6."
+#
+# glab issue create --title "PERF-46: bench-regression gate does not cover v7_contention_*T throughput — [CLOSED at filing]" \
+#   --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::closed,area::ci" \
+#   --description "See docs/PERF_GAP_ANALYSIS.md PERF-46. ✅ Closed 2026-04-20 (0379bb2) — v7_contention_*T gated on MR at 10% threshold."
+#
+# glab issue create --title "PERF-59: Timestamp.now() bypasses clockCall() — [CLOSED at filing]" \
+#   --label "performance,perf-severity::P3,category::correctness,confidence::confirmed,status::closed,area::app" \
+#   --description "See docs/PERF_GAP_ANALYSIS.md PERF-59. ✅ Closed 2026-04-20 (2bd3a18) — V1/V6 timestamp routed through clockCall."
+#
+# Default (no-file) disposition: in-doc closure with ✅ markers + commit SHAs is authoritative.
 ```
 
 ### Methodology (Phase-4 follow-up)

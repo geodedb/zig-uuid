@@ -38,12 +38,12 @@
 | 12 | Info | 2 | ✅ All closed |
 | Phase 2/3 (2026-04-19) | Medium | 2 | ✅ QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-113d closed 2026-04-20 (`37419f6`/`b179892`/`a51e411`/`8211c0c`); QC-114 closed (`b7fb01e`) |
 | Phase 2/3 (2026-04-19) | Low | 3 | ✅ QC-115 co-closed (`2a8f4ea`); ✅ QC-116 closed (`0c56f13`); ✅ QC-117 closed (`cfa9f04`) |
-| Phase 4 cycle 3 (2026-04-20) | High | 1 | Open (QC-118) — `glab` DEGRADED, batch commands prepared |
-| Phase 4 cycle 3 (2026-04-20) | Medium | 13 | Open (QC-119–QC-131) — `glab` DEGRADED, batch commands prepared |
+| Phase 4 cycle 3 (2026-04-20) | High | 1 | ✅ Closed (QC-118 `f8dd37f`) — `glab` DEGRADED, batch command prepared |
+| Phase 4 cycle 3 (2026-04-20) | Medium | 13 | ✅ 4 Closed (QC-119 `d23ad7d`, QC-120 `85ecd50`, QC-121 `6413845`, QC-122 `412bed9`); 9 Open (QC-123–QC-131) — `glab` DEGRADED |
 | Phase 4 cycle 3 (2026-04-20) | Low | 11 | Open (QC-132–QC-142) — `glab` DEGRADED |
 | Phase 4 cycle 3 (2026-04-20) | Info | 2 | Open (QC-143, QC-144) — confirmed-safe `unreachable` sites |
 
-**Total issues:** 133 — **99 closed (92 prior + QC-113a/b/c/d + QC-114 + QC-115 + QC-116 + QC-117), 2 Won't Do (QC-16, QC-64), 0 Deferred, 32 open (5 from Phase 4 cycle 2 + 27 new from Phase 4 cycle 3)**
+**Total issues:** 133 — **104 closed (92 prior + QC-113a/b/c/d + QC-114 + QC-115 + QC-116 + QC-117 + QC-118 + QC-119 + QC-120 + QC-121 + QC-122), 2 Won't Do (QC-16, QC-64), 0 Deferred, 27 open (5 from Phase 4 cycle 2 + 22 remaining from Phase 4 cycle 3)**
 
 _Note: QC-113 is tracked as four sub-items QC-113a/b/c/d. All four sub-items are now closed. QC-113d (V7 CAS state-machine extraction) was deferred on 2026-04-19 and re-attempted on 2026-04-20 — pure `V7Cas.transition` helper extracted, `newV7Atomic` rewired to call it, ABA-avoidance preserved via the u64-state-word ratchet test, PERF-40 + PERF-34 layout witnesses intact, bench evidence captured in `docs/evidence/qc-113d-*.json`._
 
@@ -2747,6 +2747,37 @@ glab issue close 177 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-90/QC-91 
 
 # QC-91 / QC-92 merge → GitLab #178 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
 glab issue close 178 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-91/QC-92 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# --- Phase 4 cycle 4 closure round (2026-04-20) — 5 quality gaps closed in-band ---
+# QC-118..QC-122 were NEVER filed as GitLab issues (glab auth DEGRADED through all of Phase 4 cycles 3-4).
+# No `glab issue close` command exists; instead, queue `glab issue create` with a
+# `state: closed` followed by immediate close, OR simply record the closure here as
+# authoritative and file only if the maintainer wants external tracking.
+#
+# If the maintainer chooses to file + close retroactively (optional, not required):
+#
+# glab issue create --title "QC-118: save-during-wipe race in saveStateImpl (CWE-362/CWE-364)" \
+#   --label "quality,severity::high,category::api-contract,confidence::suspected,status::closed" \
+#   --description "See docs/QUALITY_GAP_ANALYSIS.md QC-118. ✅ Closed 2026-04-20 (f8dd37f) — pass state_mac_key out of mutex; shared root cause with SEC-P4-13."
+# # Then capture the new IID and: glab issue close <iid> --comment "Closed at creation — record-keeping only. See commit f8dd37f."
+#
+# glab issue create --title "QC-119: 9/14 Error variants lack /// docs in src/uuid.zig:53-61" \
+#   --label "quality,severity::medium,category::docs,confidence::confirmed,status::closed" \
+#   --description "See docs/QUALITY_GAP_ANALYSIS.md QC-119. ✅ Closed 2026-04-20 (d23ad7d)."
+#
+# glab issue create --title "QC-120: missing **Errors:** blocks on 13 public fns" \
+#   --label "quality,severity::medium,category::docs,confidence::confirmed,status::closed" \
+#   --description "See docs/QUALITY_GAP_ANALYSIS.md QC-120. ✅ Closed 2026-04-20 (85ecd50)."
+#
+# glab issue create --title "QC-121: README Generator table omits 11 methods" \
+#   --label "quality,severity::medium,category::docs,confidence::confirmed,status::closed" \
+#   --description "See docs/QUALITY_GAP_ANALYSIS.md QC-121. ✅ Closed 2026-04-20 (6413845)."
+#
+# glab issue create --title "QC-122: CHANGELOG [Unreleased] missing 10+ closure entries" \
+#   --label "quality,severity::medium,category::docs,confidence::confirmed,status::closed" \
+#   --description "See docs/QUALITY_GAP_ANALYSIS.md QC-122. ✅ Closed 2026-04-20 (412bed9)."
+#
+# Default (no-file) disposition: tracker closure is authoritative in this document; no GitLab issue ever existed; maintainer may skip filing.
 ```
 
 ### Tracker status (Phase 4 cycle 3)
@@ -2757,6 +2788,6 @@ glab issue close 178 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-91/QC-92 
 2. File QC-118..QC-144 as 27 new GitLab issues using labels: `quality`, `severity::{high,medium,low,info}`, `category::{api-contract,docs,maintainability,architecture,tests,readability,cleanup}`, `confidence::{confirmed,suspected}`, `status::triage`.
 3. Back-link the new issue URLs into the Stack-Ranked Findings table above.
 
-_Phase 4 cycle 3 audit complete — 27 new findings (QC-118–QC-144): 1 High, 13 Medium, 11 Low, 2 Info. 0 closed in-band this session (no-write cycle). 133 total issues tracked (99 closed, 2 Won't Do, 32 open)._
+_Phase 4 cycle 3 audit complete — 27 new findings (QC-118–QC-144): 1 High, 13 Medium, 11 Low, 2 Info. **Phase 4 cycle 4 closure round 2026-04-20:** 5 closed in-band (QC-118 `f8dd37f`, QC-119 `d23ad7d`, QC-120 `85ecd50`, QC-121 `6413845`, QC-122 `412bed9`). 133 total issues tracked (104 closed, 2 Won't Do, 27 open)._
 
 _Last updated: 2026-04-20 — Phase 2/3 quality audit + closure cycle + residual closure batch + QC-113d re-attempt. 5 new findings (QC-113–QC-117): 2 Medium, 3 Low. **Closure cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-114 closed (`b7fb01e`); QC-115 co-closed (`2a8f4ea`). **Residual closure batch 2026-04-19:** QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`). **QC-113d re-attempt 2026-04-20:** closed (`37419f6`/`b179892`/`a51e411`/`8211c0c`). All Phase 2/3 findings closed. 106 total issues tracked (99 closed, 2 Won't Do, 0 Deferred, 5 Open — all from Phase 4 cycle 2)._
