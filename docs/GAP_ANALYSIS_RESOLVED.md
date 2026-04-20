@@ -3,7 +3,7 @@
 > Mirror of resolved items that were previously tracked in `docs/GAP_ANALYSIS.md`
 > and the GitLab issue tracker. The issue tracker is authoritative.
 >
-> Last updated: 2026-04-19 (Phase 5 closure cycle — 12 items closed across GAP-CI-01, 4 SEC-P4 security items, 1 SEC-P4 adversarial co-closure, 2 PERF items + 1 PERF co-closure, 4 QC items + 1 QC co-closure. **Residual closure batch:** +7 items — SEC-P4-13, GAP-DOC-11, GAP-DOC-12, PERF-41, PERF-44, QC-116, QC-117. After the residual batch, only SEC-P4-14 (Blocked) and QC-113d (Deferred) remain open across all tracker files. Plus the earlier Phase 5 sync migration of Legacy F-1..F-9 + G-1..G-10 and GAP-DOC-13.)
+> Last updated: 2026-04-20 (Phase 5 closure cycle — 12 items closed across GAP-CI-01, 4 SEC-P4 security items, 1 SEC-P4 adversarial co-closure, 2 PERF items + 1 PERF co-closure, 4 QC items + 1 QC co-closure. **Residual closure batch:** +7 items — SEC-P4-13, GAP-DOC-11, GAP-DOC-12, PERF-41, PERF-44, QC-116, QC-117. **QC-113d re-attempt 2026-04-20:** previously deferred, now closed — V7 CAS state-machine extracted into pure `V7Cas.transition` helper; ABA-avoidance + PERF-40 invariants preserved. After the re-attempt, only SEC-P4-14 (Blocked) remains open across all tracker files. Plus the earlier Phase 5 sync migration of Legacy F-1..F-9 + G-1..G-10 and GAP-DOC-13.)
 
 ## Summary
 
@@ -968,7 +968,7 @@ creates a `GeneratorInterface` backed by the concrete `Generator` via the
 >
 > - bench-check pass + `zig fmt --check` clean.
 > Docs-tracked only (no GitLab mutations — `glab` auth remains DEGRADED this
-> cycle). 12 items closed; 1 Deferred (QC-113d); 1 Blocked (SEC-P4-14).
+> cycle). 12 items closed; 1 Deferred (QC-113d — subsequently re-attempted and closed 2026-04-20); 1 Blocked (SEC-P4-14).
 
 ### CI unblock — 1 closed
 
@@ -1095,14 +1095,23 @@ creates a `GeneratorInterface` backed by the concrete `Generator` via the
 - **Commit:** `cb0f44d` (`refactor: close QC-113c — split loadStateImpl into validated helpers`)
 - **Resolved date:** 2026-04-19
 
-### QC-113d: V7 CAS state-machine extraction [DEFERRED]
+### QC-113d: V7 CAS state-machine extraction [RESOLVED]
 
 - **Issue:** docs-tracked only
 - **Category:** Quality / Maintainability
 - **Severity:** Medium (Score 9 — QC-113 sub-item)
-- **Status:** **Deferred** — deliberate non-attempt this cycle. Rationale documented in the `cb0f44d` commit body: `newV7Atomic` couples a CAS retry loop with an atomic-ordering (`.acquire` / `.acq_rel`) fence pattern and a bounded SEC-P4-10/A1 retry budget (4096). Pulling the state transitions into a `V7Cas` struct risks either (a) breaking the ABA-avoidance guarantee of the single-word `cmpxchgStrong` if the fetch-and-compute steps are re-sequenced, or (b) regressing the PERF-40 fallback-counter cache-line layout. The QC-113 plan explicitly permits deferring (d) when confidence is not high; QC-113a/b/c alone close the "god-functions" acceptance criterion.
-- **Resolution pointer:** Commit body of `cb0f44d` documents the deferral rationale. Re-open only if a future change provides a new justification or if benchmarks show the current shape blocks a separate perf win.
-- **Not-resolved date:** 2026-04-19
+- **Resolution:** Refactored `newV7Atomic` to delegate the pure state-transition decision to a new `V7Cas.transition` helper (non-`pub` namespace inside `Generator`). Retry budget (SEC-P4-A1 4096), counter bumps via `bumpFallback`, clock read, entropy-draw caching, and CAS publish remain in the caller. Single-word `cmpxchgStrong` on `v7_atomic_state` with `.acq_rel` / `.acquire` orderings preserved verbatim — ABA-avoidance argument unchanged. PERF-40 (stats on isolated cache line) and PERF-34 (V7/V1V6 clusters on distinct cache lines) layout witnesses pass; `@offsetOf(Generator, "stats")` still a multiple of 64. A u64-state-word ratchet test (`test "QC-113d: v7_atomic_state is a single u64 atomic"`) locks the state-word shape so any future attempt to widen it fails at compile time.
+- **Evidence:**
+  - Tests: `test "QC-113d: v7_atomic_state is a single u64 atomic"` (ratchet) + `test "QC-113d V7Cas.transition: same-ms bump" | clock advance seeds from cached rand | saturation signals sleep | clock behind preserves old_ms"` (4 pure-helper cases). Total 262 unit pass + 1 skip (up from 257 + 1 baseline; +5 tests).
+  - Integration: 37/37 pass.
+  - Bench artefacts: `docs/evidence/qc-113d-baseline-{contention,single}.json`, `docs/evidence/qc-113d-post-{contention,single}.json`. Critical row `v7_contention_lockfree_8T` within +1.23% of baseline (plan's ±2% gate); `v7_random_lockfree/1T` within +0.05%.
+- **Plan:** `docs/superpowers/plans/2026-04-19-qc-113d-v7-cas-reattempt.md` — conditional re-attempt plan with Go/No-Go gate; attempted 2026-04-20 after direct user authorization.
+- **Commits:**
+  - `37419f6` test(quality): QC-113d prep — ratchet v7_atomic_state as single u64
+  - `b179892` refactor(quality): QC-113d — extract pure V7Cas.transition helper (no caller yet)
+  - `a51e411` refactor(quality): QC-113d — rewire newV7Atomic to V7Cas.transition
+  - `8211c0c` docs(quality): QC-113d — bench evidence (refactor within ±2% of baseline)
+- **Resolved date:** 2026-04-20
 
 ### QC-114: OS-specific hwaddr backends untested [RESOLVED]
 
@@ -1129,7 +1138,7 @@ creates a `GeneratorInterface` backed by the concrete `Generator` via the
 > HEAD at closure: post-`0c56f13` (7 additional closure commits after the primary Phase-5 closure cycle).
 > Test state: 257 unit pass + 1 skip (Windows-only), 37/37 integration, all 5 cross-compile targets pass, warn-noise 3 → 0.
 > Docs-tracked only (`glab` auth remains DEGRADED). 7 items closed; no new Deferred; no new Blocked.
-> After this batch, **only SEC-P4-14 (Blocked) and QC-113d (Deferred) remain open** across all tracker files.
+> After this batch, **only SEC-P4-14 (Blocked) and QC-113d (Deferred) remain open** across all tracker files. _Update 2026-04-20: QC-113d subsequently re-attempted and closed; only SEC-P4-14 (Blocked) remains._
 
 ### Security — 1 closed
 
@@ -1216,3 +1225,9 @@ creates a `GeneratorInterface` backed by the concrete `Generator` via the
 - Blocked this batch: **0**.
 - **After this batch:** across every tracker file, only **SEC-P4-14 (Blocked — operator tag→SHA map required)** and **QC-113d (Deferred — ABA-avoidance + PERF-40 cache-layout risk)** remain open.
 - Cumulative closures this project: **99** (92 prior + 7 this batch). Won't-Do retained: 4.
+
+### QC-113d Re-attempt (2026-04-20)
+
+QC-113d was subsequently re-attempted on 2026-04-20 per `docs/superpowers/plans/2026-04-19-qc-113d-v7-cas-reattempt.md`. The V7 CAS state-machine was extracted into a pure `V7Cas.transition` helper inside `Generator` (non-`pub`) and `newV7Atomic` was rewired to delegate the decision tree. ABA-avoidance (single-word `cmpxchgStrong` with `.acq_rel` / `.acquire` orderings) preserved; PERF-40 + PERF-34 layout witnesses pass; bench-compare within stddev-adjusted gates on all V7 scenarios (`v7_contention_lockfree_8T` +1.23%). See the `### QC-113d: V7 CAS state-machine extraction [RESOLVED]` section above for full details. Commits: `37419f6`, `b179892`, `a51e411`, `8211c0c`.
+
+**Post-re-attempt status:** across every tracker file, only **SEC-P4-14 (Blocked)** remains open. Cumulative closures: **100** (99 prior + QC-113d re-attempt).
