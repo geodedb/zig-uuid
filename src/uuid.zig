@@ -50,14 +50,51 @@ fn processHashSeed() u64 {
 }
 
 pub const Error = error{
+    /// Returned by `UUID.fromString` when the supplied text cannot be parsed
+    /// as an RFC 9562 canonical (8-4-4-4-12), braced (`{...}`), or URN
+    /// (`urn:uuid:...`) form — e.g. stray whitespace, non-hex bytes inside
+    /// a segment, or the hyphen layout is malformed in a subtler way than
+    /// the dedicated `InvalidDashes` variant covers.
     InvalidFormat,
+    /// Returned by `UUID.fromString` when the input length does not match
+    /// any of the three accepted envelope sizes (36 canonical, 38 braced,
+    /// 45 URN).  Length is validated before any hex parsing so callers
+    /// see this variant instead of `InvalidFormat` for short/long input.
     InvalidLength,
+    /// Returned by `UUID.fromString` when the input is 38 bytes but is
+    /// missing a matching `{` / `}` pair (one present without the other,
+    /// or both absent).  Length alone matched the braced form, so the
+    /// dedicated variant distinguishes brace-envelope errors from generic
+    /// `InvalidFormat`.
     InvalidBraces,
+    /// Returned by `UUID.fromString` when the input is 45 bytes but does
+    /// not begin with the case-insensitive `urn:uuid:` prefix required by
+    /// RFC 9562 §4.  Length alone matched the URN form; this variant
+    /// flags a malformed prefix specifically.
     InvalidURNPrefix,
+    /// Returned by `UUID.fromString` when the hyphen positions inside the
+    /// 36-byte canonical body are wrong (missing hyphen at one of bytes
+    /// 8/13/18/23, or a hyphen where a hex digit is expected).  Distinct
+    /// from `InvalidFormat` so callers can pattern-match layout bugs.
     InvalidDashes,
+    /// Returned by `UUID.fromBytes` when the caller-supplied byte slice is
+    /// not exactly 16 bytes long.  Parsing is length-strict: over- or
+    /// under-sized buffers are rejected rather than silently truncated.
     IncorrectByteLength,
+    /// Returned by the V1/V6 generators (via the configured `HWAddrFn`) when
+    /// no non-loopback MAC address can be discovered on the host — e.g.
+    /// the machine has no network interfaces, or all interfaces are
+    /// administratively down.  Callers that cannot tolerate the random-node
+    /// fallback should treat this as a hard failure.
     NoHWAddressFound,
+    /// Returned by helpers that operate on a parsed `UUID` (e.g.
+    /// `UUID.getTimestamp`) when the version nibble does not match what
+    /// the helper expects — e.g. asking for a V7 timestamp from a V4 UUID.
     InvalidVersion,
+    /// Returned when the configured `RandFn` (or the default CSPRNG) fails
+    /// to fill the requested buffer — e.g. the OS random source returned
+    /// short or the caller-supplied random source errored out.  Signals
+    /// that no UUID could be generated because entropy was unavailable.
     RandomError,
     /// Returned by Timestamp.now() when the system clock is before the Unix epoch.
     InvalidTimestamp,
