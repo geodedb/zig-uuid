@@ -1912,6 +1912,72 @@ pub const Generator = struct {
         try self.saveState(path);
     }
 
+    /// O-1 (CWE-320): rotate the HMAC key that authenticates the persisted
+    /// state file.  Reads the existing file under the generator's current
+    /// key + policy, secure-zeros the old key slot, installs `new_key`,
+    /// and writes a fresh v3 file authenticated under `new_key`.
+    ///
+    /// Usage:
+    /// ```zig
+    /// var gen = uuid.Generator.initOptions(.{ .state_mac_key = old_key });
+    /// const new_key = try deriveNewKey(...); // caller-supplied
+    /// try gen.rotateStateMacKey("/var/lib/myapp/uuid.state", new_key);
+    /// // State file now authenticates under new_key; subsequent saves
+    /// // and loads must use new_key.
+    /// ```
+    ///
+    /// Semantics:
+    ///   1. `state_mac_key` must be configured — returns
+    ///      `Error.StateMacMismatch` otherwise (nothing to rotate from).
+    ///   2. Load runs under the generator's configured policy (NO `.any`
+    ///      override, unlike `migrateStateToV3`).  This preserves
+    ///      SEC-P4-01 no-downgrade semantics: a rotate on a v1/v2 file
+    ///      under the default `require_mac_when_keyed` policy fails fast
+    ///      with `Error.StateVersionDowngrade`, forcing the caller to
+    ///      migrate (via `migrateStateToV3`) before rotating.
+    ///   3. SEC-P3-04 cleartext-residue: the old 32-byte key slot is
+    ///      `std.crypto.secureZero`'d before the new key is written.
+    ///      If `saveState` fails, the generator is left in the "new
+    ///      key, no file" state — callers must retry or call
+    ///      `saveState` explicitly.  The old key material is still
+    ///      destroyed (CWE-316 compliant).
+    ///   4. Atomic-rename via `saveState` inherits from
+    ///      `atomicWriteStateFile`: the on-disk file is either the
+    ///      pre-rotation file (write-then-rename did not advance) or the
+    ///      post-rotation file (rename succeeded).  There is no torn
+    ///      intermediate.
+    ///
+    /// **Errors:**
+    /// - `Error.StateMacMismatch` — no `state_mac_key` configured, OR
+    ///   the file's HMAC fails to verify under the current key
+    ///   (tampered, or written under a different key — typical sign of
+    ///   an already-rotated-by-another-process file).
+    /// - `Error.StateVersionDowngrade` — SEC-P4-01: file is v1/v2 under
+    ///   a policy that rejects unauthenticated files; caller should
+    ///   migrate before rotating.
+    /// - `Error.StateIoFailure` — underlying filesystem read or write
+    ///   failure.
+    pub fn rotateStateMacKey(self: *Generator, path: []const u8, new_key: [32]u8) Error!void {
+        // SEC-P4-01 invariant: no-downgrade — rotate MUST NOT accept v1/v2
+        // input under the default policy; that is what `migrateStateToV3`
+        // is for.  We therefore run loadState under the generator's
+        // configured policy (no `.any` override).
+        if (self.state_mac_key == null) return Error.StateMacMismatch;
+        try self.loadState(path);
+
+        // CWE-316 (cleartext residue): secure-zero the OLD key slot
+        // before overwriting it with the new key.  Done via direct
+        // pointer into the Optional's payload so the volatile-write
+        // `std.crypto.secureZero` cannot be DCE'd by the optimiser.
+        if (self.state_mac_key) |*old| std.crypto.secureZero(u8, old);
+        self.state_mac_key = new_key;
+
+        // Save under the new key — `saveState` / `packStateIntoBuffer`
+        // reads `self.state_mac_key` under the state mutex (post-QC-118)
+        // and emits wire-format v3 authenticated with the new key.
+        try self.saveState(path);
+    }
+
     /// QC-113c: result of opening the state file and validating its
     /// framing (magic, version byte, and declared-vs-actual length).
     /// `file_version` is one of `state_format_version_v{1,2,3}`; callers

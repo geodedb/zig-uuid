@@ -201,6 +201,15 @@ pub fn migrateStateToV3(path: []const u8) Error!void {
     return gen_mod.default_generator.migrateStateToV3(path);
 }
 
+/// O-1 (CWE-320): module-level wrapper for `Generator.rotateStateMacKey`
+/// operating on the shared `default_generator`.  See
+/// `Generator.rotateStateMacKey` for semantics.  Requires
+/// `default_generator.state_mac_key` to already be set; the old key
+/// is securely zeroed before `new_key` is installed.
+pub fn rotateStateMacKey(path: []const u8, new_key: [32]u8) Error!void {
+    return gen_mod.default_generator.rotateStateMacKey(path, new_key);
+}
+
 /// QC-100: module-level wrapper for `Generator.secureWipeMacKey` operating
 /// on the shared `default_generator`. See `Generator.secureWipeMacKey` for
 /// semantics (idempotent volatile zeroization of the HMAC state-file key).

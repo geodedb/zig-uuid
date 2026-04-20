@@ -106,6 +106,12 @@ pub const saveState = @import("versions.zig").saveState;
 pub const loadState = @import("versions.zig").loadState;
 pub const secureWipeMacKey = @import("versions.zig").secureWipeMacKey;
 pub const migrateStateToV3 = @import("versions.zig").migrateStateToV3;
+/// O-1 (CWE-320): rotate the HMAC key authenticating the persisted
+/// state file.  Loads under the current key + configured policy,
+/// zeroizes the old key slot, installs `new_key`, and writes a fresh
+/// v3 file under the new key.  See `Generator.rotateStateMacKey` for
+/// the full error surface and SEC-P4-01 no-downgrade invariant.
+pub const rotateStateMacKey = @import("versions.zig").rotateStateMacKey;
 pub const StateMacPolicy = @import("generator.zig").StateMacPolicy;
 pub const initV3Namespace = @import("versions.zig").initV3Namespace;
 pub const initV5Namespace = @import("versions.zig").initV5Namespace;

@@ -381,6 +381,41 @@ uuid.secureWipeMacKey();
 // Idempotent; safe when no key was configured.
 ```
 
+### HMAC Key Rotation (O-1 / CWE-320)
+
+Long-lived processes using an HMAC-authenticated state file
+(`state_mac_key` set at `initOptions`) should rotate the key
+periodically — at minimum whenever the surrounding secret-management
+policy rotates the on-disk key material.  `rotateStateMacKey` loads
+the existing file under the current key, secure-zeroes the old
+key slot, installs `new_key`, and writes a fresh v3 file
+authenticated under `new_key` — all while preserving SEC-P4-01
+no-downgrade semantics (the load half runs under the generator's
+configured policy, NOT `.any`):
+
+```zig
+var gen = uuid.Generator.initOptions(.{ .state_mac_key = old_key });
+// ... run for N hours ...
+const new_key = try deriveNewKey();           // caller-supplied
+try gen.rotateStateMacKey(path, new_key);
+// Post-call semantics:
+//   * gen.state_mac_key is now new_key (old_key bytes secureZero'd).
+//   * The on-disk file at `path` authenticates under new_key.
+//   * Anyone still holding old_key sees Error.StateMacMismatch on load.
+//   * Atomic-rename (SEC-9) guarantees there is no torn intermediate:
+//     the on-disk file is either pre-rotation (old_key) or
+//     post-rotation (new_key), never partial.
+```
+
+A module-level `uuid.rotateStateMacKey(path, new_key)` wrapper operates
+on the process-global `default_generator` for callers using the
+`uuid.saveState` / `uuid.loadState` convenience surface.
+
+**Errors:** `Error.StateMacMismatch` (no key configured, or the file
+does not authenticate under the current key — e.g. already rotated
+by another process); `Error.StateVersionDowngrade` (file is v1/v2 —
+call `migrateStateToV3` first); `Error.StateIoFailure` (I/O).
+
 ### Full Error Set
 
 `uuid.Error` is the library's error set. Members added since v0.1.0:
