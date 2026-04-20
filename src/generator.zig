@@ -711,6 +711,62 @@ pub const Generator = struct {
         _ = self.stats.v7_lockfree_fallbacks.fetchAdd(1, .monotonic);
     }
 
+    /// QC-113d: pure state-transition helper for the V7 lock-free CAS
+    /// path.  Keeps the decision tree (same-ms bump vs clock-advance
+    /// seed vs saturation-sleep) separately testable WITHOUT touching
+    /// Generator state: caller supplies the atomic-loaded old state,
+    /// the current clock reading in ms, and the cached-rand seq to use
+    /// if the clock-advance branch fires.  Caller owns the CAS publish
+    /// and any counter bump / sleep.
+    ///
+    /// ABA-safety note: the transition is pure over `(old_state,
+    /// clock_ms, rand_seq)` — it NEVER reads `v7_atomic_state` itself
+    /// and NEVER splits the single-word compare into two loads.  The
+    /// u64 round-trip ratchet (`test "QC-113d: v7_atomic_state is a
+    /// single u64 atomic"`) guards the ABA argument.
+    ///
+    /// Layout note: V7Cas is a bare namespace (no fields) so it does
+    /// not affect `@sizeOf(Generator)`.  The PERF-40 witness (stats on
+    /// isolated cache line) and PERF-34 witness (V7/V1V6 clusters on
+    /// distinct lines) depend on `@offsetOf(Generator, "stats")` being
+    /// a multiple of 64 and on no field crossing a cluster boundary.
+    /// Adding a zero-size namespace does not perturb either.
+    const V7Cas = struct {
+        const Kind = enum { bump, advance, sleep };
+
+        const Transition = struct {
+            kind: Kind,
+            /// Packed `(ms:52 | seq:12)` to publish with cmpxchgStrong.
+            /// Undefined when `kind == .sleep`.
+            new_state: u64,
+        };
+
+        /// Pure state-transition decision.  Inputs:
+        ///   - `old_state`   — result of `v7_atomic_state.load(.acquire)`
+        ///   - `clock_ms_u`  — current wall-clock ms as u64
+        ///   - `rand_seq`    — 12-bit entropy drawn by the caller and
+        ///                     cached across retries (ignored unless
+        ///                     `kind == .advance`)
+        inline fn transition(old_state: u64, clock_ms_u: u64, rand_seq: u12) Transition {
+            const old_ms = v7UnpackMs(old_state);
+            const old_seq = v7UnpackSeq(old_state);
+
+            if (clock_ms_u > old_ms) {
+                return .{
+                    .kind = .advance,
+                    .new_state = v7PackState(clock_ms_u, rand_seq),
+                };
+            }
+            if (old_seq == std.math.maxInt(u12)) {
+                return .{ .kind = .sleep, .new_state = undefined };
+            }
+            return .{
+                .kind = .bump,
+                .new_state = v7PackState(old_ms, old_seq + 1),
+            };
+        }
+    };
+
     /// PERF-21: lock-free V7 generation.  See the comment block above for
     /// the full algorithm and monotonicity argument.
     ///
@@ -2369,4 +2425,41 @@ pub fn GeneratorInterfaceFor(comptime G: type) type {
 test {
     _ = @import("generator_test.zig");
     _ = @import("generator_state_test.zig");
+}
+
+// QC-113d: V7Cas.transition pure-helper tests.  Live inside
+// generator.zig (not generator_test.zig) so they can see the
+// non-`pub` V7Cas namespace and v7UnpackMs/Seq helpers without
+// leaking them into the public surface.
+
+test "QC-113d V7Cas.transition: same-ms bump" {
+    const old = (@as(u64, 100) << 12) | 5;
+    const t = Generator.V7Cas.transition(old, 100, 0xABC);
+    try std.testing.expectEqual(Generator.V7Cas.Kind.bump, t.kind);
+    try std.testing.expectEqual(@as(u64, 100), Generator.v7UnpackMs(t.new_state));
+    try std.testing.expectEqual(@as(u12, 6), Generator.v7UnpackSeq(t.new_state));
+}
+
+test "QC-113d V7Cas.transition: clock advance seeds from cached rand" {
+    const old = (@as(u64, 100) << 12) | 5;
+    const t = Generator.V7Cas.transition(old, 101, 0xABC);
+    try std.testing.expectEqual(Generator.V7Cas.Kind.advance, t.kind);
+    try std.testing.expectEqual(@as(u64, 101), Generator.v7UnpackMs(t.new_state));
+    try std.testing.expectEqual(@as(u12, 0xABC), Generator.v7UnpackSeq(t.new_state));
+}
+
+test "QC-113d V7Cas.transition: saturation signals sleep" {
+    const old = (@as(u64, 100) << 12) | 0xFFF;
+    const t = Generator.V7Cas.transition(old, 100, 0);
+    try std.testing.expectEqual(Generator.V7Cas.Kind.sleep, t.kind);
+}
+
+// QC-113d: V7Cas.transition — clock BEHIND old_ms (rollback within
+// tolerance) still takes the same-ms path for monotonicity (SEC-R14-02).
+test "QC-113d V7Cas.transition: clock behind preserves old_ms" {
+    const old = (@as(u64, 100) << 12) | 5;
+    const t = Generator.V7Cas.transition(old, 99, 0xABC);
+    try std.testing.expectEqual(Generator.V7Cas.Kind.bump, t.kind);
+    try std.testing.expectEqual(@as(u64, 100), Generator.v7UnpackMs(t.new_state));
+    try std.testing.expectEqual(@as(u12, 6), Generator.v7UnpackSeq(t.new_state));
 }
