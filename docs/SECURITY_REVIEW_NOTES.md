@@ -697,6 +697,18 @@ The following Phase-2 issues are documented as Closed in `GAP_ANALYSIS.md` and s
 | SEC-R13-07 | SECURITY.md PGP/CVSS/EOL gaps | Closed (line 3249); SUPERSEDED by SEC-P3-07 which expands scope (safe-harbor + security.txt). |
 | SEC-R13-08 | `clock()` under mutex stall risk | Closed (line 3248). |
 
+> **Closure-drift queue (2026-04-20, Phase 4 cycle 4 — issue-tracker).** The 7 items below are confirmed `✅ Closed` in docs but remain **open on GitLab** because `glab` auth is DEGRADED (read-only token; see GAP-DOC-10). Queued for batch close once auth is restored — commands are transcribed in the Phase 4 cycle 4 section below.
+>
+> | Tracker | Gap-ID | Closure evidence |
+> |---------|--------|------------------|
+> | #154    | SEC-R12-02 (CWE-190) | `max_safe` guard at `src/timestamp.zig` |
+> | #156    | SEC-R13-01 (CWE-362) | cached clock in V7 spin-wait at `src/generator.zig` |
+> | #158    | SEC-R13-03 (CWE-754) | fuzz corpus boundary entries at `src/fuzz.zig:184-197` |
+> | #159    | SEC-R13-04 (CWE-908) | zero-init loadState buffer at `src/generator.zig:2109` |
+> | #161    | SEC-R13-06 (CWE-390) | `std.log.warn` on Linux ioctl truncation at `src/hwaddr/linux.zig:57-61` |
+> | #164    | SEC-R13-07 (process) | `SECURITY.md` PGP + CVSS + EOL policy updates |
+> | #167    | SEC-R13-08 (CWE-833) | clock cached before mutex at `src/generator.zig:2131` |
+
 SEC-R12-01 (node_cache data race) remains Won't Do — re-confirmed by SEC-P3-06. MUST NOT re-open.
 
 ### False Positive Notes (Phase 3)
@@ -1043,3 +1055,138 @@ glab issue create \
 **Plan:** `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` (ready to execute once step 1 above is satisfied).
 
 _Last updated: 2026-04-19 — Phase 4 follow-up audit (cycle 3) + closure cycle + residual closure batch. 6 new findings added (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1): 1 Medium-High supply-chain (Risk 40), 1 Medium (Risk 12), 1 Low (Risk 6), 1 Low (Risk 4), 1 Low (Risk 2), 1 Very Low (Risk 1). Outcomes — SEC-P4-10 + SEC-P4-A1 closed (`5202714`); SEC-P4-11 closed (`f67e8bf`); SEC-P4-12 closed (`904d352`); **SEC-P4-13 closed (`3b338ab`, residual batch)**; SEC-P4-14 Blocked (operator tag→SHA map required for 8 ci-catalog components). `glab` auth DEGRADED — no tracker mutations performed._
+
+---
+
+## Phase 4 audit cycle 4 (2026-04-20) — issue-tracker
+
+> **HEAD:** `2c76a4b` (post QC-113d closure).
+> **Scope:** Phase-3 security-reviewer output triage + tracker reconciliation. `glab` auth remains **DEGRADED** (read-only token — see GAP-DOC-10). All commands below are documentation-only and MUST NOT be executed this cycle.
+> **Agent:** security-issue-tracker (Phase 4 of `/codepros:audit`).
+> Risk = Impact × Likelihood × 4 (0–100 scale), retained from prior cycles.
+
+### Scoring confirmation (3 new findings, all Info/Low — non-blocking)
+
+| Gap-ID | Severity | Impact | Likelihood | Risk | CWE | Confidence | Exploit surface | Status |
+|--------|----------|--------|------------|------|-----|------------|-----------------|--------|
+| O-1    | Low      | 3 (data tampering via downgrade path) | 2 (requires configured keyed generator + operator-triggered rotation) | **6** | CWE-320 (Key Management Errors) | confirmed | In-process API | ✅ Closed (`5a6f747`) |
+| O-2    | Info     | 2 (information leak — predictable post-fork sequence) | 2 (requires operator omission of `reseed()` after fork; Zig stdlib lacks portable `pthread_atfork`) | **4** | CWE-665 / CWE-331 | suspected | In-process API | Open |
+| H-1    | Info     | 1 (hardening — defense-in-depth) | 2 (catalog already SHA-verifies Zig tarball post-curl — see SEC-P4-14 threat model) | **2** | CWE-829 | suspected | CI / supply-chain (internal) | Open |
+
+Mapping confirmed: all three are below the Medium threshold, none block the Phase 4 cycle, none require immediate tracker action.
+
+### New Findings (Phase 4 cycle 4)
+
+**O-1 — `rotateStateMacKey` primitive missing** (Low, CWE-320, Risk 6, confidence::confirmed) — ✅ Closed `5a6f747`
+
+- **Evidence:** `src/generator.zig:1800-1809` — only `migrateStateToV3(self, path)` exists (forces `state_mac_policy = .any` for the load half, then re-saves under the caller-configured policy). No companion primitive lets an operator rotate the 32-byte HMAC key without downgrading through `.any`. Callers currently have to either (a) drop to `.any` manually for the transition window, or (b) write a bespoke load-decrypt-reencrypt routine — both undermine the SEC-P4-01 guarantee that keyed generators reject unauthenticated state by default.
+- **Tests:** not present.
+- **Impact:** operators who must rotate a compromised `state_mac_key` are forced through the `.any` downgrade path documented in `migrateStateToV3`, widening the SEC-P4-01 downgrade window for the duration of the rotation.
+- **Likelihood:** requires a keyed generator (opt-in today) AND an operator-triggered rotation event. Not reachable from pre-auth / remote input.
+- **Remediation:** add `rotateStateMacKey(self, path, new_key: [32]u8) Error!void` that: (1) loads under the caller's configured policy (no `.any` override), (2) verifies the existing MAC, (3) swaps `self.state_mac_key`, (4) re-saves v3 under the new key. Return `Error.StateMacMismatch` if step (2) fails. No wire-format change.
+- **Acceptance:** unit test — pre-rotation file verifies under old key; post-rotation file verifies under new key; both reject cross-key reads; no v1/v2 downgrade observable during the operation.
+- **References:** CWE-320; cross-link SEC-P4-01 (downgrade default).
+- **Classification:** Low / Info — non-blocking. Deferrable to a future session; optional to file as GitLab issue. Queued, not executed, in the command block below.
+
+**O-2 — No post-fork lint / assertion for `reseed()` omission** (Info, CWE-665 / CWE-331, Risk 4, confidence::suspected)
+
+- **Evidence:** `src/generator.zig:544-566` — the SEC-P3-01 `reseed()` docstring documents the post-`fork(2)` contract, but the library has no runtime mechanism to detect a caller who forked and then minted UUIDs without reseeding. Zig 0.16 stdlib does not expose a portable `pthread_atfork` equivalent; Windows has no fork. The SEC-P3-01 fix remains doc-only for detection purposes (the actual clearing is mechanical).
+- **Impact:** post-fork omission causes two processes to derive UUIDs from identical cached CSPRNG state — collision surface bounded by `clock_seq` / `mono_seq` / `node_cache` rollover (not a disclosure vulnerability, but a correctness + defense-in-depth gap). Already tracked as documentation-level in SEC-P3-01.
+- **Likelihood:** requires operator to (a) use `fork(2)` AND (b) forget to call `reseed()`. Not exploitable by attackers; downstream-correctness surface only.
+- **Remediation options (all defense-in-depth — choose one, all optional):**
+  1. `assertPostFork()` helper — captures `std.os.linux.getpid()` (or equivalent) in `Generator.init`, asserts equality on every UUID-generation hot path in Debug mode only. Release builds no-op.
+  2. `InitOptions.fork_detection: bool = false` knob — enables the Debug assertion above. Explicit opt-in avoids surprising callers.
+  3. Dedicated `docs/runbooks/post-fork-reseed.md` — codifies the operator contract, cross-linked from `reseed()` docstring and `SECURITY.md`.
+- **Acceptance:** if option 1 or 2 lands, Debug test asserts a post-fork mint without `reseed()` traps. If option 3 only, runbook committed and linked from two source-level docstrings.
+- **References:** CWE-665, CWE-331; cross-link SEC-P3-01 (fork-safety contract).
+- **Classification:** Info — non-blocking. Deferrable. Not queued for GitLab creation this cycle.
+
+**H-1 — `.gitlab-ci.yml` APT install of curl/xz-utils/python3 unpinned** (Info, CWE-829, Risk 2, confidence::suspected)
+
+- **Evidence:** `.gitlab-ci.yml:40, 276, 360` — `apt-get install curl xz-utils python3` invocations do not pin package versions. Acceptable per the project's threat model because the downstream Zig SHA-256 verification is performed after `curl` completes (SEC-P4-14 captures the broader CI-catalog supply-chain gap that dominates this attack surface).
+- **Impact:** minimal — a compromised Debian APT mirror could serve a backdoored `curl` / `xz-utils` / `python3` binary that subsequently influences the downstream Zig download. However, Debian bookworm uses signed Release + signed by-hash Packages indices, and the Zig SHA is verified out-of-band.
+- **Likelihood:** requires either Debian APT mirror compromise OR MITM of the APT transport on the GitLab runner network. Both are beyond the project's threat model; the operator trusts the GitLab-provided runner image.
+- **Remediation:** **fold into SEC-P4-14 scope** — when the CI-catalog 40-char SHA map lands and the `ci-catalog-sha-rotation.md` runbook is committed, add a note on APT-package version drift to the same runbook. Do not file a standalone issue.
+- **Classification:** Info — non-blocking. Tracked under SEC-P4-14; no independent GitLab issue required.
+
+### Structural gap reconfirmation
+
+**SEC-P4-14** (Medium-High, Risk 40, CWE-494 / CWE-1357) remains the **sole open structural security gap**. The existing `GAP_ANALYSIS.md` classification `🚧 Blocked` is correct; `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` is the unblock plan. Operator action required: provide the 40-char SHA map for 8 components at `gitlab.com/devnw/ci-catalog@v1.7.1`.
+
+**Recommended relabel (when `glab` auth restores):** move from `status::blocked` → `status::blocked-external-dependency`. Rationale — the blocker is **not** a project-internal decision (which `Won't-Do` or `status::deferred` would imply); it is a credential / external-repo-access dependency that the project cannot self-resolve. The `status::blocked-external-dependency` label preserves the finding in the active backlog (Won't-Do incorrectly drops it) and surfaces the dependency type to any future triage pass.
+
+### Ready-to-run `glab` commands (documentation-only — `glab` auth is DEGRADED; DO NOT execute)
+
+> **Prerequisite:** `glab auth status` must report green first. See GAP-DOC-10 / the glab-auth runbook.
+
+#### Batch close (7 closure-drift tickets — QUEUED)
+
+```bash
+# Pre-flight
+glab auth status
+
+# SEC-R12-02 — `Timestamp.fromUnixNano` secondary u64 addition overflow (max_safe guard landed)
+glab issue close 154 \
+  --comment "Closed — confirmed fixed. Evidence: max_safe guard in src/timestamp.zig. See docs/SECURITY_REVIEW_NOTES.md Phase-2 Tracker Closure Recommendations table."
+
+# SEC-R13-01 — V7 spin-wait double self.clock() divergence (cached clock landed)
+glab issue close 156 \
+  --comment "Closed — confirmed fixed. Evidence: cached clock in V7 spin-wait, src/generator.zig. See docs/SECURITY_REVIEW_NOTES.md Phase-2 Tracker Closure Recommendations table."
+
+# SEC-R13-03 — Fuzz corpus missing SEC-R12-02 overflow boundary (corpus entries added)
+glab issue close 158 \
+  --comment "Closed — confirmed fixed. Evidence: boundary corpus entries at src/fuzz.zig:184-197. See docs/SECURITY_REVIEW_NOTES.md Phase-2 Tracker Closure Recommendations table."
+
+# SEC-R13-04 — `loadState` undefined buffer bytes 22-31 (zero-init landed)
+glab issue close 159 \
+  --comment "Closed — confirmed fixed. Evidence: zero-init loadState buffer at src/generator.zig:2109. See docs/SECURITY_REVIEW_NOTES.md Phase-2 Tracker Closure Recommendations table."
+
+# SEC-R13-06 — Linux SIOCGIFCONF dead truncation block (std.log.warn landed)
+glab issue close 161 \
+  --comment "Closed — confirmed fixed. Evidence: std.log.warn on truncation at src/hwaddr/linux.zig:57-61. See docs/SECURITY_REVIEW_NOTES.md Phase-2 Tracker Closure Recommendations table."
+
+# SEC-R13-07 — SECURITY.md PGP + CVSS + EOL gaps (process updates landed; superseded by SEC-P3-07)
+glab issue close 164 \
+  --comment "Closed — process updates landed; scope superseded by SEC-P3-07 (safe-harbor + security.txt also delivered, partial: 3 human-input TODOs tracked). See docs/SECURITY_REVIEW_NOTES.md Phase-2 Tracker Closure Recommendations table and SEC-P3-07 section."
+
+# SEC-R13-08 — clock() under mutex stall risk (clock cached before mutex landed)
+glab issue close 167 \
+  --comment "Closed — confirmed fixed. Evidence: clock cached before mutex at src/generator.zig:2131. See docs/SECURITY_REVIEW_NOTES.md Phase-2 Tracker Closure Recommendations table."
+```
+
+#### Relabel SEC-P4-14 (when issue is created + auth restored)
+
+```bash
+# First create, with --confidential (supply-chain exploit path). Command template lives in Phase 4 cycle 3 section above.
+# Then relabel (assumes the issue has been filed under some IID <iid>):
+glab issue update <iid> \
+  --unlabel "status::blocked" \
+  --label "status::blocked-external-dependency"
+```
+
+#### O-1 issue creation (QUEUED — optional; Low severity, deferrable)
+
+```bash
+# O-1 — Low, CWE-320 (rotateStateMacKey primitive missing). Deferrable; file only if maintainer wants it tracked externally.
+glab issue create \
+  --title "O-1: rotateStateMacKey primitive missing — forces .any downgrade for HMAC key rotation (CWE-320)" \
+  --label "security,severity::low,type::hardening,confidence::confirmed,status::triage" \
+  --description "See docs/SECURITY_REVIEW_NOTES.md Phase 4 cycle 4 — O-1. Risk 6. Add rotateStateMacKey(self, path, new_key) Error!void that verifies the existing MAC under the caller's configured state_mac_policy (no .any override), swaps self.state_mac_key, re-saves v3 under the new key. No wire-format change."
+```
+
+#### O-2 / H-1 — NOT queued for GitLab creation
+
+- **O-2** — Info-level doc/lint gap; remediation options remain open; tracked via this document only until a maintainer selects option 1/2/3.
+- **H-1** — folded into SEC-P4-14 scope (add APT-pin note to the `ci-catalog-sha-rotation.md` runbook when it lands); no independent issue.
+
+### Phase 4 cycle 4 Summary
+
+| Gap-ID  | Severity | Risk | Status / disposition | Queued `glab` action |
+|---------|----------|------|----------------------|-----------------------|
+| O-1     | Low      | 6    | Not filed this cycle; remediation deferrable | Optional `glab issue create` (queued) |
+| O-2     | Info     | 4    | Not filed this cycle; tracked in-doc only | None |
+| H-1     | Info     | 2    | Folded into SEC-P4-14 scope | None |
+| SEC-P4-14 | Medium-High | 40 | 🚧 Still Blocked — operator-dependency | Relabel `status::blocked-external-dependency` when auth restores |
+| #154, #156, #158, #159, #161, #164, #167 | — | — | Closed in docs; closure-drift on tracker | 7× `glab issue close` (queued) |
+
+_Last updated: 2026-04-20 — Phase 4 audit cycle 4 (issue-tracker). 3 new findings (all Info/Low, non-blocking): O-1 Risk 6 (deferrable), O-2 Risk 4 (doc-only), H-1 Risk 2 (folded into SEC-P4-14). Sole open structural gap remains SEC-P4-14 (🚧 Blocked — recommend relabel `status::blocked-external-dependency`). 7 closure-drift tickets (#154, #156, #158, #159, #161, #164, #167) queued for batch close when `glab` auth is restored. `glab` auth DEGRADED — no tracker mutations performed._

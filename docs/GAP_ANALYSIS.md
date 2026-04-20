@@ -4,7 +4,9 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-04-19 — Phase 5 gap-detector sync + Phase 4 security cycle 3 + closure cycle (+ residual closure batch). Legacy F-1..F-9 + G-1..G-10 closed sections migrated to `docs/GAP_ANALYSIS_RESOLVED.md`; 4 new quality gaps recorded (GAP-CI-01, GAP-DOC-11, GAP-DOC-12, GAP-DOC-13) plus 6 new security gaps from Phase-4 cycle 3 (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1). `glab` auth remains DEGRADED (see GAP-DOC-10 in the resolved file) — no tracker mutations performed this cycle. **Closure cycle 2026-04-19:** GAP-CI-01 closed (`87c4a0e`); SEC-P4-10 + SEC-P4-A1 closed (`5202714`); SEC-P4-11 closed (`f67e8bf`); SEC-P4-12 closed (`904d352`). **Residual closure batch 2026-04-19:** SEC-P4-13 closed (`3b338ab`); GAP-DOC-11 + GAP-DOC-12 closed (`0c15b8b`); QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`); PERF-41 closed (`6d5804e`); PERF-44 closed (`38ffe49`). SEC-P4-14 remains Blocked pending operator-provided SHAs for 8 ci-catalog components. **Remaining open: 1 Blocked (SEC-P4-14 Medium-High) + 1 Deferred (QC-113d).**
+> Last updated: 2026-04-20 — Phase 4 `/codepros:audit` cycle (gap-detector + gap-sync + security-reviewer + security-issue-tracker). Phase 3 detector: 19/19 requirements Implemented, 0 code gaps. 3 new doc-drift gaps recorded (GAP-DOC-14, GAP-DOC-15, GAP-DOC-16) and fixed in-band this same cycle. 25 tracker-open issues confirmed `✅ Closed` in docs but still open on GitLab (closure-drift, blocked by GAP-DOC-10 — `glab` auth DEGRADED). QC-113d re-attempt closed 2026-04-20 (commits `37419f6`, `b179892`, `a51e411`, `8211c0c`, `2c76a4b`). **Phase 4 cycle 4 (security-reviewer + issue-tracker, 2026-04-20):** 3 new security findings surfaced — all Info/Low, non-blocking: **O-1** (Low, CWE-320, Risk 6) missing `rotateStateMacKey` primitive; **O-2** (Info, CWE-665/CWE-331, Risk 4) no post-fork `reseed()` lint; **H-1** (Info, CWE-829, Risk 2) unpinned `.gitlab-ci.yml` APT installs (folded into SEC-P4-14 scope). **7 closure-drift tickets queued for batch close** when `glab` auth restores: #154, #156, #158, #159, #161, #164, #167 (batch `glab issue close` commands transcribed in `docs/SECURITY_REVIEW_NOTES.md` Phase 4 cycle 4 section). **Recommendation:** relabel SEC-P4-14 `status::blocked` → `status::blocked-external-dependency` (not `Won't-Do`; the blocker is an external credential dependency, not a project decision). **Remaining open: 1 Blocked (SEC-P4-14 Medium-High — sole open structural security gap; operator-held SHA map for 8 ci-catalog components; unblock plan at `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md`).** Phase 4 cycle 4 O-1/O-2/H-1 noted for future cycle; not filed this cycle.
+>
+> Previously (2026-04-19): Phase 5 gap-detector sync + Phase 4 security cycle 3 + closure cycle (+ residual closure batch). Legacy F-1..F-9 + G-1..G-10 closed sections migrated to `docs/GAP_ANALYSIS_RESOLVED.md`; 4 new quality gaps recorded (GAP-CI-01, GAP-DOC-11, GAP-DOC-12, GAP-DOC-13) plus 6 new security gaps from Phase-4 cycle 3 (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1). **Closure cycle 2026-04-19:** GAP-CI-01 closed (`87c4a0e`); SEC-P4-10 + SEC-P4-A1 closed (`5202714`); SEC-P4-11 closed (`f67e8bf`); SEC-P4-12 closed (`904d352`). **Residual closure batch 2026-04-19:** SEC-P4-13 closed (`3b338ab`); GAP-DOC-11 + GAP-DOC-12 closed (`0c15b8b`); QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`); PERF-41 closed (`6d5804e`); PERF-44 closed (`38ffe49`).
 > Previously (2026-04-18): Group D closure round (HEAD `f77e7da`): 5 items closed (4 full + 1 partial SEC-P3-07). Phase-3 totals: 60 items tracked — 52 previously closed (16 Phase-3 initial + 25 Phase-2 bookkeeping + 11 Group C) + 4 Group D full + 1 Group D partial (SEC-P3-07 — 3 human-input TODOs) + 4 Won't-Do.
 
 ---
@@ -4152,5 +4154,114 @@ glab auth status
 ```
 
 _Phase 4 cycle 3 net delta: +6 security findings (SEC-P4-10, SEC-P4-11, SEC-P4-12, SEC-P4-A1 closed 2026-04-19; **SEC-P4-13 closed 2026-04-19 (`3b338ab`, residual batch)**; SEC-P4-14 Blocked pending operator-provided ci-catalog SHA map). Only SEC-P4-14 remains open from this cycle. No tracker mutations; all findings require `glab auth status` green before issue filing._
+
+---
+
+## Phase 4 `/codepros:audit` cycle (2026-04-20)
+
+> **HEAD at detection:** `2c76a4b` (post QC-113d re-attempt closure).
+> **Scope:** Full `/codepros:audit` orchestration — Phase 3 gap-detector (requirements → code), Phase 4 gap-sync (this section), Phase 4 security / quality / perf reviews cross-referenced in their respective notes.
+> **Phase 3 detector result:** 19/19 requirements classified **Implemented**. 0 code gaps. 1 open structural gap (SEC-P4-14, carry-forward Blocked). 3 new doc-drift gaps identified and fixed in-band in this same cycle (GAP-DOC-14, GAP-DOC-15, GAP-DOC-16).
+> **Tracker status:** `glab` authentication is DEGRADED (read-only token — see GAP-DOC-10 in `docs/GAP_ANALYSIS_RESOLVED.md`). **No GitLab mutations performed this cycle.** The `glab issue close` block below is prepared but NOT executed. Must be replayed after `glab auth status` is green.
+> **Label constraint:** The `gap` label does NOT exist on the platform; this repo uses alt taxonomy (`severity::*`, `priority::*`, `type::*`). Any future `glab issue create` block must omit `--label "gap,..."` and use the existing taxonomy only.
+
+### New Gaps (3 — all doc-drift, all fixed in-band)
+
+#### GAP-DOC-14 — `UUID-TEST-004` evidence cell cites wrong file [CLOSED]
+
+- **Issue:** (none — `glab` auth DEGRADED)
+- **Category:** Docs
+- **Severity:** Low
+- **Current state (evidence):**
+  - `docs/REQUIREMENTS.md:56` (pre-fix) — cited `src/uuid_test.zig` which does not contain the RFC-9562 Appendix A vectors.
+  - `src/generator_test.zig:540` — `test "RFC Appendix A.1 — V1 test vector (F-6)"`.
+  - `src/generator_test.zig:563` — `test "RFC Appendix A.5 — V6 test vector (F-6)"`.
+  - `src/generator_test.zig:584` — `test "RFC Appendix A.6 — V7 test vector (F-6)"`.
+- **Why this is a gap:** Mirror-doc cited the wrong file; the actual byte-exact RFC vector tests live in `generator_test.zig`.
+- **Status:** ✅ Closed 2026-04-20 (in-band) — `docs/REQUIREMENTS.md:56` evidence cell now cites `src/generator_test.zig:540,563,584`.
+
+#### GAP-DOC-15 — `UUID-TEST-005` cites removed `build.zig` `check-cross` step [CLOSED]
+
+- **Issue:** (none — `glab` auth DEGRADED)
+- **Category:** Docs
+- **Severity:** Low
+- **Current state (evidence):**
+  - `docs/REQUIREMENTS.md:57` (pre-fix) — cited `build.zig (check-cross step)`; that aggregate step was removed (see `.gitlab-ci.yml:183-189` rationale — duplicate-module diamond error in sibling consumers).
+  - `.gitlab-ci.yml:190-198` — `test-cross-build` job iterates 5 target triples via `zig build check -Dtarget=<triple>`.
+- **Why this is a gap:** Mirror-doc referenced deleted build step. Cross-compile coverage moved to CI.
+- **Status:** ✅ Closed 2026-04-20 (in-band) — `docs/REQUIREMENTS.md:57` now cites `.gitlab-ci.yml:190-198` with the sibling-consumer diamond-error rationale note.
+
+#### GAP-DOC-16 — `docs/GAP_ANALYSIS.md:7` lead-in stale re: QC-113d [CLOSED]
+
+- **Issue:** (none — `glab` auth DEGRADED)
+- **Category:** Docs
+- **Severity:** Low
+- **Current state (evidence):**
+  - `docs/GAP_ANALYSIS.md:7` (pre-fix) — claimed "Remaining open: 1 Blocked (SEC-P4-14 Medium-High) + 1 Deferred (QC-113d)". QC-113d was re-attempted and closed 2026-04-20 (commit `2c76a4b`; see `docs/GAP_ANALYSIS_RESOLVED.md:1229` "QC-113d Re-attempt").
+- **Why this is a gap:** Lead-in out of sync with resolved-file state.
+- **Status:** ✅ Closed 2026-04-20 (in-band) — lead-in updated this same cycle to "Remaining open: 1 Blocked (SEC-P4-14)".
+
+### Closure-drift Confirmation (25 tracker-open items)
+
+All 25 GitLab work items below are marked `✅ Closed` in this doc with code evidence, but remain open on the tracker because `glab` auth has been DEGRADED since the Phase 3 closure cycle (see GAP-DOC-10 in `docs/GAP_ANALYSIS_RESOLVED.md`, runbook at `docs/runbooks/glab-auth.md`). This is **lifecycle drift, not a requirements gap.**
+
+| Bucket | IIDs | Count |
+|--------|------|-------|
+| Security (Cycle 12 + 13) | #154, #156, #158, #159, #161, #164, #167 | 7 |
+| Performance (Cycle 4) | #155, #157 | 2 |
+| Quality (Cycle 12) | #160, #162, #163, #165, #166, #168, #169, #170, #171, #172, #173, #174, #175, #176, #177, #178 | 16 |
+| **Total** | | **25** |
+
+### Phase 4 Summary
+
+| Gap-ID | Title | Category | Severity | Status | Next action |
+|--------|-------|----------|----------|--------|-------------|
+| GAP-DOC-14 | `UUID-TEST-004` evidence cites wrong file | Docs | Low | ✅ Closed 2026-04-20 (in-band) | Evidence cell rewritten to cite `src/generator_test.zig:540,563,584` |
+| GAP-DOC-15 | `UUID-TEST-005` cites removed `build.zig` step | Docs | Low | ✅ Closed 2026-04-20 (in-band) | Evidence cell rewritten to cite `.gitlab-ci.yml:190-198` + diamond-error rationale |
+| GAP-DOC-16 | Stale "1 Deferred (QC-113d)" lead-in | Docs | Low | ✅ Closed 2026-04-20 (in-band) | Lead-in updated in same commit |
+| SEC-P4-14 | CI catalog components pinned by moving tag `@v1.7.1` | Security / Supply-chain | Medium-High (Risk 40) | 🚧 Blocked | Operator-held SHA map for 8 components at `gitlab.com/devnw/ci-catalog@v1.7.1`; plan at `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` |
+
+### Batch `glab issue close` commands — 25 closure-drift items (DO NOT execute; token DEGRADED)
+
+> **Prerequisite:** `glab auth status` must report green first. See GAP-DOC-10 runbook at `docs/runbooks/glab-auth.md`.
+> Each command cites the doc line where the `✅ Closed` evidence resides. The 7 security commands originally landed in the Phase 3 closure cycle block above (`docs/GAP_ANALYSIS.md:3667-3675`); the 2 performance + 16 quality commands are extended here for completeness.
+
+```bash
+# Pre-requisite — confirm auth is healthy before mutating.
+glab auth status
+
+# --- Security (7) --- evidence in docs/GAP_ANALYSIS_RESOLVED.md § Phase 3 Closure
+glab issue close 154 --comment "SEC-R12-02 closed. Evidence: docs/GAP_ANALYSIS.md:3667, docs/GAP_ANALYSIS_RESOLVED.md Phase 3 Closure; max_safe guard in src/timestamp.zig:89-94."
+glab issue close 156 --comment "SEC-R13-01 closed. Evidence: docs/GAP_ANALYSIS.md:3670; single self.clock() read cached in V7 path (src/generator.zig)."
+glab issue close 158 --comment "SEC-R13-03 closed. Evidence: docs/GAP_ANALYSIS.md:3671; boundary seeds in src/fuzz.zig:184-197."
+glab issue close 159 --comment "SEC-R13-04 closed. Evidence: docs/GAP_ANALYSIS.md:3672; std.mem.zeroes in src/generator.zig:644."
+glab issue close 161 --comment "SEC-R13-06 closed. Evidence: docs/GAP_ANALYSIS.md:3673; std.log.warn replaces dead block in src/hwaddr/linux.zig:57-61."
+glab issue close 164 --comment "SEC-R13-07 closed. Evidence: docs/GAP_ANALYSIS.md:3674; SECURITY.md has PGP channel, CVSS v3.1 table, version-support matrix."
+glab issue close 167 --comment "SEC-R13-08 closed. Evidence: docs/GAP_ANALYSIS.md:3675; clockToMs cached before mutex.lock in src/generator.zig:628-701."
+
+# --- Performance (2) --- evidence in docs/GAP_ANALYSIS.md § Performance Review Cycle 4
+glab issue close 155 --comment "PERF-19 closed. Evidence: docs/GAP_ANALYSIS.md:3678, docs/PERF_GAP_ANALYSIS.md:1134; dual-mutex (v7_mutex/v1v6_mutex split) live at src/generator.zig:97,102."
+glab issue close 157 --comment "PERF-20 closed. Evidence: docs/GAP_ANALYSIS.md:3679, docs/PERF_GAP_ANALYSIS.md:1135; toHex lowercase no-alloc benchToHex() in bench/main.zig."
+
+# --- Quality (16) --- evidence in docs/GAP_ANALYSIS.md § Quality Review Cycle 12
+glab issue close 160 --comment "QC-76 closed. Evidence: docs/GAP_ANALYSIS.md:3682; doc comments in src/generator.zig:105-118."
+glab issue close 162 --comment "QC-77 closed. Evidence: docs/GAP_ANALYSIS.md:3683; Variant enum doc comment in src/uuid.zig:38-43."
+glab issue close 163 --comment "QC-78 closed. Evidence: docs/GAP_ANALYSIS.md:3684; Generator.newV4 doc comment in src/generator.zig:142."
+glab issue close 165 --comment "QC-79 closed. Evidence: docs/GAP_ANALYSIS.md:3685; GeneratorInterface dispatch methods documented in src/generator.zig:755-784."
+glab issue close 166 --comment "QC-80 closed. Evidence: docs/GAP_ANALYSIS_RESOLVED.md Phase 3 Closure; README.md hash example fixed (QC-80 regression closed in Group D closure round, HEAD f77e7da)."
+glab issue close 168 --comment "QC-81 closed. Evidence: docs/GAP_ANALYSIS.md:3686; newV8 return type corrected to UUID in src/versions.zig:63."
+glab issue close 169 --comment "QC-82 closed. Evidence: docs/GAP_ANALYSIS.md:3687; single canonical nil export in src/root.zig:42-43."
+glab issue close 170 --comment "QC-83 closed. Evidence: docs/GAP_ANALYSIS.md:3688; Timestamp.toUnixNano documented in README (src/timestamp.zig:38)."
+glab issue close 171 --comment "QC-84 closed. Evidence: docs/GAP_ANALYSIS.md:3689; fromUnixNano/fromUnixMs documented in README (src/timestamp.zig:78,92)."
+glab issue close 172 --comment "QC-85 closed. Evidence: docs/GAP_ANALYSIS.md:3690; newV8 infallibility test in src/generator.zig:494."
+glab issue close 173 --comment "QC-86 closed. Evidence: docs/GAP_ANALYSIS.md:3691; newV7AtTime full error set documented in src/generator.zig:172-176."
+glab issue close 174 --comment "QC-87 closed. Evidence: docs/GAP_ANALYSIS.md:3692; Timestamp.now() doc notes injectable-clock bypass (src/timestamp.zig:25)."
+glab issue close 175 --comment "QC-88 closed. Evidence: docs/GAP_ANALYSIS.md:3693; newV1/newV6 bypass test in src/generator_test.zig."
+glab issue close 176 --comment "QC-90 closed. Evidence: docs/GAP_ANALYSIS.md:3694; root.zig import example corrected (src/root.zig:67)."
+glab issue close 177 --comment "QC-91 closed. Evidence: docs/GAP_ANALYSIS.md:3695; NullUUID format specifier {any} -> {f} (examples/basic.zig:104-105)."
+glab issue close 178 --comment "QC-92 closed. Evidence: docs/GAP_ANALYSIS.md:3696; README docs/ language corrected (README.md:202)."
+```
+
+_Phase 4 `/codepros:audit` net delta: +3 doc-drift gaps (all Low, all fixed in-band this cycle); +25 batch close commands prepared for the closure-drift items; 0 new code gaps; SEC-P4-14 reconfirmed Blocked. After this cycle: across all tracker files, **only SEC-P4-14 (Blocked — operator ci-catalog SHA map required)** remains open; 25 tracker issues are pending close pending `glab auth status` green._
 
 ---

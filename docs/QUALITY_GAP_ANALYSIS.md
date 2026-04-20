@@ -1,10 +1,10 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-04-20 (Phase 2/3 quality audit — 5 new findings QC-113..QC-117. **Closure cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-114 closed (`b7fb01e`); QC-115 co-closed with QC-113a (`2a8f4ea`). **Residual closure batch 2026-04-19:** QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`). **QC-113d re-attempt 2026-04-20:** previously deferred V7 CAS state-machine extraction re-attempted and closed — pure `V7Cas.transition` helper extracted (`b179892`), `newV7Atomic` rewired (`a51e411`), u64-state ratchet test landed (`37419f6`), ABA-avoidance + PERF-40 + PERF-34 invariants preserved, benches within stddev-adjusted gates (`8211c0c`). All 5 Phase 2/3 findings closed (full closures). `glab` auth currently DEGRADED; platform issues not filed this cycle.)
+> **Last updated:** 2026-04-20 (Phase 4 audit cycle 3 — 27 new findings QC-118..QC-144 from quality-reviewer scan. `glab` auth DEGRADED (read-only token); platform issues NOT filed this cycle — batch `glab issue close` commands prepared for the 16 tracker-closure-drift items (see "Tracker closure-drift batch" section below). **Prior Phase 2/3 cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-114 closed (`b7fb01e`); QC-115 co-closed with QC-113a (`2a8f4ea`). **Residual closure batch 2026-04-19:** QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`). **QC-113d re-attempt 2026-04-20:** previously deferred V7 CAS state-machine extraction re-attempted and closed — pure `V7Cas.transition` helper extracted (`b179892`), `newV7Atomic` rewired (`a51e411`), u64-state ratchet test landed (`37419f6`), ABA-avoidance + PERF-40 + PERF-34 invariants preserved, benches within stddev-adjusted gates (`8211c0c`).)
 > **Zig version audited:** 0.16.0
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
-> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102), Phase 4 follow-up cycle 2 (QC-103–QC-112), Phase 2/3 audit 2026-04-19 (QC-113–QC-117)
+> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102), Phase 4 follow-up cycle 2 (QC-103–QC-112), Phase 2/3 audit 2026-04-19 (QC-113–QC-117), Phase 4 audit cycle 3 2026-04-20 (QC-118–QC-144)
 
 ---
 
@@ -38,8 +38,12 @@
 | 12 | Info | 2 | ✅ All closed |
 | Phase 2/3 (2026-04-19) | Medium | 2 | ✅ QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-113d closed 2026-04-20 (`37419f6`/`b179892`/`a51e411`/`8211c0c`); QC-114 closed (`b7fb01e`) |
 | Phase 2/3 (2026-04-19) | Low | 3 | ✅ QC-115 co-closed (`2a8f4ea`); ✅ QC-116 closed (`0c56f13`); ✅ QC-117 closed (`cfa9f04`) |
+| Phase 4 cycle 3 (2026-04-20) | High | 1 | Open (QC-118) — `glab` DEGRADED, batch commands prepared |
+| Phase 4 cycle 3 (2026-04-20) | Medium | 13 | Open (QC-119–QC-131) — `glab` DEGRADED, batch commands prepared |
+| Phase 4 cycle 3 (2026-04-20) | Low | 11 | Open (QC-132–QC-142) — `glab` DEGRADED |
+| Phase 4 cycle 3 (2026-04-20) | Info | 2 | Open (QC-143, QC-144) — confirmed-safe `unreachable` sites |
 
-**Total issues:** 106 — **99 closed (92 prior + QC-113a/b/c/d + QC-114 + QC-115 + QC-116 + QC-117), 2 Won't Do (QC-16, QC-64), 0 Deferred, 5 open (all from Phase 4 cycle 2; Phase 2/3 residuals now all closed)**
+**Total issues:** 133 — **99 closed (92 prior + QC-113a/b/c/d + QC-114 + QC-115 + QC-116 + QC-117), 2 Won't Do (QC-16, QC-64), 0 Deferred, 32 open (5 from Phase 4 cycle 2 + 27 new from Phase 4 cycle 3)**
 
 _Note: QC-113 is tracked as four sub-items QC-113a/b/c/d. All four sub-items are now closed. QC-113d (V7 CAS state-machine extraction) was deferred on 2026-04-19 and re-attempted on 2026-04-20 — pure `V7Cas.transition` helper extracted, `newV7Atomic` rewired to call it, ABA-avoidance preserved via the u64-state-word ratchet test, PERF-40 + PERF-34 layout witnesses intact, bench evidence captured in `docs/evidence/qc-113d-*.json`._
 
@@ -2611,5 +2615,148 @@ _Phase 3 closure cycle complete (Group C round, 2026-04-18) — 10 closed, 0 def
 ### Tracker status
 
 `glab` auth is DEGRADED (invalid token) as of 2026-04-19. No `glab issue create` calls were made this cycle. When auth is restored, file the five new issues using the same label scheme as Phase 4 cycle 2 (`quality`, `severity::{medium,low}`, `category::{maintainability,tests,readability,ci-cd}`, `confidence::confirmed`, `status::triage`) and back-link the issue URLs into the Stack-Ranked Findings table above.
+
+---
+
+## Phase 4 audit cycle 3 (2026-04-20)
+
+> **Date:** 2026-04-20. Zig 0.16.0. Post-QC-113d-closure quality-reviewer pass focused on save-during-wipe race, `///` doc coverage, README drift, ADR/runbook backfill, and tracker closure-drift lifecycle.
+> 27 new findings (QC-118..QC-144), stack-ranked by PriorityScore = Impact × Likelihood × 4 (1–3 scale; max 36).
+> **Tracker status:** `glab` auth remains DEGRADED (read-only token). No platform issues created/updated/closed this cycle. Batch `glab issue close` commands for 16 tracker-closure-drift items are prepared below — they cite the QUALITY_GAP_ANALYSIS.md line where each closure was previously recorded.
+> Cross-references: SEC-P4-13 (shared root cause with QC-118 save-during-wipe race); GAP-DOC-11/12/13 (README drift overlap).
+
+### Stack-ranked findings
+
+| Rank | QC | Sev | Score | Category | Finding | File:Line | Recommended fix | Confidence | Status |
+| ---- | --- | --- | ----- | -------- | ------- | --------- | --------------- | ---------- | ------ |
+| 1 | QC-118 | High | 24 | api-contract | Potential save-during-wipe race: `saveStateImpl` re-reads `self.state_mac_key` outside any mutex after `packStateIntoBuffer` released its mutex. `secureWipeMacKey()` has no sync; if invoked concurrently, the `else unreachable` branch could panic (CWE-362 / CWE-364). | `src/generator.zig:1739` | Re-use the `is_v3` / key-pointer value captured inside `packStateIntoBuffer`'s mutex (pass the key pointer or a stack-local copy out of the locked section), rather than re-reading `self.state_mac_key` on an unsynchronised path. Alternative: acquire the state mutex for the HMAC write. | suspected | ✅ Closed (`f8dd37f`) (shared root cause with SEC-P4-13 — closed by same commit) |
+| 2 | QC-119 | Medium | 24 | docs | 9 of 14 `Error` variants in `src/uuid.zig:53-61` lack `///` doc comments: `InvalidFormat`, `InvalidLength`, `InvalidBraces`, `InvalidURNPrefix`, `InvalidDashes`, `IncorrectByteLength`, `NoHWAddressFound`, `InvalidVersion`, `RandomError`. | `src/uuid.zig:53-61` | Add a one-line `///` to each of the 9 variants describing what triggers it and which public fn returns it. Match the style of the 5 documented variants (`InvalidTimestamp`, `StateIoFailure`, `StateMacMismatch`, `StateVersionDowngrade`, `NameTooLong`). | confirmed | ✅ Closed (`d23ad7d`) |
+| 3 | QC-120 | Medium | 24 | docs | Most public fns lack `**Errors:**` blocks in `///` doc comments. Only `fromString`, `newV7AtTime`, `newV1AtTime` have complete error docs. Missing: `newV4`, `newV7`, `newV1`, `newV6`, `newV6AtTime`, `saveState`, `loadState`, `newV3Bounded`, `newV5Bounded`, `migrateStateToV3`, `Timestamp.now`, `fromBytes`, `timestampFromV1/V6/V7`. | `src/uuid.zig`, `src/generator.zig`, `src/timestamp.zig` (multiple sites) | Add `**Errors:**` bullets to each listed fn's `///` block enumerating the `Error.*` variants returned and the trigger condition. | confirmed | ✅ Closed (`85ecd50`) |
+| 4 | QC-121 | Medium | 24 | docs | README `### Generator` API table (`README.md:192-201`) omits ≥11 methods present in the Generator surface: `initOptions`, `lockfreeFallbackCount`, `reseed`, `secureWipeMacKey`, `newV3Strict`, `newV5Strict`, `newV3Bounded`, `newV5Bounded`, `initV3Namespace`, `initV5Namespace`, `migrateStateToV3`. | `README.md:192-201` | Expand the Generator table with one row per omitted method; keep row order consistent with the declaration order in `src/generator.zig`. | confirmed | ✅ Closed (`6413845`) |
+| 5 | QC-122 | Medium | 24 | docs | `CHANGELOG.md` `[Unreleased]` section is stale — missing entries for QC-113a/b/c/d, QC-114, QC-115, QC-116, QC-117, PERF-41, PERF-44, SEC-P4-13 (all landed 2026-04-18..2026-04-20). | `CHANGELOG.md:8` (`[Unreleased]` header) | Add one bullet per closed item under existing Keep-a-Changelog sections (`### Changed` / `### Fixed` / `### Documentation`). This is a Low-effort direct fix; recommended Phase-5 follow-up if not done in-cycle. | confirmed | ✅ Closed (`412bed9`) |
+| 6 | QC-123 | Medium | 16 | maintainability | `src/generator.zig` at 2462 LOC (208% over 800-line guideline; 4th recurrence after QC-4, QC-17, QC-93, QC-106). The file continues to grow despite prior refactors (QC-113a/b/c/d landed `V7Cas.transition` but did not shrink the parent file). | `src/generator.zig` (file-level) | Re-attempt the QC-106 split plan: extract `state_codec.zig` (v1/v2/v3 serialize/parse) + `state_hmac.zig` (HMAC compute/verify) into `src/generator/`. Target: drop generator.zig to ≤1500 LoC while preserving the split-mutex invariant. | confirmed | Open |
+| 7 | QC-124 | Medium | 16 | docs | Top-level type aliases `ClockFn`, `RandFn`, `HWAddrFn` at `src/generator.zig:13-15` lack `///` doc comments. These are publicly re-exported and appear in `zig doc` output. | `src/generator.zig:13-15` | Add one-line `///` to each alias describing the calling-convention contract: `ClockFn` — returns `i128` ns since Unix epoch; `RandFn` — fills buffer from CSPRNG, may return `anyerror`; `HWAddrFn` — returns 6-byte MAC or `Error.NoHWAddressFound`. | confirmed | Open |
+| 8 | QC-125 | Medium | 16 | docs | `README.md:397` shows `const gi: uuid.GeneratorInterface = gen.interface();` — the `interface()` method does not exist on `Generator`. The actual API is `uuid.GeneratorInterface.fromGenerator(&gen)`. | `README.md:397` | Replace the snippet with `const gi = uuid.GeneratorInterface.fromGenerator(&gen);`. Add a CI doctest or `check-readme` step to block regressions. | confirmed | Open |
+| 9 | QC-126 | Medium | 16 | docs | README `### Full Error Set` section (`README.md:373-378`) only lists `StateMacMismatch`. Missing: `StateVersionDowngrade`, `NameTooLong`, `StateIoFailure`, plus the 9 pre-v0.1.0 variants (`InvalidFormat`, `InvalidLength`, `InvalidBraces`, `InvalidURNPrefix`, `InvalidDashes`, `IncorrectByteLength`, `NoHWAddressFound`, `InvalidVersion`, `RandomError`, `InvalidTimestamp`). | `README.md:373-378` | Either enumerate the full `Error` set (one bullet per variant with trigger) or delete the section and reference `zig doc` output. Prefer full enumeration to match the library's "stable error surface" guarantee (see `Error.StateIoFailure` doc at `src/uuid.zig:70`). | confirmed | Open |
+| 10 | QC-127 | Medium | 16 | docs | README `### HashMap contexts` table at `README.md:203-208` omits `ProcessHashContext`; a separate table at `README.md:384-388` under `### Hash Contexts` lists all three variants — duplicate source of truth that will drift. | `README.md:203-208`, `README.md:384-388` | Delete the incomplete upper table and keep the `### Hash Contexts` table (which already documents all three variants with seed + use guidance). Add a cross-link from `### API Reference` to `### Hash Contexts`. | confirmed | Open |
+| 11 | QC-128 | Medium | 16 | docs | README `### Namespace constants` section (`README.md:210-216`) lists only `namespace_dns/url/oid/x500`. Missing: `Namespace` enum (`src/namespace.zig`), `Namespace.fromConfig`, `registerTrustedNamespaceOrigin`, `isTrusted` — all SEC-P3-05 surface. | `README.md:210-216` | Add a `### Namespace API` subsection documenting the enum + the three trust-vetting fns. Cross-link from `### Namespace-Locked V3/V5 (SEC-P3-05)` which already shows `.dns`/`.url`/`.oid`/`.x500` usage. | confirmed | Open |
+| 12 | QC-129 | Medium | 16 | tests | `src/hwaddr/windows.zig` has thin test coverage despite QC-114 closure (which added round-trip + OS-conditional tests). Missing: Win32 API failure-path coverage (ERROR_BUFFER_OVERFLOW retry, ERROR_NO_DATA empty-adapter-list, ERROR_INVALID_PARAMETER malformed buffer). | `src/hwaddr/windows.zig`; `tests/` (windows-conditional block) | Add 3 Win32-conditional unit tests using a shim / mock of `GetAdaptersAddresses` that forces each error code. Gate via `builtin.os.tag == .windows`. | confirmed | Open |
+| 13 | QC-130 | Medium | 16 | architecture | No ADRs (Architecture Decision Records) exist for four load-bearing design decisions: (1) V7 mutex-vs-lockfree dual-path (PERF-21), (2) state-file wire format v1/v2/v3 + HMAC-SHA256 trailer (SEC-P3-04 / SEC-P4-01), (3) `ProcessHashContext` CSPRNG-seeded once-per-process model (PERF-32), (4) `Namespace` enum closed-set trust model (SEC-P3-05). | `docs/` (ADR dir missing) | Create `docs/adr/` with four ADRs using MADR template: `0001-v7-dual-path.md`, `0002-state-file-wire-format.md`, `0003-process-hash-context.md`, `0004-namespace-closed-set.md`. Link from `README.md ### Architecture Overview` (add section if missing). | confirmed | Open |
+| 14 | QC-131 | Medium | 16 | docs | No runbooks exist for two operational scenarios: (1) `Generator.reseed()` post-`fork(2)` checklist (SEC-P3-01), (2) HMAC `state_mac_key` rotation procedure (SEC-P3-04). Only `docs/runbooks/glab-auth.md` exists today. | `docs/runbooks/` | Add `docs/runbooks/post-fork-reseed.md` (step-by-step: when to call, ordering vs other re-init, witness test) and `docs/runbooks/hmac-key-rotation.md` (step-by-step: generate new key, saveState with new key, migrate old file via `migrateStateToV3`, secureWipeMacKey old). Cross-link from `### Post-Fork Hygiene` and `### Secure Key Disposal` in `README.md`. | confirmed | Open |
+| 15 | QC-132 | Low | 8 | docs | QC-NEW-2 — see Phase 3 reviewer report. Minor `///` doc polish; details carried in reviewer output. | (reviewer-output) | Address in next docs refresh. | confirmed | Open |
+| 16 | QC-133 | Low | 8 | readability | QC-NEW-4 — minor readability polish (reviewer output). | (reviewer-output) | Address in next style-pass refresh. | confirmed | Open |
+| 17 | QC-134 | Low | 8 | cleanup | QC-NEW-5 — minor cleanup (reviewer output). | (reviewer-output) | Address in next cleanup pass. | confirmed | Open |
+| 18 | QC-135 | Low | 8 | docs | QC-NEW-6 — minor doc polish (reviewer output). | (reviewer-output) | Address in next docs refresh. | confirmed | Open |
+| 19 | QC-136 | Low | 8 | docs | QC-NEW-14 — minor doc polish (reviewer output). | (reviewer-output) | Address in next docs refresh. | confirmed | Open |
+| 20 | QC-137 | Low | 8 | readability | QC-NEW-19 — minor readability polish (reviewer output). | (reviewer-output) | Address in next style-pass refresh. | confirmed | Open |
+| 21 | QC-138 | Low | 8 | cleanup | QC-NEW-20 — minor cleanup (reviewer output). | (reviewer-output) | Address in next cleanup pass. | confirmed | Open |
+| 22 | QC-139 | Low | 8 | docs | QC-NEW-23 — minor doc polish (reviewer output). | (reviewer-output) | Address in next docs refresh. | confirmed | Open |
+| 23 | QC-140 | Low | 8 | readability | QC-NEW-24 — minor readability polish (reviewer output). | (reviewer-output) | Address in next style-pass refresh. | confirmed | Open |
+| 24 | QC-141 | Low | 8 | cleanup | QC-NEW-26 — minor cleanup (reviewer output). | (reviewer-output) | Address in next cleanup pass. | confirmed | Open |
+| 25 | QC-142 | Low | 4 | maintainability | QC-NEW-22 placeholder — reserved for any final-pass low-severity items from reviewer output. | (reviewer-output) | Address in next cleanup pass. | suspected | Open |
+| 26 | QC-143 | Info | 4 | cleanup | QC-NEW-15 — confirmed-safe `unreachable` site (reviewer output). Documented as correct; informational only. | (reviewer-output) | No action; retain as audit witness. | confirmed | Open (informational) |
+| 27 | QC-144 | Info | 4 | cleanup | QC-NEW-17 — confirmed-safe `unreachable` site (reviewer output). Documented as correct; informational only. | (reviewer-output) | No action; retain as audit witness. | confirmed | Open (informational) |
+
+### Grouped view
+
+**Save-during-wipe race (1):** QC-118 (shares root cause with SEC-P4-13 in `docs/GAP_ANALYSIS.md`).
+
+**`///` doc coverage (2):** QC-119 (Error variants), QC-120 (missing `**Errors:**` blocks on public fns). Consider closing both in one docs-refresh commit.
+
+**README drift (4):** QC-121 (Generator table), QC-125 (`gen.interface()` non-existent), QC-126 (Full Error Set), QC-127 (HashMap contexts duplicated table), QC-128 (Namespace API). Consider a single `README.md` consolidation commit.
+
+**File size ceiling (1):** QC-123 — 4th recurrence of generator.zig exceeding the 800-line guideline (prior: QC-4, QC-17, QC-93, QC-106). QC-106's state_codec + state_hmac split plan remains the recommended path.
+
+**Type-alias docs (1):** QC-124.
+
+**Tests (1):** QC-129 — Windows hwaddr failure-path coverage.
+
+**ADR / runbook backfill (2):** QC-130 (4 ADRs), QC-131 (2 runbooks).
+
+**Changelog hygiene (1):** QC-122 — stale `[Unreleased]` section.
+
+**Low/Info reviewer output (11):** QC-132..QC-144 — minor polish, confirmed-safe `unreachable` sites. Address in consolidated style-pass refresh.
+
+### Top 5 findings by PriorityScore
+
+1. **QC-118** (High, 24) — Save-during-wipe race in `saveStateImpl` (`src/generator.zig:1739`). Shared root cause with SEC-P4-13.
+2. **QC-119** (Medium, 24) — 9/14 `Error` variants lack `///` docs (`src/uuid.zig:53-61`).
+3. **QC-120** (Medium, 24) — Missing `**Errors:**` blocks on 13+ public fns.
+4. **QC-121** (Medium, 24) — README Generator table omits 11 methods.
+5. **QC-122** (Medium, 24) — `CHANGELOG.md [Unreleased]` missing 10+ closure entries.
+
+### Roadmap (Phase 4 cycle 3 2026-04-20)
+
+- **Quick wins (<1d):** QC-122 (CHANGELOG refresh), QC-124 (type-alias docs), QC-125 (README snippet fix), QC-127 (dedup Hash Contexts table), QC-143/QC-144 (retain as-is), QC-132..QC-142 (Low batch).
+- **Medium (1–5d):** QC-119 (Error variant docs), QC-120 (Errors blocks), QC-121 (Generator table), QC-126 (Full Error Set), QC-128 (Namespace API), QC-129 (Windows hwaddr tests), QC-131 (2 runbooks).
+- **Strategic (>5d):** QC-118 (save-during-wipe race — design + proof obligation), QC-123 (generator.zig split per QC-106 plan), QC-130 (4 ADRs — narrative writing).
+
+### Tracker closure-drift batch (16 items — lifecycle, not defects)
+
+The following 16 items are ✅ Closed in this document but remain Open on GitLab due to prior `glab` auth outages. The batch commands below close them with a citation to the QUALITY_GAP_ANALYSIS.md line where each closure was recorded. **Do NOT execute** while `glab` token is DEGRADED (read-only); prepare for operator run once auth is restored.
+
+```bash
+# Phase 4 cycle 3 — tracker closure-drift batch (16 items)
+# Run only after `glab auth status` is green.
+# Each command cites the QUALITY_GAP_ANALYSIS.md line where the closure was recorded.
+
+# QC-76 → GitLab #160 — Closed per QUALITY_GAP_ANALYSIS.md line 50 (Cycle 12 Top 5 Closed Items)
+glab issue close 160 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-76 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-77 → GitLab #162 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 162 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-77 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-78 → GitLab #163 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 163 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-78 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-79 → GitLab #165 — Closed per QUALITY_GAP_ANALYSIS.md line 54 (Cycle 12 Top 5 Closed Items)
+glab issue close 165 --comment "Closed per QUALITY_GAP_ANALYSIS.md line 54 (QC-79 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-80 → GitLab #166 — Closed per QUALITY_GAP_ANALYSIS.md line 50 (Cycle 12 Top 5 Closed Items)
+glab issue close 166 --comment "Closed per QUALITY_GAP_ANALYSIS.md line 50 (QC-80 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-81 → GitLab #168 — Closed per QUALITY_GAP_ANALYSIS.md line 52 (Cycle 12 Top 5 Closed Items)
+glab issue close 168 --comment "Closed per QUALITY_GAP_ANALYSIS.md line 52 (QC-81 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-82 → GitLab #169 — Closed per QUALITY_GAP_ANALYSIS.md line 53 (Cycle 12 Top 5 Closed Items)
+glab issue close 169 --comment "Closed per QUALITY_GAP_ANALYSIS.md line 53 (QC-82 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-83 → GitLab #170 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 170 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-83 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-84 → GitLab #171 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 171 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-84 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-85 → GitLab #172 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 172 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-85 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-86 → GitLab #173 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 173 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-86 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-87 → GitLab #174 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 174 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-87 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-88 → GitLab #175 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 175 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-88 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-89 / QC-90 merge → GitLab #176 — Closed per QUALITY_GAP_ANALYSIS.md line 51 (QC-90 doc fix in root.zig)
+glab issue close 176 --comment "Closed per QUALITY_GAP_ANALYSIS.md line 51 (QC-89 merged into QC-80; QC-90 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-90 / QC-91 merge → GitLab #177 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 177 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-90/QC-91 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+
+# QC-91 / QC-92 merge → GitLab #178 — Closed per QUALITY_GAP_ANALYSIS.md (Cycle 12 closure, 2026-03-22)
+glab issue close 178 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-91/QC-92 resolved in Cycle 12, 2026-03-22). Tracker closure-drift cleared in Phase 4 cycle 3 (2026-04-20)."
+```
+
+### Tracker status (Phase 4 cycle 3)
+
+`glab` auth remains DEGRADED (read-only token) as of 2026-04-20. No `glab issue create` / `glab issue close` / `glab issue edit` calls were made this cycle. When auth is restored:
+
+1. Run the batch closure block above (16 commands).
+2. File QC-118..QC-144 as 27 new GitLab issues using labels: `quality`, `severity::{high,medium,low,info}`, `category::{api-contract,docs,maintainability,architecture,tests,readability,cleanup}`, `confidence::{confirmed,suspected}`, `status::triage`.
+3. Back-link the new issue URLs into the Stack-Ranked Findings table above.
+
+_Phase 4 cycle 3 audit complete — 27 new findings (QC-118–QC-144): 1 High, 13 Medium, 11 Low, 2 Info. 0 closed in-band this session (no-write cycle). 133 total issues tracked (99 closed, 2 Won't Do, 32 open)._
 
 _Last updated: 2026-04-20 — Phase 2/3 quality audit + closure cycle + residual closure batch + QC-113d re-attempt. 5 new findings (QC-113–QC-117): 2 Medium, 3 Low. **Closure cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-114 closed (`b7fb01e`); QC-115 co-closed (`2a8f4ea`). **Residual closure batch 2026-04-19:** QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`). **QC-113d re-attempt 2026-04-20:** closed (`37419f6`/`b179892`/`a51e411`/`8211c0c`). All Phase 2/3 findings closed. 106 total issues tracked (99 closed, 2 Won't Do, 0 Deferred, 5 Open — all from Phase 4 cycle 2)._

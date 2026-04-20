@@ -5,7 +5,9 @@
 > Zig version audited: 0.16.0
 > Reviewer: Performance review agent
 >
-> Last updated: 2026-04-19 (Phase-2/3 follow-up — 5 new findings: PERF-40 through PERF-44; Phase-3 corrections applied to PERF-37 diagnosis and to the stale "single `Generator.mutex`" claim in Appendix methodology. **Closure cycle 2026-04-19:** PERF-40 closed (`beb00ba`); PERF-43 closed (`4a7b3fd`); PERF-42 co-closed (`5202714`, folded with SEC-P4-A1 — CAS retry budget 32_768 → 4096). **Residual closure batch 2026-04-19:** PERF-41 closed (`6d5804e`, doc-only — README prehashed-fast-path note; wrapper option (b) deferred); PERF-44 closed (`38ffe49`, MR-gated `bench-micro-mr` job at 0.10 threshold). All 5 Phase-2/3 follow-up items closed.)
+> Last updated: 2026-04-20 (Phase-4 follow-up — 15 new findings: PERF-45 through PERF-59 — all P3 defense-in-depth / infra / cosmetic; Phase-2 triage applied (Phase-2-A REFUTED as noise / NO-ACTION; Phase-2-B CONFIRMED → PERF-59; Phase-2-C CORRECTED as Phase-2 math error). Tracker closure-drift reconciled for #155/#157 (still open on GitLab; in-doc closure authoritative since cycle 4). `glab` auth DEGRADED — all close/create commands prepared but NOT EXECUTED this cycle. Phase-5+ priority: (1) PERF-45 multi-run median → (2) PERF-46 CI contention gate → (3) PERF-59 timestamp-clock alignment.)
+> Cycle 6 appended: 2026-04-20 (15 new findings: PERF-45 through PERF-59 — see "Performance Review Phase-4 Follow-up" section near bottom)
+> 2026-04-19 snapshot (Phase-2/3 follow-up — 5 new findings: PERF-40 through PERF-44; Phase-3 corrections applied to PERF-37 diagnosis and to the stale "single `Generator.mutex`" claim in Appendix methodology. **Closure cycle 2026-04-19:** PERF-40 closed (`beb00ba`); PERF-43 closed (`4a7b3fd`); PERF-42 co-closed (`5202714`, folded with SEC-P4-A1 — CAS retry budget 32_768 → 4096). **Residual closure batch 2026-04-19:** PERF-41 closed (`6d5804e`, doc-only — README prehashed-fast-path note; wrapper option (b) deferred); PERF-44 closed (`38ffe49`, MR-gated `bench-micro-mr` job at 0.10 threshold). All 5 Phase-2/3 follow-up items closed.)
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
 > Cycle 3 appended: 2026-03-22 (3 new findings: PERF-16 through PERF-18)
 > Cycle 4 appended: 2026-03-22 (2 new findings: PERF-19 through PERF-20)
@@ -1719,3 +1721,414 @@ glab issue create --title "PERF-44: bench-regression fires only on main + schedu
 - **Benchmarks run**: None this cycle (offset-evidence + source-pattern driven). PERF-40 and PERF-41 explicitly call for new bench runs as their validation gate.
 - **GitLab mutation**: **None** — `glab` auth is DEGRADED (invalid token) per caller directive. Commands above are ready-to-run after auth rotation.
 - **Stale-content corrections applied in place**: PERF-37 diagnosis rewritten; Appendix "Single `Generator.mutex`" note corrected to reflect the split `v7.mutex` / `v1v6.mutex` model landed in PERF-19.
+
+---
+
+## Performance Review Phase-4 Follow-up (2026-04-20)
+
+> Cycle 6 appended: 2026-04-20 (15 new findings: PERF-45 through PERF-59 — all P3 defense-in-depth / infra / cosmetic; Phase-2 triage applied; tracker closure-drift reconciled for #155 and #157)
+
+### Summary (Phase-4)
+
+Phase-3 perf-reviewer produced **15 new P3 findings** (scores 6-36), all minor/speculative, plus Phase-2 triage across three items. **None of the new findings are blocking.** The library's performance posture is healthy after Phase-2/3 closures (PERF-40 through PERF-44 all closed). New findings are grouped into:
+
+- **Infra/methodology** (×3): multi-run median harness, CI regression gate on V7 contention, 32T/64T bench extension.
+- **Algorithmic micro-opts** (×3): redundant `clockToMs` on CAS retry, duplicated ns-to-next-ms sleep math, 4096 retry budget validation at 32T+.
+- **Pipelining witnesses** (×4): vtable vs comptime dispatch row; `randCall` direct-call objdump; `-Dcpu=native` bench variant; V7Cas SROA IR witness.
+- **Concurrency hardening** (×2): lockfree saturation spin-hybrid; dispatch-cluster offset compile-time witness.
+- **Cosmetic** (×1): 5 KiB stack buffer in hwaddr/linux.zig (conservative but safe).
+- **I/O cold-path** (×1): per-saveState openDirAbsolute overhead.
+- **Divergence-risk** (×1, PERF-59): `Timestamp.now()` bypasses `clockCall()` → inconsistent injectable-clock behavior for V1/V6 vs V7.
+
+**Phase-2 triage outcomes (explicitly recorded):**
+
+- **PERF-Phase2-A** (V7 mutex 6-7% regression at 2T/4T/8T post-QC-113d extraction): **INVESTIGATED / NO-ACTION** — refuted as noise. V7Cas extraction is zero-size and does not touch `v7_atomic_state`; mutex path has no causal mechanism. All observed deltas within 1 stddev of baseline. Multi-run median (PERF-45) required to statistically validate future Phase-2-A-class claims.
+- **PERF-Phase2-B** (Timestamp.now() bypasses clockCall): **CONFIRMED** — tracked as **PERF-59** below. Not a perf regression today; divergence-risk P3.
+- **PERF-Phase2-C** (toStringAlloc "300× vs 115×" discrepancy): **CORRECTED** — actual ratio is ~388× per QC-113d evidence; Phase-2 math was wrong. PERF_GAP_ANALYSIS.md source ratio stands; no documentation drift.
+
+**Tracker closure-drift reconciled (2 items):**
+
+- **#155 (PERF-19)**: Issue still open on GitLab; closed in this doc since 2026-03-22 per line 824 (split `v7_mutex` + `v1v6_mutex` with fixed acquisition order in saveState/loadState).
+- **#157 (PERF-20)**: Issue still open on GitLab; closed in this doc since 2026-03-22 per line 825 (`benchToHex()` added adjacent to `benchToHexUpper` using 256-UUID pool + XOR sink).
+
+Ready-to-run `glab issue close` commands prepared below; `glab` auth is DEGRADED per caller directive — no GitLab mutation executed this cycle.
+
+**Phase-5+ implementation priority order** (owner-deferred; not blocking):
+
+1. **PERF-45** (multi-run median in bench harness) — unblocks validation of Phase-2-A-class claims.
+2. **PERF-46** (CI regression gate on `v7_contention_*T` throughput) — closes silent 1-5% drift band.
+3. **PERF-59** (Timestamp.now() routes through clockCall) — aligns V1/V6 with V7 injectable-clock semantics; eliminates `withClock(custom)` divergence.
+
+### Stack-Ranked Findings (Phase-4)
+
+| Rank | Severity | PerfScore | Finding | Component | Evidence | Measurement | GitLab Issue | Fix Summary | Status |
+|------|----------|-----------|---------|-----------|----------|-------------|--------------|-------------|--------|
+| 1 | P3 | 36 | No across-run median in bench harness (within-run stddev only) | `bench/bench.zig` | Confirmed | Blocks statistical validation of Phase-2-A-class regression claims | Not filed (glab degraded) | Add `--runs N` flag; emit median + p50/p95 across runs | Open |
+| 2 | P3 | 32 | No CI regression gate on `v7_contention_*T` throughput | `.gitlab-ci.yml`, `scripts/bench-regression-check.sh` | Confirmed | Silent 1-5% drift possible; Phase-2-A would have been caught | Not filed (glab degraded) | Add contention-throughput column to regression gate; 5% threshold on `main` | Open |
+| 3 | P3 | 28 | `Timestamp.now()` bypasses injectable `clockCall()` — divergence risk (V1/V6 vs V7) | `src/timestamp.zig:31-50`, `src/generator.zig` | Confirmed | `withClock(custom)` callers get inconsistent behavior; no perf regression today | Not filed (glab degraded) | Route `Timestamp.now()` through `self.clockCall()` or inject clockFn into V1/V6 paths | Open |
+| 4 | P3 | 24 | `clockToMs` recomputed on every CAS retry (redundant with `old_state`) | `src/generator.zig` (V7Cas.transition) | Suspected | ~20-30 ns/contended-retry saved on pure-bump arm | Not filed (glab degraded) | Extract `old_ms` from `old_state` before branch; skip `clockToMs` on bump-only path | Open |
+| 5 | P3 | 24 | 4096 retry budget unvalidated at 32T+ contention | `src/generator.zig` (V7Cas.max_retries) | Suspected | Budget may be insufficient under 64T contention — fallback triggers | Not filed (glab degraded) | Extend `v7_contention_*T` to 32T/64T (PERF-47); measure fallback rate | Open |
+| 6 | P3 | 18 | Bench contention scenarios stop at 16T; 32T/64T behavior unknown | `bench/contention.zig` | Confirmed | Scaling cliff at 32T+ would be undetected | Not filed (glab degraded) | Add 32T/64T rows; conditional on `$CI_RUNNER_VCPU >= 32` | Open |
+| 7 | P3 | 16 | No bench row for vtable vs comptime-interface dispatch | `bench/main.zig` | Confirmed | PERF-31 closed without measurement witness | Not filed (glab degraded) | Add `bench_vtable_dispatch` vs `bench_comptime_dispatch` comparison row | Open |
+| 8 | P3 | 16 | No objdump witness that `randCall` folds to direct `defaultRand` at ReleaseFast | `src/generator.zig`, `scripts/` | Suspected | Inlining assumption unverified; regression-proof fragile | Not filed (glab degraded) | Add `scripts/assert-direct-call.sh randCall defaultRand` to CI | Open |
+| 9 | P3 | 12 | 5 KiB `[128]ifreq` stack buffer — conservative upper bound | `src/hwaddr/linux.zig:49` | Confirmed | Cold path only; safe but large | Not filed (glab degraded) | Either justify in comment (128 IFs × 40 B) or page-boundary-align + tune down to 64 | Open |
+| 10 | P3 | 12 | `io_h.sleep()` in lockfree saturation — no spin-hybrid for <10µs waits | `src/generator.zig` (V7Cas fallback) | Suspected | OS-scheduler entry dominates for sub-10µs waits | Not filed (glab degraded) | Add 100-iteration busy-spin before `sleep()` on saturation path | Open |
+| 11 | P3 | 9 | No `-Dcpu=native` bench variant — misses `movbe` opportunity | `build.zig`, `.gitlab-ci.yml` | Suspected | CPU-specific byte-swap opportunity (~1-2 ns/UUID on modern x86_64) | Not filed (glab degraded) | Add `bench-native` scheduled job; archive results vs `bench-baseline` | Open |
+| 12 | P3 | 9 | No compile-time witness for dispatch-pointer cluster offset | `src/generator.zig`, `tests/offset_witness.zig` | Suspected | Read-only post-init; defense-in-depth for PERF-40 regression | Not filed (glab degraded) | `comptime std.debug.assert(@offsetOf(Generator, "clockCall") / 64 == N)` | Open |
+| 13 | P3 | 9 | V7Cas Transition struct SROA not witnessed at IR | `src/generator.zig` (V7Cas.transition) | Suspected | Likely folds at ReleaseFast; unverified | Not filed (glab degraded) | `zig build-obj -femit-llvm-ir` + grep for Transition alloca; assert folded | Open |
+| 14 | P3 | 6 | ns-to-next-ms sleep math duplicated across CAS + mutex paths | `src/generator.zig` | Confirmed | 0 throughput impact; ~30 LOC dedup opportunity | Not filed (glab degraded) | Extract `nsToNextMs(now_ns, last_ms) u64` helper | Open |
+| 15 | P3 | 6 | `openDirAbsolute` per-saveState open+close overhead | `src/generator.zig` (saveState) | Confirmed | Cold path; matters only for rapid checkpoint callers | Not filed (glab degraded) | Cache dir handle in Generator; reopen on ENOENT | Open |
+
+**PerfScore formula**: Impact (1-5) × Likelihood (1-5) × 4. P3 severity confirmed across all 15 findings (all scores ≤ 36 and none on a hot-path-blocking dimension).
+
+### Findings by Area (Phase-4)
+
+#### Infra / Benchmark Harness
+
+##### PERF-45: No across-run median in bench harness — within-run stddev only (P3, ✅ Closed `5c420d6`)
+
+**File**: `bench/bench.zig`, `scripts/bench-regression-check.sh`
+
+**Perf impact**: 0 runtime impact; **methodology gap**. Within-run stddev alone cannot distinguish 6-7% noise from a 6-7% regression at 2T/4T/8T (see Phase-2-A triage above). Every Phase-2-A-class claim — including the V7Cas QC-113d refactor baseline comparison — is unfalsifiable without multi-run medians.
+
+**Root cause**: The harness runs each bench row once per invocation and reports min/mean/max/stddev over its internal iterations. Cross-run variance (scheduler jitter, CPU frequency scaling, thermal) is invisible.
+
+**Fix guidance**: Add `--runs N` CLI flag (default 5). For each bench row, run the full bench N times, emit median + p50/p95 across the N runs. Regression gate compares new-median vs baseline-median.
+
+**Validation plan**: Run `zig build bench-contention -- --runs 9` before and after a deliberately inserted 3% regression in `newV7Atomic`. Regression gate should flag the 3% delta outside run-to-run noise band.
+
+**Rollout risk**: Low (bench-only). CI wall-time grows 5× but bench-regression already runs only on `main` and MR-gated subset.
+
+**In-band recommendation**: **Priority 1** for Phase 5 (unblocks PERF-46 and future Phase-2-A-class triage).
+
+##### PERF-46: No CI regression gate on `v7_contention_*T` throughput (P3, ✅ Closed `0379bb2`)
+
+**File**: `.gitlab-ci.yml:300-302` (bench-micro-mr), `scripts/bench-regression-check.sh`
+
+**Perf impact**: 0 direct impact; **observability gap**. Silent 1-5% contention-throughput drift between merges. Phase-2-A — had it been a real regression — would not have been caught.
+
+**Root cause**: Regression gate matrix covers `bench-micro-{parse,format,hash}` on MR and `bench` + `bench-contention` + `bench-state` on main, but `bench-contention` thresholds apply only to ops/sec single-threaded rows; the `v7_contention_{2T,4T,8T,16T}` throughput rows are not compared against baseline.
+
+**Fix guidance**: Extend `baseline_contention.json` with `v7_contention_throughput_{2T,4T,8T,16T}` keys; extend `scripts/bench-regression-check.sh` matching logic; set threshold to 5% on `main` (relative to 10% on MR once PERF-45 multi-run lands).
+
+**Validation plan**: Insert a `std.atomic.spinLoopHint()` spin-loop into `newV7Atomic` that costs ~3% throughput at 4T; CI should flag.
+
+**Rollout risk**: Low (CI-only). Depends on PERF-45 for statistical reliability at <5% threshold.
+
+**In-band recommendation**: **Priority 2** for Phase 5 (closes silent-drift band).
+
+##### PERF-47: Bench contention scenarios stop at 16T; 32T/64T behavior unknown (P3, Confirmed)
+
+**File**: `bench/contention.zig`
+
+**Perf impact**: Scaling cliff at 32T/64T would be undetected. The 4096 retry budget (PERF-42 closure) and the lockfree-to-mutex fallback path are both unvalidated above 16T.
+
+**Fix guidance**: Add 32T/64T rows; make them conditional on `$CI_RUNNER_VCPU >= 32` to avoid oversubscription on 4-core CI runners. Emit `retry_exhausted_rate` counter alongside throughput.
+
+**Validation plan**: Run on a 32-vCPU dev box; compare throughput and retry-exhausted rate at 8T/16T/32T/64T.
+
+**Rollout risk**: Low (bench-only).
+
+#### Algorithmic Micro-Optimizations
+
+##### PERF-48: `clockToMs` recomputed on every CAS retry (redundant with `old_state`) (P3, Suspected)
+
+**File**: `src/generator.zig` (V7Cas.transition helper; QC-113d extraction, 2026-04-19)
+
+**Perf impact**: ~20-30 ns saved per contended retry on the pure-bump arm (where `old_ms` is already encoded in `old_state`). Negligible at low contention; visible at 8T+.
+
+**Root cause**: `V7Cas.transition` calls `clockToMs(now_ns)` once per iteration of the CAS loop. On the pure-bump arm (same-ms retry), `old_ms = old_state >> 12` is already known; the fresh clock read is only needed on the tick-over arm.
+
+**Fix guidance**: Hoist `clockToMs(now_ns)` out of the loop when `old_ms == expected_ms`; recompute only when the clock domain has advanced. Alternatively, unpack `old_ms` from `old_state` before branching.
+
+**Validation plan**: Objdump before/after; expect `clockToMs` call site count to drop by 1 per CAS iteration. Bench `v7_contention_8T` delta expected ≤ 3%.
+
+**Rollout risk**: Low. QC-113d invariant tests cover the state machine; the refactor is confined to loop hoisting.
+
+##### PERF-49: 4096 retry budget unvalidated at 32T+ contention (P3, Suspected)
+
+**File**: `src/generator.zig` (V7Cas.max_retries = 4096, closed per PERF-42 2026-04-19)
+
+**Perf impact**: Budget may be insufficient under 64T contention. Fallback to mutex path triggers — correctness preserved, throughput degrades to mutex baseline.
+
+**Fix guidance**: Depends on PERF-47. Once 32T/64T benches exist, emit `retry_exhausted_rate`; if > 0.1% at 64T, consider raising budget to 8192 (halving RFC-9562 counter-width margin from 8× to 4×).
+
+**Validation plan**: `v7_contention_64T` at HEAD — if `retry_exhausted_rate == 0`, budget is safe; otherwise bisect budget.
+
+**Rollout risk**: Low. Budget is already the primary tuning knob per PERF-42 closure.
+
+##### PERF-57: ns-to-next-ms sleep math duplicated across CAS + mutex paths (P3, Confirmed)
+
+**File**: `src/generator.zig` (two sites; lockfree saturation + mutex spin-wait)
+
+**Perf impact**: 0 throughput; ~30 LOC cosmetic dedup. Future maintenance risk: the two sites can drift.
+
+**Fix guidance**: Extract `fn nsToNextMs(now_ns: i128, last_ms: i64) u64` as a module-private helper. Both sites call it.
+
+**Validation plan**: All tests pass; no bench delta expected.
+
+**Rollout risk**: Low.
+
+#### Pipelining / Inlining Witnesses
+
+##### PERF-50: No bench row for vtable vs comptime-interface dispatch (P3, Confirmed)
+
+**File**: `bench/main.zig`
+
+**Perf impact**: PERF-31 (Cycle 5) was closed under "GeneratorInterface vtable blocks inlining — deferred; per PerfScore 16 not worth surgery" without a measurement witness. Any future attempt to re-evaluate the trade-off lacks a baseline.
+
+**Fix guidance**: Add `bench_vtable_dispatch` row (current GeneratorInterface) and `bench_comptime_dispatch` row (comptime-parameterized alternative via `anytype`). Report delta.
+
+**Validation plan**: Bench rows produce deterministic numbers; delta quantifies the inlining gap.
+
+**Rollout risk**: Low (bench-only).
+
+##### PERF-51: No objdump witness that `randCall` folds to direct `defaultRand` at ReleaseFast (P3, Suspected)
+
+**File**: `src/generator.zig`, `scripts/` (no existing witness)
+
+**Perf impact**: If inlining fails (e.g., after a compiler upgrade), ~2-5 ns/UUID regression on the default-rand path. Currently unverified.
+
+**Fix guidance**: Add `scripts/assert-direct-call.sh`: `zig build -Doptimize=ReleaseFast`; `objdump -d zig-out/bin/...`; grep for indirect `call *%` near `newV7` / `newV4`. Fail CI if indirect call found for default-path.
+
+**Validation plan**: Script should pass at HEAD; inject `@setRuntimeSafety(true)` in `defaultRand` to force indirect call — script should fail.
+
+**Rollout risk**: Low (CI-only). Scripted witness is robust to ordering.
+
+##### PERF-54: No `-Dcpu=native` bench variant — misses `movbe` opportunity (P3, Suspected)
+
+**File**: `build.zig`, `.gitlab-ci.yml`
+
+**Perf impact**: Unknown. `movbe` (byte-reverse-move) on modern x86_64 could fold `toStringImpl` byte-swap loops; ~1-2 ns/UUID speculative.
+
+**Fix guidance**: Add `bench-native` scheduled job using `-Dcpu=native`; archive results separately from `bench` baseline. Compare after 10 runs.
+
+**Validation plan**: Compare `bench-native` vs `bench` on toString + toHex rows.
+
+**Rollout risk**: Low (bench-only; scheduled job, no MR path).
+
+##### PERF-56: V7Cas Transition struct SROA not witnessed at IR (P3, Suspected)
+
+**File**: `src/generator.zig` (V7Cas.Transition struct, QC-113d extraction 2026-04-19)
+
+**Perf impact**: If SROA fails, ~5-10 ns per CAS iteration from stack traffic. Likely folds at ReleaseFast; unverified.
+
+**Fix guidance**: `zig build-obj -Doptimize=ReleaseFast -femit-llvm-ir`; grep LLVM IR for `%Transition` alloca; assert no stack slot (should be in SSA registers only).
+
+**Validation plan**: One-shot script; CI gate optional.
+
+**Rollout risk**: Low (verification-only).
+
+#### Concurrency Hardening
+
+##### PERF-53: `io_h.sleep()` in lockfree saturation — no spin-hybrid for <10µs waits (P3, Suspected)
+
+**File**: `src/generator.zig` (V7Cas saturation path)
+
+**Perf impact**: OS-scheduler entry dominates for sub-10µs waits (~1-4 µs on Linux). Spin-wait then sleep would trim 1-3 µs per saturation event.
+
+**Root cause**: Saturation path goes straight to `io_h.sleep(ns_to_next_ms)`. No busy-spin before scheduler entry.
+
+**Fix guidance**: Add 100-iteration `std.atomic.spinLoopHint()` loop before `sleep()`. Only worth it if saturation rate is measurable (see PERF-47/PERF-49).
+
+**Validation plan**: Synthesize saturation workload (wedged clock); measure saturation-wait latency before/after.
+
+**Rollout risk**: Low. Same state-machine as existing fallback; only the wait primitive changes.
+
+##### PERF-55: No compile-time witness for dispatch-pointer cluster offset (P3, Suspected)
+
+**File**: `src/generator.zig`, `tests/offset_witness.zig` (would be new)
+
+**Perf impact**: 0 runtime impact; **defense-in-depth for PERF-40 regression** (false-sharing on dispatch-pointer line). If field order changes and dispatch-pointer cluster drifts off 64-byte boundary, PERF-40 silently regresses.
+
+**Fix guidance**: `comptime std.debug.assert(@offsetOf(Generator, "clockCall") % 64 == 0)`; same for `randCall`, `rand_impl`, `hwaddrFn`. Fails compilation if cluster drifts.
+
+**Validation plan**: Build passes at HEAD; deliberately reorder fields — build should fail with a clear error.
+
+**Rollout risk**: Zero. Compile-time only.
+
+#### Memory / Stack Usage
+
+##### PERF-52: 5 KiB `[128]ifreq` stack buffer in `hwaddr/linux.zig:49` — conservative upper bound (P3, Confirmed)
+
+**File**: `src/hwaddr/linux.zig:49`
+
+**Perf impact**: Negligible (cold path; one-time per process). Stack-frame size consideration only — 5 KiB is safely below any Zig stack-overflow threshold on Linux.
+
+**Root cause**: `[128]std.os.linux.ifreq` = 128 × 40 B = 5120 B. 128 interfaces is a very conservative upper bound (typical hosts have 2-8 interfaces).
+
+**Fix guidance**: Either (a) add a comment justifying the 128-interface bound (preferred — zero behavior change), or (b) tune down to `[64]ifreq` (2560 B) with documented overflow fallback to heap allocation. No action if (a); (b) is speculative.
+
+**Validation plan**: Stack-trace analysis via `perf record` on a repeat-Generator-init workload; stack-frame high-water mark should drop by 2560 B if (b) is taken.
+
+**Rollout risk**: Low for (a); Medium for (b) — must test overflow fallback.
+
+#### I/O Cold Path
+
+##### PERF-58: `openDirAbsolute` per-saveState open+close overhead (P3, Confirmed)
+
+**File**: `src/generator.zig` (saveState)
+
+**Perf impact**: Cold path. Matters only for rapid-checkpoint callers (e.g., fuzz harnesses writing state every 100 ops); ~30-50 µs per saveState.
+
+**Fix guidance**: Cache dir handle on `Generator`; reopen on ENOENT/EBADF. Preserves crash-atomicity of `.tmp`→rename pattern.
+
+**Validation plan**: Bench a tight `saveState` loop (1000 iterations); expect ~50 µs/call → ~20 µs/call.
+
+**Rollout risk**: Medium. Directory-handle caching is a known footgun (stale FD across `unlink` + `mkdir`). Guard with ENOENT reopen.
+
+#### Divergence-Risk (Phase-2-B CONFIRMED)
+
+##### PERF-59: `Timestamp.now()` bypasses `clockCall()` — V1/V6 divergent from V7 under injectable clock (P3, ✅ Closed `2bd3a18`)
+
+**Files**: `src/timestamp.zig:31-50`, `src/generator.zig` (newV1AtTime, newV6AtTime, newV7AtTime call sites)
+
+**Perf impact**: Zero direct perf impact today. **Correctness / semantic divergence risk**: callers using `Generator.withClock(customClock)` observe:
+
+- V7 generation uses the injected clock (via `self.clockCall()`)
+- V1/V6 generation calls `std.os.linux.clock_gettime` directly through `Timestamp.now()` — bypassing the injection
+
+This breaks unit-test determinism for V1/V6 and invalidates any test that asserts time-travel or monotonic-override behavior across versions.
+
+**Root cause (evidence)**: `src/timestamp.zig:31-50` — `Timestamp.now()` calls `std.os.linux.clock_gettime` unconditionally. `newV1AtTime` / `newV6AtTime` use `Timestamp.now()` as the time source; `newV7AtTime` uses `self.clockCall()`.
+
+**Fix guidance**: Two options:
+
+1. **Preferred**: Route `Timestamp.now()` through an injectable `ClockFn` parameter; V1/V6 generator calls `Timestamp.fromClock(self.clockCall)`. Preserves the `Timestamp` type's standalone usage via a module-level default.
+2. **Alternative**: Keep `Timestamp.now()` as-is for standalone callers; add `newV1AtTimeWithClock` / `newV6AtTimeWithClock` overloads internally and have `newV1AtTime` / `newV6AtTime` call them with `self.clockCall`.
+
+**Validation plan**: Unit test — `Generator.withClock(fixedClock).newV1()` twice; assert identical timestamps. Today this test would fail; after fix, it should pass.
+
+**Rollout risk**: Low. API surface of `Timestamp` remains backward-compatible (option 1 adds a new constructor; `Timestamp.now()` keeps its shim). Option 2 adds internal helpers only.
+
+**In-band recommendation**: **Priority 3** for Phase 5 (aligns V1/V6 with V7 injectable-clock semantics; eliminates `withClock(custom)` divergence).
+
+### Phase-2 Triage (explicit, for audit trail)
+
+#### Phase-2-A: V7 mutex path 6-7% regression at 2T/4T/8T — INVESTIGATED / NO-ACTION (REFUTED as noise)
+
+**Claim**: Post-QC-113d V7Cas extraction (commits a51e411, 8211c0c), bench-contention showed 6-7% regression on mutex-path rows at 2T/4T/8T.
+
+**Analysis**:
+
+- V7Cas extraction is a zero-size refactor — no new fields, no new allocations, no new atomic operations.
+- The mutex path in `newV7Locked` does not touch `v7_atomic_state` (which is the atomic the CAS path exercises via `V7Cas.transition`).
+- No causal mechanism connects V7Cas extraction to mutex-path throughput.
+- All observed deltas are within 1 standard deviation of the pre-refactor baseline.
+
+**Decision**: **NO-ACTION**. Closed as noise. Validated multi-run median (PERF-45) would confirm statistically; the absence of that tooling is the meta-issue (tracked as PERF-45, priority 1).
+
+**Artifacts**: QC-113d bench evidence commits (8211c0c) show refactor within ±2% of baseline.
+
+#### Phase-2-B: `Timestamp.now()` bypasses `clockCall()` — CONFIRMED → tracked as PERF-59
+
+See PERF-59 above. Confirmed divergence-risk.
+
+#### Phase-2-C: `toStringAlloc` "300× vs 115×" discrepancy — CORRECTED (Phase-2 math error)
+
+**Claim**: Phase-2 reviewer reported a discrepancy between a ~300× overhead (cycle-3 PERF-16 docs) and a ~115× measured overhead.
+
+**Analysis**: The actual measured ratio per QC-113d evidence (commit 8211c0c benchmark data) is ~388× — neither 300 nor 115. The Phase-2 115× figure was a math error (appears to have divided by the non-allocating path on a different input size).
+
+**Decision**: **CORRECTED**. PERF_GAP_ANALYSIS.md source documentation (PERF-16) stands. The "300×" in the cycle-3 prose is a rounded order-of-magnitude characterization; the precise ratio is ~388×. No drift in source doc; no edit required.
+
+### Ready-to-run `glab` commands (DOCUMENTATION-ONLY — glab auth DEGRADED per caller directive)
+
+> The `glab` token is read-only. Commands below are prepared but **NOT EXECUTED**. Execute after auth rotation.
+
+```bash
+# Close tracker drift: #155 (PERF-19) — closed in-doc 2026-03-22 per PERF_GAP_ANALYSIS.md:824
+glab issue close 155 --comment "Closed per docs/PERF_GAP_ANALYSIS.md line 824 (cycle-4 closure 2026-03-22). Implemented: Generator mutex split into v7_mutex + v1v6_mutex with fixed acquisition order (v7 first) in saveState/loadState. Phase-2 gap-scanner re-confirmed at docs/PERF_GAP_ANALYSIS.md:838. All tests pass; no benchmark regressions. See src/generator.zig:97,102."
+
+# Close tracker drift: #157 (PERF-20) — closed in-doc 2026-03-22 per PERF_GAP_ANALYSIS.md:825
+glab issue close 157 --comment "Closed per docs/PERF_GAP_ANALYSIS.md line 825 (cycle-4 closure 2026-03-22). Implemented: benchToHex() added to bench/main.zig adjacent to benchToHexUpper using 256-UUID pool + XOR sink pattern. Phase-2 gap-scanner re-confirmed at docs/PERF_GAP_ANALYSIS.md:838. See bench/main.zig."
+
+# --- New Phase-4 findings (PERF-45 through PERF-59) — file as triage batch ---
+
+# PERF-45 (P3, confirmed) — Priority 1: multi-run median in bench harness
+glab issue create --title "PERF-45: bench harness lacks across-run median (within-run stddev only) — blocks Phase-2-A-class triage" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,area::bench" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-45. Fix: --runs N flag; emit median + p50/p95 across runs. Priority 1 for Phase 5."
+
+# PERF-46 (P3, confirmed) — Priority 2: CI regression gate on v7_contention_*T
+glab issue create --title "PERF-46: bench-regression gate does not cover v7_contention_*T throughput rows — silent 1-5% drift band" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,area::ci" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-46. Fix: extend baseline_contention.json with throughput keys; 5% threshold on main. Depends on PERF-45. Priority 2 for Phase 5."
+
+# PERF-47 (P3, confirmed) — 32T/64T bench extension
+glab issue create --title "PERF-47: bench-contention stops at 16T — 32T/64T behavior unknown" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,area::bench" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-47. Fix: add 32T/64T rows conditional on CI_RUNNER_VCPU >= 32; emit retry_exhausted_rate."
+
+# PERF-48 (P3, suspected) — clockToMs redundant on CAS retry
+glab issue create --title "PERF-48: clockToMs recomputed every CAS retry — redundant with old_ms from old_state on bump arm" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage,area::algo" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-48. Fix: hoist clockToMs out of loop; recompute only on tick-over arm. ~20-30 ns per contended retry."
+
+# PERF-49 (P3, suspected) — 4096 retry budget validation at 32T+
+glab issue create --title "PERF-49: V7Cas 4096 retry budget unvalidated at 32T+ contention — possible fallback-triggering" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage,area::concurrency" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-49. Depends on PERF-47. If retry_exhausted_rate > 0.1% at 64T, raise to 8192."
+
+# PERF-50 (P3, confirmed) — vtable vs comptime dispatch bench
+glab issue create --title "PERF-50: no bench witness for vtable vs comptime-interface dispatch (PERF-31 closed without measurement)" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,area::bench" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-50. Fix: add bench_vtable_dispatch + bench_comptime_dispatch comparison row."
+
+# PERF-51 (P3, suspected) — objdump witness for randCall inlining
+glab issue create --title "PERF-51: no objdump witness that randCall folds to direct defaultRand at ReleaseFast" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage,area::ci" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-51. Fix: scripts/assert-direct-call.sh randCall defaultRand; wire into CI."
+
+# PERF-52 (P3, confirmed) — 5 KiB stack buffer
+glab issue create --title "PERF-52: 5 KiB [128]ifreq stack buffer in hwaddr/linux.zig:49 — conservative; justify or tune" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,area::memory" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-52. Fix: comment justifying 128-interface bound (preferred) or tune to [64]ifreq with heap fallback."
+
+# PERF-53 (P3, suspected) — spin-hybrid for lockfree saturation
+glab issue create --title "PERF-53: io_h.sleep() in lockfree saturation path — no spin-hybrid for sub-10µs waits" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage,area::concurrency" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-53. Fix: 100-iteration spinLoopHint before sleep. Only worth it if saturation rate measurable."
+
+# PERF-54 (P3, suspected) — -Dcpu=native bench variant
+glab issue create --title "PERF-54: no -Dcpu=native bench variant — misses movbe / target-specific opportunities" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage,area::bench" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-54. Fix: bench-native scheduled job; archive separately from bench-baseline."
+
+# PERF-55 (P3, suspected) — compile-time offset witness for dispatch cluster
+glab issue create --title "PERF-55: no compile-time witness for dispatch-pointer cluster offset — PERF-40 regression defense-in-depth" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage,area::concurrency" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-55. Fix: comptime std.debug.assert(@offsetOf(Generator, 'clockCall') % 64 == 0) etc."
+
+# PERF-56 (P3, suspected) — V7Cas Transition SROA IR witness
+glab issue create --title "PERF-56: V7Cas Transition struct SROA not witnessed at LLVM IR — likely folds; unverified" \
+  --label "performance,perf-severity::P3,category::perf,confidence::suspected,status::triage,area::pipelining" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-56. Fix: emit-llvm-ir; grep Transition alloca; assert folded."
+
+# PERF-57 (P3, confirmed) — ns-to-next-ms sleep dedup
+glab issue create --title "PERF-57: ns-to-next-ms sleep math duplicated across CAS + mutex paths — 30 LOC dedup" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,area::cosmetic" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-57. Fix: extract nsToNextMs(now_ns, last_ms) u64 helper. Zero throughput impact."
+
+# PERF-58 (P3, confirmed) — openDirAbsolute per-saveState
+glab issue create --title "PERF-58: openDirAbsolute per-saveState open+close overhead — cold path, matters for rapid checkpoints" \
+  --label "performance,perf-severity::P3,category::perf,confidence::confirmed,status::triage,area::io" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-58. Fix: cache dir handle on Generator; reopen on ENOENT. ~50 µs → ~20 µs per call."
+
+# PERF-59 (P3, confirmed) — Priority 3: Timestamp.now() bypasses clockCall
+glab issue create --title "PERF-59: Timestamp.now() bypasses clockCall() — V1/V6 divergent from V7 under Generator.withClock(custom)" \
+  --label "performance,perf-severity::P3,category::correctness,confidence::confirmed,status::triage,area::app" \
+  --description "See docs/PERF_GAP_ANALYSIS.md PERF-59. Fix: route Timestamp.now() through injectable ClockFn, or add newV1AtTimeWithClock/newV6AtTimeWithClock internal overloads. Priority 3 for Phase 5."
+```
+
+### Methodology (Phase-4 follow-up)
+
+- **HEAD**: inherits Phase-2/3 follow-up HEAD `bcde186` plus QC-113d closure chain (`a51e411`, `8211c0c`, `2c76a4b`).
+- **Verification**: Phase-3 reviewer supplied 15 new findings with scores; this phase confirmed P3 severity classification against the existing PerfScore = Impact × Likelihood × 4 convention (all scores ≤ 36). Phase-2 triage applied against QC-113d bench evidence, timestamp.zig line inspection (31-50), and mutex-path causal analysis.
+- **Benchmarks run**: None this cycle (review-driven triage). PERF-45 through PERF-49 explicitly call for multi-run + 32T/64T bench runs as their validation gate.
+- **GitLab mutation**: **None** — `glab` auth is DEGRADED (read-only token) per caller directive. Commands above are ready-to-run after auth rotation. Two tracker-closure commands for #155/#157 are included (finding already closed in-doc; GitLab issues still open).
+- **Phase-2 triage evidence trail**:
+  - Phase-2-A REFUTED: bench evidence commit `8211c0c` shows ±2% baseline; V7Cas.transition is zero-size; mutex path causal-mechanism review (`src/generator.zig` newV7Locked) confirms no overlap with `v7_atomic_state`.
+  - Phase-2-B CONFIRMED: `src/timestamp.zig:31-50` calls `std.os.linux.clock_gettime` directly; diverges from newV7AtTime's `self.clockCall()` invocation path.
+  - Phase-2-C CORRECTED: QC-113d ratio is ~388×; Phase-2 115× figure is math error; source doc PERF-16 stands (cycle-3 prose "300×" is a rounded characterization).
+- **Tracker closure-drift**: GitLab `#155` (PERF-19) and `#157` (PERF-20) remain open on GitLab; in-doc closure is authoritative since 2026-03-22 (cycle 4). Close commands prepared for next auth-available cycle.
