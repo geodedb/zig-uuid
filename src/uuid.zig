@@ -417,9 +417,13 @@ pub const UUID = struct {
 
     /// Construct a UUID from a 16-byte slice.
     ///
-    /// Returns `Error.IncorrectByteLength` if `b.len != 16`.  The bytes are
-    /// copied as-is; no version or variant bits are set.  Use `setVersion` and
-    /// `setVariant` to mark the UUID after construction if needed.
+    /// The bytes are copied as-is; no version or variant bits are set.  Use
+    /// `setVersion` and `setVariant` to mark the UUID after construction if
+    /// needed.
+    ///
+    /// **Errors:**
+    /// - `Error.IncorrectByteLength` — `b.len != 16`; parsing is length-strict
+    ///   so over- or under-sized inputs are rejected rather than truncated.
     pub fn fromBytes(b: []const u8) Error!UUID {
         if (b.len != 16) return Error.IncorrectByteLength;
         var u: UUID = undefined;

@@ -90,6 +90,11 @@ pub const Timestamp = struct {
     /// that would produce more than maxInt(u64) 100-ns intervals. Any ns
     /// value above maxInt(u64) * 100 (~1.84e21 ns ≈ year 5861) is rejected
     /// as Error.InvalidTimestamp before the @intCast.
+    ///
+    /// **Errors:**
+    /// - `Error.InvalidTimestamp` — `ns < 0` (pre-Unix-epoch), or the
+    ///   derived 100-ns interval count would overflow `u64`, or adding
+    ///   the Gregorian offset would overflow `u64` (year ~60,037+ AD).
     pub fn fromUnixNano(ns: i128) Error!Timestamp {
         if (ns < 0) return Error.InvalidTimestamp;
         const intervals_since_unix = @divTrunc(ns, 100);
@@ -119,6 +124,9 @@ pub const Timestamp = struct {
 
 /// Extract Gregorian timestamp from a V1 UUID.
 /// V1 layout: time_low(32)|time_mid(16)|ver(4)|time_high(12) in bytes 0-7.
+///
+/// **Errors:**
+/// - `Error.InvalidVersion` — `u` is not a V1 UUID (version nibble mismatch).
 pub fn timestampFromV1(u: UUID) Error!Timestamp {
     if (u.version() != .v1) return Error.InvalidVersion;
     const low: u64 = std.mem.readInt(u32, u.bytes[0..4], .big);
@@ -130,6 +138,9 @@ pub fn timestampFromV1(u: UUID) Error!Timestamp {
 
 /// Extract Gregorian timestamp from a V6 UUID.
 /// V6 layout: time_high(32)|time_mid(16)|ver(4)|time_low(12) in bytes 0-7.
+///
+/// **Errors:**
+/// - `Error.InvalidVersion` — `u` is not a V6 UUID (version nibble mismatch).
 pub fn timestampFromV6(u: UUID) Error!Timestamp {
     if (u.version() != .v6) return Error.InvalidVersion;
     const hi: u64 = std.mem.readInt(u32, u.bytes[0..4], .big);
@@ -146,6 +157,12 @@ pub fn timestampFromV6(u: UUID) Error!Timestamp {
 /// value to the same Gregorian Timestamp type returned by timestampFromV1 and
 /// timestampFromV6, making the API consistent. Use .toUnixMs() to recover the
 /// original millisecond value.
+///
+/// **Errors:**
+/// - `Error.InvalidVersion` — `u` is not a V7 UUID.
+/// - `Error.InvalidTimestamp` — never in practice (the embedded 48-bit
+///   Unix-ms value always converts cleanly), but the variant is surfaced
+///   via `Timestamp.fromUnixMs` for API consistency.
 pub fn timestampFromV7(u: UUID) Error!Timestamp {
     if (u.version() != .v7) return Error.InvalidVersion;
     // unix_ts_ms is in bytes 0-5 (48 bits, big-endian)

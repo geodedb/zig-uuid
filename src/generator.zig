@@ -611,7 +611,9 @@ pub const Generator = struct {
     /// Generate a UUIDv4 (random).
     ///
     /// All 122 non-version/variant bits are filled from the CSPRNG source.
-    /// Returns `Error.RandomError` if the underlying random function fails.
+    ///
+    /// **Errors:**
+    /// - `Error.RandomError` — the configured CSPRNG source failed.
     pub fn newV4(self: *Generator) Error!UUID {
         var u: UUID = undefined;
         self.randCall(&u.bytes) catch return Error.RandomError;
@@ -631,6 +633,11 @@ pub const Generator = struct {
     /// generators — one per thread or per tenant — since each generator has its
     /// own independent counter.  Use newV7AtTime with a shared clock source to
     /// keep the timestamp field monotone across shards.
+    ///
+    /// **Errors:**
+    /// - `Error.InvalidTimestamp` — the injected clock reports a pre-Unix-epoch
+    ///   or far-future time (see `Timestamp.fromUnixNano` for bounds).
+    /// - `Error.RandomError` — the configured CSPRNG source failed.
     pub fn newV7(self: *Generator) Error!UUID {
         // PERF-21: dispatch to the lock-free path when opted-in.  The
         // mutex path remains the default and the correctness-authoritative
@@ -1176,9 +1183,16 @@ pub const Generator = struct {
 
     /// Generate a UUIDv1 (Gregorian timestamp + node ID).
     ///
-    /// Uses `Timestamp.now()` (system clock) — NOT affected by `withClock()`.
-    /// Returns `Error.InvalidTimestamp` if the system clock is before the Unix
-    /// epoch or far in the future, or `Error.RandomError` if the CSPRNG fails.
+    /// Uses the generator's configured clock (default: system clock).
+    ///
+    /// **Errors:**
+    /// - `Error.InvalidTimestamp` — clock reports a pre-Unix-epoch time or a
+    ///   time so far in the future that the 100-ns interval count overflows
+    ///   `u64` (year ~60,424 AD and beyond).
+    /// - `Error.RandomError` — the CSPRNG failed seeding `clock_seq` or the
+    ///   random node ID.
+    /// - `Error.NoHWAddressFound` — `hwaddr_fn` is configured but returned
+    ///   no usable MAC (all interfaces down, loopback only, etc.).
     pub fn newV1(self: *Generator) Error!UUID {
         const ts = try Timestamp.now();
         return self.newV1AtTime(ts);
@@ -1208,8 +1222,12 @@ pub const Generator = struct {
 
     /// Generate a UUIDv6 (reordered Gregorian timestamp + node ID).
     ///
-    /// Uses `Timestamp.now()` (system clock) — NOT affected by `withClock()`.
-    /// Same error surface as `newV1`.
+    /// Uses the generator's configured clock (default: system clock).
+    ///
+    /// **Errors:**
+    /// - `Error.InvalidTimestamp` — clock reports pre-Unix-epoch or far-future.
+    /// - `Error.RandomError` — CSPRNG failed seeding `clock_seq` / random node.
+    /// - `Error.NoHWAddressFound` — `hwaddr_fn` configured but returned no MAC.
     pub fn newV6(self: *Generator) Error!UUID {
         const ts = try Timestamp.now();
         return self.newV6AtTime(ts);
@@ -1217,7 +1235,9 @@ pub const Generator = struct {
 
     /// Generate a UUIDv6 using the given Gregorian timestamp.
     ///
-    /// Same error surface as `newV1AtTime`.
+    /// **Errors:**
+    /// - `Error.RandomError` — CSPRNG failed seeding `clock_seq` / random node.
+    /// - `Error.NoHWAddressFound` — `hwaddr_fn` configured but returned no MAC.
     pub fn newV6AtTime(self: *Generator, ts: Timestamp) Error!UUID {
         const s = try self.buildV1V6Core(ts);
         var u: UUID = undefined;
@@ -1347,6 +1367,10 @@ pub const Generator = struct {
     /// namespace at the call site (e.g. 253 for DNS labels, 2048 for
     /// URLs, etc.).  Passing `std.math.maxInt(usize)` disables the
     /// check and is equivalent to calling `newV3` directly.
+    ///
+    /// **Errors:**
+    /// - `Error.NameTooLong` — `name.len > max_len`; the MD5 hasher was
+    ///   never invoked.
     pub fn newV3Bounded(self: *Generator, ns: UUID, name: []const u8, max_len: usize) Error!UUID {
         if (name.len > max_len) return Error.NameTooLong;
         return self.newV3(ns, name);
@@ -1356,6 +1380,10 @@ pub const Generator = struct {
     /// Rejects `name` longer than `max_len` with `Error.NameTooLong`
     /// before invoking SHA-1.  Identical output to `newV5` for
     /// accepted inputs.
+    ///
+    /// **Errors:**
+    /// - `Error.NameTooLong` — `name.len > max_len`; the SHA-1 hasher was
+    ///   never invoked.
     pub fn newV5Bounded(self: *Generator, ns: UUID, name: []const u8, max_len: usize) Error!UUID {
         if (name.len > max_len) return Error.NameTooLong;
         return self.newV5(ns, name);
@@ -1539,6 +1567,13 @@ pub const Generator = struct {
     /// **PERF:** State is serialised under the mutex into a stack buffer, then the
     ///           mutex is released before any file I/O.  UUID generation is not
     ///           blocked by slow storage (NFS, spinning disk, etc.).
+    ///
+    /// **Errors:**
+    /// - `Error.StateIoFailure` — any underlying filesystem failure (permission
+    ///   denied, disk full, path not found, atomic-rename across filesystems,
+    ///   symlink rejected by O_NOFOLLOW, reparse-point rejection on Windows,
+    ///   etc.).  Wide underlying error sets from `std.fs` / `std.Io.File` /
+    ///   `std.Io.Dir` collapse to this single variant at the boundary (QC-99).
     pub fn saveState(self: *Generator, path: []const u8) Error!void {
         // QC-99: delegate to saveStateImpl which returns the wide underlying
         // inferred error set; collapse everything except Error-typed failures
@@ -1765,6 +1800,18 @@ pub const Generator = struct {
     /// spin-wait on the first post-restart V7 call.  Only when last_ms is still
     /// current (extremely fast restart within the same millisecond) is mono_seq
     /// set to maxInt(u12) to force a spin-wait and prevent collisions.
+    ///
+    /// **Errors:**
+    /// - `Error.StateIoFailure` — filesystem read failure (permission, missing
+    ///   path, symlink rejection, etc.) or on-disk format is corrupt / wrong
+    ///   magic / wrong length.
+    /// - `Error.StateMacMismatch` — wire-format v3 file with a bad HMAC (or a
+    ///   v3 file encountered without `state_mac_key` configured).
+    /// - `Error.StateVersionDowngrade` — SEC-P4-01: under the default
+    ///   `require_mac_when_keyed` policy the file is v1/v2 but
+    ///   `state_mac_key` is configured; call `migrateStateToV3` once to
+    ///   upgrade, or set `InitOptions.state_mac_policy = .any` to restore
+    ///   the pre-SEC-P4-01 warn-and-accept behaviour.
     pub fn loadState(self: *Generator, path: []const u8) Error!void {
         // QC-99: delegate and collapse wide underlying errors at the boundary.
         self.loadStateImpl(path) catch |e| return mapStateError(e);
@@ -1797,6 +1844,16 @@ pub const Generator = struct {
     /// fresh v3 file is written).  Callers can run migrateStateToV3
     /// in a release-rollout script without pre-checking the on-disk
     /// version.
+    ///
+    /// **Errors:**
+    /// - `Error.StateMacMismatch` — no `state_mac_key` configured; there is
+    ///   nothing to authenticate with.  Also returned if the file is already
+    ///   v3 but its HMAC fails to verify under the current key (tampered or
+    ///   written under a different key).
+    /// - `Error.StateIoFailure` — underlying filesystem read or write failure.
+    /// - `Error.StateVersionDowngrade` — NOT returned here — the load half
+    ///   uses a temporary `.any` policy so v1/v2 inputs are accepted and
+    ///   migrated.
     pub fn migrateStateToV3(self: *Generator, path: []const u8) Error!void {
         if (self.state_mac_key == null) return Error.StateMacMismatch;
         // Override the policy for the load half of the migration.
