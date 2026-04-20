@@ -354,6 +354,11 @@ bench-micro-mr:
   image: debian:bookworm-slim
   variables:
     MICRO_THRESHOLD: "0.10"
+    # PERF-46: contention gate at 10% on MR (bench-regression keeps 5% on main).
+    # The 10% MR threshold plus `--runs 3` across-run median gives us
+    # statistical power to flag ~6-7% regressions that within-run stddev alone
+    # cannot distinguish from scheduler jitter (see PERF-45).
+    CONTENTION_THRESHOLD: "0.10"
     BENCH_PIN_CORES: "1"
   before_script:
     - *install-zig
@@ -373,15 +378,23 @@ bench-micro-mr:
     - $TASKSET_PREFIX zig build bench-micro-parse -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_parse.json
     - $TASKSET_PREFIX zig build bench-micro-format -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_format.json
     - $TASKSET_PREFIX zig build bench-micro-hash -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_hash.json
+    # PERF-46: multi-run contention gate on MR.  `--runs 3` writes
+    # `across_run_median_ops_per_sec` + `across_run_stddev_pct` into every
+    # row; compare.zig prefers those fields over the single-invocation
+    # throughput so the 10% threshold is evaluated against the across-run
+    # median (PERF-45).
+    - $TASKSET_PREFIX zig build bench-contention -Doptimize=ReleaseFast -- --output benchmarks/results/latest_contention.json --runs 3
     - zig build bench-compare -- --baseline benchmarks/results/baseline_micro_parse.json --candidate benchmarks/results/latest_micro_parse.json --threshold "${MICRO_THRESHOLD}"
     - zig build bench-compare -- --baseline benchmarks/results/baseline_micro_format.json --candidate benchmarks/results/latest_micro_format.json --threshold "${MICRO_THRESHOLD}"
     - zig build bench-compare -- --baseline benchmarks/results/baseline_micro_hash.json --candidate benchmarks/results/latest_micro_hash.json --threshold "${MICRO_THRESHOLD}"
+    - zig build bench-compare -- --baseline benchmarks/results/baseline_contention.json --candidate benchmarks/results/latest_contention.json --threshold "${CONTENTION_THRESHOLD}"
   artifacts:
     when: always
     paths:
       - benchmarks/results/latest_micro_parse.json
       - benchmarks/results/latest_micro_format.json
       - benchmarks/results/latest_micro_hash.json
+      - benchmarks/results/latest_contention.json
     expire_in: 30 days
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
