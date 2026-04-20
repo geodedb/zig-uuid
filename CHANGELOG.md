@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Release Notes -- 2026-04-18..2026-04-20 Phase 2/3 Quality Audit Closures (QC-113..QC-117, QC-114, PERF-41/44, SEC-P4-13)
+
+Phase 2/3 quality-audit closure batch landed between 2026-04-18 and 2026-04-20. Five quality findings (QC-113a/b/c/d, QC-114, QC-115, QC-116, QC-117) closed across four commits plus a late-cycle QC-113d re-attempt; two performance findings (PERF-41, PERF-44) and one security follow-up (SEC-P4-13 — save-during-wipe race) recorded in adjacent `docs/PERF_GAP_ANALYSIS.md` and `docs/GAP_ANALYSIS.md`. No public API surface changes; all closures are refactor / test / tooling / documentation improvements preserving the SEC-P3-04 HMAC contract, the PERF-21 dual-path V7 design, and the PERF-34 align(64) cache-line separator invariant. See `docs/QUALITY_GAP_ANALYSIS.md` Phase 2/3 section (line 2575 onward) for the full evidence + commit chain.
+
+### Changed
+
+- **(refactor)** `src/generator.zig` — `loadStateImpl` / `saveStateImpl` / `newV7Atomic` oversized-fn split (QC-113a/b/c, commits `2a8f4ea`, `47ec3d0`, `cb0f44d`). V1/V6 preamble deduplication co-closed with QC-113a (QC-115).
+- **(refactor)** `src/generator.zig` — pure `V7Cas.transition` helper extracted and `newV7Atomic` rewired to delegate state-transition decisions (QC-113d, commits `b179892`, `a51e411`). ABA-avoidance preserved via the u64-state-word ratchet test (commit `37419f6`); PERF-40 + PERF-34 layout witnesses intact; bench evidence at `docs/evidence/qc-113d-*.json` within stddev-adjusted gates (commit `8211c0c`); QC-113d marked resolved in `docs/QUALITY_GAP_ANALYSIS.md` (commit `2c76a4b`).
+- **(pre-commit)** `.pre-commit-config.yaml` — added `gitleaks`, `test-integration`, and `bench-check` hooks for pre-commit ↔ CI parity (QC-116, commit `0c56f13`). SAST/SBOM documented as CI-only.
+
+### Added (tests)
+
+- Per-OS hwaddr unit tests across `src/hwaddr/linux.zig` / `macos.zig` / `windows.zig`: +11 tests covering success + OOM + ENOENT + permission-denied + empty-iface branches, gated by `builtin.os.tag` (QC-114, commit `b7fb01e`).
+
+### Fixed
+
+- Test stderr noise during policy-downgrade tests suppressed via `std.log.scoped` + per-test `testing.log_level` override; warn-noise count 3 → 0 on `zig build test` (QC-117, commit `cfa9f04`).
+
+### Performance
+
+- **(PERF-41)** — see `docs/PERF_GAP_ANALYSIS.md` for evidence chain. Landed 2026-04-18..2026-04-20.
+- **(PERF-44)** — see `docs/PERF_GAP_ANALYSIS.md` for evidence chain. Landed 2026-04-18..2026-04-20.
+
+### Security (open — tracked)
+
+- **(SEC-P4-13)** Potential save-during-wipe race in `saveStateImpl` re-reading `self.state_mac_key` outside the state mutex after `packStateIntoBuffer` released it; if `secureWipeMacKey()` runs concurrently the `else unreachable` branch at `src/generator.zig:1739` could panic. Tracked as QC-118 in `docs/QUALITY_GAP_ANALYSIS.md`; shared root cause with SEC-P4-13 in `docs/GAP_ANALYSIS.md`. Recommended fix: pass the key pointer out of the locked section. **Status: Open, suspected (no observed panic).**
+
 ### Release Notes -- 2026-04-18 SEC-P4-01 HMAC Downgrade Resistance (BEHAVIOUR CHANGE)
 
 Closes the HIGH-severity v3→v2 HMAC downgrade finding (SEC-P4-01). `loadState` now rejects unauthenticated v1/v2 state files with `Error.StateVersionDowngrade` when `state_mac_key` is configured, closing the trivial downgrade attack (CWE-757) where a local attacker strips the 32-byte HMAC trailer from a v3 file to silently bypass integrity verification. New `InitOptions.state_mac_policy` knob with three variants (`.any` / `.require_mac_when_keyed` / `.require_mac_always`); default is `.require_mac_when_keyed`. New `Generator.migrateStateToV3(path)` helper + module-level `uuid.migrateStateToV3(path)` for one-shot on-disk upgrade. The XFAIL integration guard at `tests/integration.zig` (GAP-DOC-08.2, commit `5fe1771`) activates with this release — integration suite is now 37/37 passing with zero skipped.
