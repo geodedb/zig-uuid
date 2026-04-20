@@ -1408,6 +1408,23 @@ test "PERF-40: stats on isolated cache line" {
     try std.testing.expectEqual(@as(usize, 64), @sizeOf(@FieldType(Generator, "stats")));
 }
 
+// QC-113d: lock the V7 atomic-state word at exactly u64.  The
+// V7Cas refactor (below) rests on the single-word ABA-avoidance
+// argument — if a future change widens this field to u128 or
+// splits it into two atomics, the cmpxchgStrong loop in
+// newV7Atomic stops being ABA-safe and the V7Cas helpers
+// extracted by QC-113d must be revisited before the build
+// compiles again.
+test "QC-113d: v7_atomic_state is a single u64 atomic" {
+    const F = @FieldType(Generator, "v7_atomic_state");
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(F));
+    // Round-trip a packed value to catch any Value<T> T-swap.
+    var v = std.atomic.Value(u64).init(0);
+    v.store((@as(u64, 1) << 12) | 0xABC, .release);
+    try std.testing.expectEqual(@as(u64, 1), v.load(.acquire) >> 12);
+    try std.testing.expectEqual(@as(u12, 0xABC), @as(u12, @truncate(v.load(.acquire) & 0x0FFF)));
+}
+
 test "SEC-P4-09: initOptions accepts a well-formed std.Random (debug assertion passes)" {
     // The known-weak check must accept a well-formed std.Random
     // derived from a CSPRNG — the expected safe source for
