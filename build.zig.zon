@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .json = .{
-            .url = "git+https://gitlab.com/devnw/zig/json.git#cbb1c620cb93965c8f5b9b3eef5a37316c24c068",
-            .hash = "json-0.1.0-tOue4cGpCwAKMCTJquFbHz9Im68cXcHRzLQKBJwYpsxv",
+            .url = "git+https://gitlab.com/devnw/zig/json.git#27bcf1afddd128dfb262a9e804de0ff565b27833",
+            .hash = "json-0.1.0-tOue4cGpCwAUGTEmdAUdnxnisyeRHfwHReim4F3eH6a0",
         },
     },
     .paths = .{
