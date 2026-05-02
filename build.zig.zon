@@ -1,12 +1,12 @@
 .{
     .name = .uuid,
-    .version = "0.1.0",
+    .version = "0.1.1",
     .fingerprint = 0xd17f50a6ae62bdb4,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .json = .{
-            .url = "git+https://gitlab.com/devnw/zig/json.git#27bcf1afddd128dfb262a9e804de0ff565b27833",
-            .hash = "json-0.1.0-tOue4cGpCwAUGTEmdAUdnxnisyeRHfwHReim4F3eH6a0",
+            .url = "git+https://gitlab.com/devnw/zig/json.git#v0.1.4",
+            .hash = "json-0.1.4-tOue4X2pCwC2H64hrrIwVKj76kiuJFGAzVqsWjROghkg",
         },
     },
     .paths = .{
