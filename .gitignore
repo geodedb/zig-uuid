@@ -49,3 +49,5 @@ coverage/
 *.gcov
 *.gcda
 *.gcno
+
+__pycache__/

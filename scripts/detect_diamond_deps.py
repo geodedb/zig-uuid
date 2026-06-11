@@ -48,9 +48,9 @@ Deliberately NOT in scope
     dependent's main, then bump our pin).  Out of scope for a
     pre-commit hook.  See `scripts/sync_diamond_deps.sh` for the
     recommended manual fix workflow.
-*   Validating the package-hash format itself.  We trust whatever
-    `build.zig.zon` records; the check is only "two hashes for the
-    same name == bad".
+*   Resolving WHY two hashes differ.  (Hash *format* is validated as of
+    SEC-P5-01: non-conforming hashes are skipped with a notice, because
+    the hash is used as a filesystem path component.)
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Dict, List, Set, Tuple
 
 # build.zig.zon parsing — Zig anonymous-struct literals.
@@ -89,6 +89,12 @@ DEP_BLOCK_RE = re.compile(
 )
 URL_RE = re.compile(r'\.url\s*=\s*"(?P<url>[^"]+)"')
 HASH_RE = re.compile(r'\.hash\s*=\s*"(?P<hash>[^"]+)"')
+# SEC-P5-01 (CWE-22): Zig package hashes are `<name>-<semver>-<base64url>`
+# — strictly [A-Za-z0-9._-]. Reject anything else before the hash is used
+# as a path component (blocks `../` traversal from a hostile manifest).
+SAFE_HASH_RE = re.compile(r"^[A-Za-z0-9._-]{8,256}$")
+
+
 # Strip `// ...` line comments BUT NOT when the `//` sits inside a
 # string literal (e.g. inside a `.url = "git+https://..."`).  We walk
 # the text and only strip after we've confirmed we're outside an
@@ -159,12 +165,20 @@ def _parse_dep_entries(deps_block: str) -> List[Tuple[str, str, str | None]]:
         h = HASH_RE.search(body)
         if not h:
             continue
+        if not SAFE_HASH_RE.match(h.group("hash")):
+            print(
+                f"notice: skipping dep '{name}' with non-conforming hash",
+                file=sys.stderr,
+            )
+            continue
         u = URL_RE.search(body)
         out.append((name, h.group("hash"), u.group("url") if u else None))
     return out
 
 
-def _zon_path_for_hash(project_root: Path, zig_global_cache: Path, pkg_hash: str) -> Path | None:
+def _zon_path_for_hash(
+    project_root: Path, zig_global_cache: Path, pkg_hash: str
+) -> Path | None:
     """Return the cached `build.zig.zon` path for a given package hash,
     or None if neither cache has it.  Zig extracts dependencies into
     `<project>/zig-pkg/<pkg_hash>/` (project-local) and stores tarballs
@@ -172,23 +186,25 @@ def _zon_path_for_hash(project_root: Path, zig_global_cache: Path, pkg_hash: str
     project-local extraction has a usable `build.zig.zon` on disk —
     we don't want to untar the global cache here."""
     candidate = project_root / "zig-pkg" / pkg_hash / "build.zig.zon"
-    if candidate.exists():
+    if candidate.exists() and not candidate.is_symlink():
         return candidate
     candidate = zig_global_cache / "p" / pkg_hash / "build.zig.zon"
-    if candidate.exists():
+    if candidate.exists() and not candidate.is_symlink():
         return candidate
     return None
 
 
-def collect_transitive(root_zon: Path, zig_global_cache: Path) -> Dict[str, Set[Tuple[str, str | None]]]:
+def collect_transitive(
+    root_zon: Path, zig_global_cache: Path
+) -> Dict[str, Set[Tuple[str, str | None]]]:
     """Walk the project's dependency graph.  Returns a map
     name -> set of (hash, url) seen across the transitive closure."""
     project_root = root_zon.parent
     result: Dict[str, Set[Tuple[str, str | None]]] = defaultdict(set)
     seen_hashes: Set[str] = set()
-    queue: List[Path] = [root_zon]
+    queue: deque[Path] = deque([root_zon])
     while queue:
-        zon_path = queue.pop(0)
+        zon_path = queue.popleft()
         try:
             text = zon_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -207,7 +223,9 @@ def collect_transitive(root_zon: Path, zig_global_cache: Path) -> Dict[str, Set[
     return result
 
 
-def find_diamonds(graph: Dict[str, Set[Tuple[str, str | None]]]) -> List[Tuple[str, List[Tuple[str, str | None]]]]:
+def find_diamonds(
+    graph: Dict[str, Set[Tuple[str, str | None]]],
+) -> List[Tuple[str, List[Tuple[str, str | None]]]]:
     """Return [(name, [(hash, url), ...]), ...] for every package name
     that appears with more than one distinct hash."""
     diamonds: List[Tuple[str, List[Tuple[str, str | None]]]] = []
@@ -221,7 +239,9 @@ def main(argv: List[str]) -> int:
     project_root = Path(argv[1]).resolve() if len(argv) >= 2 else Path.cwd()
     zon = project_root / "build.zig.zon"
     if not zon.exists():
-        print(f"detect-diamond-deps: no build.zig.zon at {project_root}", file=sys.stderr)
+        print(
+            f"detect-diamond-deps: no build.zig.zon at {project_root}", file=sys.stderr
+        )
         return 2
 
     cache_env = os.environ.get("ZIG_GLOBAL_CACHE_DIR")
