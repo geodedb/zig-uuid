@@ -22,7 +22,7 @@ the content hash, and writes a correctly-formed `build.zig.zon` entry for you
 in one step:
 
 ```bash
-zig fetch --save https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.1/uuid-v0.1.1.tar.gz
+zig fetch --save https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.2/uuid-v0.1.2.tar.gz
 ```
 
 After this runs, your `build.zig.zon` will contain an entry that looks
@@ -34,7 +34,7 @@ reference only:
 ```zig
 .dependencies = .{
     .uuid = .{
-        .url = "https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.1/uuid-v0.1.1.tar.gz",
+        .url = "https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.2/uuid-v0.1.2.tar.gz",
         .hash = "<populated by `zig fetch --save`>",
     },
 },
@@ -230,7 +230,7 @@ Both refer to the same values; prefer the shorter `uuid.nil`/`uuid.max` form.
 
 | Constant | Description |
 |----------|-------------|
-| `uuid.version` | Library version string (e.g. `"0.1.1"`) |
+| `uuid.version` | Library version string (e.g. `"0.1.2"`) |
 
 ### JSON Adapter
 

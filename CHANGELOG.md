@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-11
+
 ### Fixed
 
 - `src/root.zig` `version` constant synced to the package version (`0.1.1`)
@@ -171,6 +173,7 @@ This release closes a 60-item gap-analysis cycle spanning security, performance,
 - `GeneratorInterface` for dependency injection and mocking
 - RFC-9562 Appendix A test vectors for V1, V6, V7
 
-[Unreleased]: https://gitlab.com/devnw/zig/uuid/-/compare/v0.1.1...HEAD
+[Unreleased]: https://gitlab.com/devnw/zig/uuid/-/compare/v0.1.2...HEAD
+[0.1.2]: https://gitlab.com/devnw/zig/uuid/-/compare/v0.1.1...v0.1.2
 [0.1.1]: https://gitlab.com/devnw/zig/uuid/-/compare/v0.1.0...v0.1.1
 [0.1.0]: https://gitlab.com/devnw/zig/uuid/-/releases/v0.1.0
