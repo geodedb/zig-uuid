@@ -10,8 +10,20 @@ const Error = @import("uuid.zig").Error;
 const hwaddr = @import("hwaddr/hwaddr.zig");
 const Timestamp = @import("timestamp.zig").Timestamp;
 
+/// Injectable wall-clock source: returns nanoseconds since the Unix epoch
+/// (UTC), matching `std.time.nanoTimestamp`. Used by V1/V6/V7 generation.
 pub const ClockFn = *const fn () i128;
+
+/// Injectable CSPRNG source: fills `buf` with random bytes or returns an
+/// error (mapped to `Error.RandomError` at the call site). Must be
+/// cryptographically secure for production use — V4/V7 entropy and V1/V6
+/// clock sequences derive from it.
 pub const RandFn = *const fn (buf: []u8) anyerror!void;
+
+/// Injectable hardware-address source: returns a 6-byte IEEE-802 MAC or
+/// `Error.NoHWAddressFound`. Only consulted when a Generator is configured
+/// to embed a real node ID in V1/V6 (privacy default is a random
+/// multicast node).
 pub const HWAddrFn = *const fn () Error![6]u8;
 
 /// QC-96 / PERF-28: single-source-of-truth resolver for the process-global
@@ -1357,11 +1369,17 @@ pub const Generator = struct {
     /// for the same namespace bytes; the only difference is that the type
     /// system prevents callers from accidentally passing a UUID parsed from
     /// untrusted input as the namespace.
+    ///
+    /// **Errors:** none — infallible (`UUID`, not `Error!UUID`): deterministic
+    /// hashing with no clock, RNG, or I/O involved.
     pub fn newV3Strict(self: *Generator, ns: @import("namespace.zig").Namespace, name: []const u8) UUID {
         return self.newV3(ns.asUUID(), name);
     }
 
     /// SEC-P3-05: strict V5 wrapper — see `newV3Strict`.
+    ///
+    /// **Errors:** none — infallible (`UUID`, not `Error!UUID`): deterministic
+    /// hashing with no clock, RNG, or I/O involved.
     pub fn newV5Strict(self: *Generator, ns: @import("namespace.zig").Namespace, name: []const u8) UUID {
         return self.newV5(ns.asUUID(), name);
     }
@@ -2313,6 +2331,18 @@ pub const Generator = struct {
 /// fields, so concurrent generation is safe.  However, callers that also
 /// mutate the generator (clearNodeCache(), loadState(), etc.) on this shared
 /// instance may interact unexpectedly with other callers.
+///
+/// **Thread-safety:** every method on this instance is thread-safe — the
+/// split `v7`/`v1v6` mutexes (and the lock-free V7 CAS word) protect all
+/// internal state. What is NOT protected is the variable binding itself:
+/// do not reassign `default_generator` (`default_generator = Generator.init()`)
+/// while other threads may be calling into it — reassignment is not
+/// synchronized and races with in-flight calls.
+///
+/// **State-file path agreement:** module-level `saveState`/`loadState`/
+/// `migrateStateToV3`/`rotateStateMacKey` all operate on THIS instance.
+/// Callers must use a consistent absolute path across those calls; mixing
+/// paths across processes that share a state file is the caller's contract.
 ///
 /// **When to create your own generator:**
 /// - You need a different node ID (e.g., per-tenant V1/V6 UUIDs).
