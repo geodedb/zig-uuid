@@ -870,7 +870,7 @@ pub const Generator = struct {
                         const ns_frac: u64 = @intCast(@rem(ns_now, 1_000_000));
                         break :blk 1_000_000 - ns_frac;
                     } else 500_000;
-                    io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .real) catch {};
+                    io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .awake) catch {};
                     continue; // retry with fresh clock reading
                 },
                 .bump, .advance => {
@@ -1017,7 +1017,7 @@ pub const Generator = struct {
             // `defer unlock` at function exit).
             const io_h = gio();
             self.v7.mutex.unlock(io_h);
-            io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .real) catch {};
+            io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .awake) catch {};
             self.v7.mutex.lockUncancelable(io_h);
         }
 
