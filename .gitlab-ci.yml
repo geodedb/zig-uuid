@@ -307,7 +307,7 @@ bench-regression:
     # because they all forward `b.args` to the same `--output` path and
     # would otherwise clobber each other.
     - $TASKSET_PREFIX zig build bench -Doptimize=ReleaseFast -- --output benchmarks/results/latest.json
-    - $TASKSET_PREFIX zig build bench-contention -Doptimize=ReleaseFast -- --output benchmarks/results/latest_contention.json
+    - $TASKSET_PREFIX zig build bench-contention -Doptimize=ReleaseFast -- --output benchmarks/results/latest_contention.json --runs 3
     - $TASKSET_PREFIX zig build bench-state -Doptimize=ReleaseFast -- --output benchmarks/results/latest_state.json
     - $TASKSET_PREFIX zig build bench-micro-parse -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_parse.json
     - $TASKSET_PREFIX zig build bench-micro-format -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_format.json
@@ -365,7 +365,7 @@ bench-micro-mr:
   image: debian:bookworm-slim
   variables:
     MICRO_THRESHOLD: "0.10"
-    # PERF-46: contention gate at 10% on MR (bench-regression keeps 5% on main).
+    # PERF-46: contention gate at 10% on MR (bench-regression keeps 15% on main, PERF26_THRESHOLD).
     # The 10% MR threshold plus `--runs 3` across-run median gives us
     # statistical power to flag ~6-7% regressions that within-run stddev alone
     # cannot distinguish from scheduler jitter (see PERF-45).
