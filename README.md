@@ -209,14 +209,19 @@ so the core `uuid` module does not import `json`. See
 
 ### HashMap contexts
 
-| Type | Description |
-|------|-------------|
-| `UUID.HashContext` | Wyhash with fixed seed — use for trusted UUID keys only |
-| `UUID.SecureHashContext` | CSPRNG-seeded hash — use when UUID keys are untrusted |
+Three `HashContext` variants are available — see
+[Hash Contexts](#hash-contexts) below for the full comparison table
+(`HashContext`, `ProcessHashContext`, `SecureHashContext`).
 
-### Namespace constants
+### Namespaces
 
-`namespace_dns`, `namespace_url`, `namespace_oid`, `namespace_x500`
+| Symbol | Description |
+|--------|-------------|
+| `namespace_dns` / `namespace_url` / `namespace_oid` / `namespace_x500` | RFC-9562 §6.6 well-known namespace UUIDs |
+| `Namespace` | Closed tagged union over the four RFC namespaces plus a vetted `.custom` arm — use with `newV3Strict`/`newV5Strict` so the type system rejects attacker-controlled namespace UUIDs (SEC-P3-05) |
+| `Namespace.fromConfig(bytes: [16]u8, origin: []const u8)` | Construct a `.custom` namespace from configuration, recording its trusted origin |
+| `registerTrustedNamespaceOrigin(origin: []const u8)` | Register a trusted origin label for `.custom` namespaces (SEC-P4-04) |
+| `isTrusted(origin: []const u8)` | Check whether a namespace's origin has been registered as trusted |
 
 The nil and max UUIDs are available via both `uuid.nil`/`uuid.max` (top-level
 re-exports) and `uuid.UUID.nil`/`uuid.UUID.max` (struct-scoped constants).
@@ -414,10 +419,24 @@ call `migrateStateToV3` first); `Error.StateIoFailure` (I/O).
 
 ### Full Error Set
 
-`uuid.Error` is the library's error set. Members added since v0.1.0:
+`uuid.Error` is the library's complete error set (`src/uuid.zig`):
 
-- `Error.StateMacMismatch` — loadState rejected an HMAC tag mismatch
-  (tampered file) or a v3 file when no `state_mac_key` is configured.
+| Variant | Raised by |
+|---------|-----------|
+| `InvalidFormat` | `fromString` — unrecognized layout; also state-file header corruption |
+| `InvalidLength` | `fromString` — input length matches no supported format |
+| `InvalidBraces` | `fromString` — unbalanced `{`/`}` wrapper |
+| `InvalidURNPrefix` | `fromString` — URN form without `urn:uuid:` prefix |
+| `InvalidDashes` | `fromString` — dashes at wrong offsets |
+| `IncorrectByteLength` | `fromBytes` — slice length ≠ 16 |
+| `NoHWAddressFound` | hardware-address resolution found no usable MAC |
+| `InvalidVersion` | version-specific accessor on a mismatched UUID (e.g. `timestampFromV7` on a V4) |
+| `RandomError` | injected `RandFn` failed |
+| `InvalidTimestamp` | timestamp outside representable range; also V7 retry exhaustion under a frozen clock |
+| `StateIoFailure` | `saveState`/`loadState` — underlying filesystem error |
+| `StateMacMismatch` | `loadState` — HMAC tag mismatch (tampered file) or v3 file with no key configured |
+| `StateVersionDowngrade` | `loadState` — v1/v2 file rejected while a `state_mac_key` is set (SEC-P4-01) |
+| `NameTooLong` | `newV3Bounded`/`newV5Bounded` — `name.len` exceeds the caller's cap |
 
 ### Hash Contexts
 
@@ -436,7 +455,7 @@ Two forms — pick based on call-site needs:
 ```zig
 // Runtime-polymorphic (vtable dispatch) — use in tests or when the
 // concrete Generator type must be erased.
-const gi: uuid.GeneratorInterface = gen.interface();
+const gi = uuid.GeneratorInterface.fromGenerator(&gen);
 
 // Comptime-generic (inlined direct dispatch) — zero indirection at
 // ReleaseFast, use in hot paths that hold a *Generator anyway.
