@@ -453,29 +453,10 @@ test "integration: HMAC v3 state round-trip + tampered-tag rejection" {
 }
 
 // =============================================================================
-// GAP-DOC-08.2: v3→v2 downgrade rejected when state_mac_key set (SEC-P4-01,
-// currently XFAIL — activates when SEC-P4-01 lands StateVersionDowngrade).
+// GAP-DOC-08.2: v3→v2 downgrade rejected when state_mac_key set (SEC-P4-01).
 // =============================================================================
 
-test "integration: v3→v2 downgrade rejected when state_mac_key set (SEC-P4-01, currently XFAIL)" {
-    // AUDIT NOTE: this test documents SEC-P4-01 (the v3→v2 HMAC
-    // downgrade finding).  As of this writing, loadState only
-    // `std.log.warn`s and accepts the v2 payload — so this test
-    // currently FAILS its expectError assertion.  Guard it behind
-    // a comptime check for `StateVersionDowngrade` on the error set
-    // so CI does not break: when SEC-P4-01 lands the new error variant,
-    // the test begins to execute and pass.  Remove the guard then.
-    const has_variant = comptime blk: {
-        const info = @typeInfo(uuid.Error).error_set orelse break :blk false;
-        for (info) |e| {
-            if (std.mem.eql(u8, e.name, "StateVersionDowngrade")) break :blk true;
-        }
-        break :blk false;
-    };
-    if (!has_variant) {
-        return error.SkipZigTest;
-    }
-
+test "integration: v3→v2 downgrade rejected when state_mac_key set (SEC-P4-01)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.Io.Threaded.global_single_threaded.io();
