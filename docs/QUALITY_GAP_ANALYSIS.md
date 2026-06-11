@@ -1,10 +1,10 @@
 # UUID Library — Code Quality Gap Analysis
 
 > **Scope:** Code quality, maintainability, readability, test coverage, documentation, and CI/CD quality.
-> **Last updated:** 2026-04-20 (Phase 4 audit cycle 3 — 27 new findings QC-118..QC-144 from quality-reviewer scan. `glab` auth DEGRADED (read-only token); platform issues NOT filed this cycle — batch `glab issue close` commands prepared for the 16 tracker-closure-drift items (see "Tracker closure-drift batch" section below). **Prior Phase 2/3 cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-114 closed (`b7fb01e`); QC-115 co-closed with QC-113a (`2a8f4ea`). **Residual closure batch 2026-04-19:** QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`). **QC-113d re-attempt 2026-04-20:** previously deferred V7 CAS state-machine extraction re-attempted and closed — pure `V7Cas.transition` helper extracted (`b179892`), `newV7Atomic` rewired (`a51e411`), u64-state ratchet test landed (`37419f6`), ABA-avoidance + PERF-40 + PERF-34 invariants preserved, benches within stddev-adjusted gates (`8211c0c`).)
+> **Last updated:** 2026-06-11 (Phase 4 audit cycle 4 — QC-145..QC-150 examined; `glab` auth HEALTHY, GitLab issues filed for QC-145 #179, QC-146 #180, QC-147 #181, QC-149 #182; QC-148 recorded Won't-Do; QC-150 DROPPED (invalid). QC-103 moved Open → ✅ RESOLVED (re-verified; no GitLab issue ever existed). QC-112 row updated — stale line ref `:1577` → `:2323`, partially resolved, scheduled for closure this cycle. See "Phase 4 audit cycle 4 (2026-06-11)" section. **Prior — Phase 4 audit cycle 3 2026-04-20:** 27 new findings QC-118..QC-144 from quality-reviewer scan; `glab` auth was DEGRADED (read-only token); platform issues NOT filed that cycle — batch `glab issue close` commands prepared for the 16 tracker-closure-drift items (see "Tracker closure-drift batch" section below). **Prior Phase 2/3 cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-114 closed (`b7fb01e`); QC-115 co-closed with QC-113a (`2a8f4ea`). **Residual closure batch 2026-04-19:** QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`). **QC-113d re-attempt 2026-04-20:** previously deferred V7 CAS state-machine extraction re-attempted and closed — pure `V7Cas.transition` helper extracted (`b179892`), `newV7Atomic` rewired (`a51e411`), u64-state ratchet test landed (`37419f6`), ABA-avoidance + PERF-40 + PERF-34 invariants preserved, benches within stddev-adjusted gates (`8211c0c`).)
 > **Zig version audited:** 0.16.0
 > **Previous reviews:** `docs/GAP_ANALYSIS.md` (RFC-9562 compliance), `docs/PERF_GAP_ANALYSIS.md` (performance) — findings from those reviews are not duplicated here.
-> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102), Phase 4 follow-up cycle 2 (QC-103–QC-112), Phase 2/3 audit 2026-04-19 (QC-113–QC-117), Phase 4 audit cycle 3 2026-04-20 (QC-118–QC-144)
+> **Cycles:** Cycle 1 (QC-1–QC-17), Cycle 2 (QC-18–QC-23), Cycle 3 (QC-24–QC-28), Cycle 4 (QC-29–QC-34), Cycle 5 (QC-35–QC-38), Cycle 6 (QC-39–QC-47), Cycle 7 (QC-48–QC-54), Cycle 8 (QC-55–QC-61), Cycle 9 (no new findings), Cycle 10 (QC-62–QC-70), Cycle 11 (QC-71–QC-75), Cycle 12 (QC-76–QC-92, QC-89 merged into QC-80), Cycle 13 (QC-93–QC-102), Phase 4 follow-up cycle 2 (QC-103–QC-112), Phase 2/3 audit 2026-04-19 (QC-113–QC-117), Phase 4 audit cycle 3 2026-04-20 (QC-118–QC-144), Phase 4 audit cycle 4 2026-06-11 (QC-145–QC-150)
 
 ---
 
@@ -2421,7 +2421,7 @@ The three Cycle-13 doc gaps (ADR for split-mutex design; `src/hwaddr/README.md`;
 
 | Rank | QC | Sev | Score | Category | Finding | File:Line | Recommended fix | Confidence | Status |
 | ---- | --- | --- | ----- | -------- | ------- | --------- | --------------- | ---------- | ------ |
-| 1 | QC-103 | High | 24 | api-contract | `loadState` silently accepts v2 payload when `state_mac_key` is set (v3→v2 downgrade). Cross-cuts SEC-P4-01. | `src/generator.zig:1463-1470` | When `state_mac_key != null`, reject v1/v2 files with `Error.StateMacMismatch` (or a new `Error.StateUnauthenticated`); keep log line. | confirmed | Open |
+| 1 | QC-103 | High | 24 | api-contract | `loadState` silently accepts v2 payload when `state_mac_key` is set (v3→v2 downgrade). Cross-cuts SEC-P4-01. | `src/generator.zig:1463-1470` (now `enforceStateMacPolicy` at `:2144-2168`) | When `state_mac_key != null`, reject v1/v2 files with `Error.StateMacMismatch` (or a new `Error.StateUnauthenticated`); keep log line. | confirmed | ✅ RESOLVED 2026-06-11 |
 | 2 | QC-104 | Medium | 18 | docs | `state_format_version_v1/v2/v3`, `state_size_v1/size/size_v3`, `state_mac_size` lacked per-decl `///` doc comments. | `src/generator.zig:1231-1241` | Add one-line `///` to each constant describing wire role + size. | confirmed | ✅ Closed in-band (this session) |
 | 3 | QC-105 | Medium | 18 | docs | `GeneratorInterfaceFor` `///` doc delegated to the `//` banner above the decl; zig-doc tool ingests only `///`. | `src/generator.zig:1763-1771` | Expand the `///` block to stand alone (trade-off, inlining, surface parity, example). | confirmed | ✅ Closed in-band (this session) |
 | 4 | QC-106 | Medium | 16 | maintainability | `src/generator.zig` = 1831 LoC, 2.3× the 800-line self-ceiling called out in `src/uuid.zig:670`. | `src/generator.zig` (file-level) | Minimum viable split: extract `state_codec.zig` (~450 LoC v1/v2/v3 (de)serialize) + `state_hmac.zig` (~80 LoC HMAC compute/verify) to drop generator.zig to ~1300. Defer cosmetic 5-module split. | confirmed | Open |
@@ -2430,7 +2430,7 @@ The three Cycle-13 doc gaps (ADR for split-mutex design; `src/hwaddr/README.md`;
 | 7 | QC-109 | Low | 12 | readability | `benchmarks/micro/parse.zig` used `catch unreachable` with no invariant comment, making the assumption opaque. | `benchmarks/micro/parse.zig:107` | Add a comment naming the invariant (`slices` populated by setup with canonical UUIDs; inverse cannot fail). | confirmed | ✅ Closed in-band (this session) |
 | 8 | QC-110 | Low | 12 | api-contract | Error-naming inconsistency: `NoHWAddressFound` is verbose and `RandomError` is bare, both diverge from the `Invalid*`/`State*` families. | `src/uuid.zig` (Error set) | Rename to `HWAddressUnavailable` + `RandomReadFailed` (or similar) in a single breaking-change commit with CHANGELOG entry. | confirmed | Open |
 | 9 | QC-111 | Low | 9 | architecture | `ProcessHashContext` init spin (CAS sound) has no timeout/fallback — latent DoS if the initializer traps. | `src/uuid.zig:46-48` | Add bounded spin (e.g. `std.atomic.spinLoopHint` ×N then `std.Thread.yield`); optionally surface a diagnostic on exceeding budget. | suspected | Open |
-| 10 | QC-112 | Low | 9 | docs | `default_generator` is `pub var` at `generator.zig:1577` — mutable process-global; doc comment does not cover thread-safety + lifetime contract. | `src/generator.zig:1577` | Extend the existing `///` block: note all methods are thread-safe (split mutex), forbid reassignment, and state that `saveState`/`loadState` must agree on path across the process. | confirmed | Open |
+| 10 | QC-112 | Low | 9 | docs | `default_generator` is `pub var` (now at `generator.zig:2323`, was `:1577`) — mutable process-global; doc comment partially covers shared-state but still misses thread-safety/no-reassignment/path-agreement statements. | `src/generator.zig:2323` (doc block `:2307-2322`; stale ref was `:1577`) | Extend the existing `///` block: note all methods are thread-safe (split mutex), forbid reassignment, and state that `saveState`/`loadState` must agree on path across the process. | confirmed | Open — PARTIALLY resolved (shared-state warning present at `:2307-2322`; missing split-mutex thread-safety statement, no-reassignment warning, saveState/loadState path-agreement). Scheduled for closure this cycle (2026-06-11). |
 
 ### Recommended integration tests (top 3–5)
 
@@ -2571,6 +2571,8 @@ EOF
 - **Strategic (>5d):** QC-106 (two-file extraction from `generator.zig`); integration-test matrix covering HMAC tamper, downgrade, V7 monotonicity, reseed boundary, version/length mismatch.
 
 _Last updated: 2026-04-18 — Phase 4 follow-up cycle 2 complete. 10 new findings (QC-103–QC-112): 1 High, 5 Medium, 4 Low. 3 closed in-band (QC-104, QC-105, QC-109); 7 open. 101 total issues tracked (92 closed, 2 Won't Do, 7 open from this cycle)._
+
+_**Update 2026-06-11:** QC-103 RESOLVED. Verified: `enforceStateMacPolicy` at `src/generator.zig:2144-2168` returns `Error.StateVersionDowngrade` for v1/v2 files under a keyed policy; default policy `require_mac_when_keyed` set at `src/generator.zig:165`/`:415`; `StateVersionDowngrade` error variant at `src/uuid.zig:115-123`; downgrade-resistance regression test at `src/generator_state_test.zig:1049-1075`. No GitLab issue ever existed for QC-103 (verified via `glab issue list --all --search`), so none to close. QC-112 confirmed still open (PARTIALLY resolved) — see updated row; scheduled for closure this cycle._
 
 _Phase 3 closure cycle complete (Group C round, 2026-04-18) — 10 closed, 0 deferred._
 
@@ -2791,3 +2793,52 @@ glab issue close 178 --comment "Closed per QUALITY_GAP_ANALYSIS.md (QC-91/QC-92 
 _Phase 4 cycle 3 audit complete — 27 new findings (QC-118–QC-144): 1 High, 13 Medium, 11 Low, 2 Info. **Phase 4 cycle 4 closure round 2026-04-20:** 5 closed in-band (QC-118 `f8dd37f`, QC-119 `d23ad7d`, QC-120 `85ecd50`, QC-121 `6413845`, QC-122 `412bed9`). 133 total issues tracked (104 closed, 2 Won't Do, 27 open)._
 
 _Last updated: 2026-04-20 — Phase 2/3 quality audit + closure cycle + residual closure batch + QC-113d re-attempt. 5 new findings (QC-113–QC-117): 2 Medium, 3 Low. **Closure cycle 2026-04-19:** QC-113a/b/c closed (`2a8f4ea`, `47ec3d0`, `cb0f44d`); QC-114 closed (`b7fb01e`); QC-115 co-closed (`2a8f4ea`). **Residual closure batch 2026-04-19:** QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`). **QC-113d re-attempt 2026-04-20:** closed (`37419f6`/`b179892`/`a51e411`/`8211c0c`). All Phase 2/3 findings closed. 106 total issues tracked (99 closed, 2 Won't Do, 0 Deferred, 5 Open — all from Phase 4 cycle 2)._
+
+---
+
+## Phase 4 audit cycle 4 (2026-06-11)
+
+> **Date:** 2026-06-11. Zig 0.16.0. `glab` auth HEALTHY (read-write, user `benjiv`). Quality-reviewer pass focused on packaging correctness, stale test scaffolding, delegation-test coverage, and doc-contract consistency. QC-103 re-verified RESOLVED; QC-112 confirmed partially-resolved-still-open.
+> 6 candidate findings examined (QC-145..QC-150): 1 Medium, 4 Low, 1 Won't-Do recorded, 1 DROPPED (QC-150 — invalid, see below). PriorityScore = Impact × Likelihood × 4.
+> **All open findings below are scheduled for closure THIS SAME cycle.**
+> **Tracker:** GitLab issues filed for QC-145 (#179), QC-146 (#180), QC-147 (#181), QC-149 (#182). No issue for QC-148 (Won't-Do). No issue for QC-150 (dropped).
+
+### Re-verified this cycle (prior-cycle items, no status change unless noted)
+
+- **QC-103 → ✅ RESOLVED 2026-06-11** (moved from Open). Evidence: `enforceStateMacPolicy` `src/generator.zig:2144-2168`; default `require_mac_when_keyed` `src/generator.zig:165` and `:415`; `StateVersionDowngrade` `src/uuid.zig:115-123`; regression test `src/generator_state_test.zig:1049-1075` (`"SEC-P4-01: default policy rejects v2 when state_mac_key is set"`). No GitLab issue ever existed for QC-103 (verified `glab issue list --all --search "QC-103:"` → none); nothing to close.
+- **QC-112 → Open (PARTIALLY resolved); will be FIXED this cycle.** Shared-state warning now documented at `src/generator.zig:2307-2322`. Stale line ref corrected: was `:1577`, decl now at `:2323`. Still missing: split-mutex thread-safety statement, no-reassignment warning, `saveState`/`loadState` path-agreement note.
+- **Confirmed still-open, no change (re-verified 2026-06-11):** QC-110, QC-111, QC-124, QC-125 (README `gen.interface()` won't compile; correct API `GeneratorInterface.fromGenerator` at `generator.zig:2420`), QC-126 (README error set lists only `StateMacMismatch`), QC-127 (duplicate Hash Contexts tables), QC-128 (README namespace API incomplete). QC-112/124/125/126/127/128 are all scheduled for closure THIS cycle.
+
+### Stack-ranked findings (QC-145..QC-150)
+
+| Rank | QC | Sev | Score | Category | Finding | File:Line | GitLab | Recommended fix | Confidence | Status |
+| ---- | --- | --- | ----- | -------- | ------- | --------- | ------ | --------------- | ---------- | ------ |
+| 1 | QC-145 | Medium | 36 | maintainability | `build.zig.zon` `.paths` lists nonexistent `"bench"` and omits `"benchmarks"` — published tarball ships a phantom path and misses the real bench harness (`benchmarks/`). | `build.zig.zon:17` (harness at `benchmarks/`, ref'd `build.zig:78,98`) | [#179](https://gitlab.com/devnw/zig/uuid/-/work_items/179) | Replace `"bench"` with `"benchmarks"` in `.paths`. | confirmed | Open — scheduled for closure this cycle |
+| 2 | QC-147 | Low | 24 | tests | 7 module-level wrappers in `src/versions.zig` lack delegation tests: `newV3Bounded` (:49), `newV5Bounded` (:90), `saveState` (:181), `loadState` (:189), `migrateStateToV3` (:200), `rotateStateMacKey` (:209), `secureWipeMacKey` (:216). | `src/versions.zig:49,90,181,189,200,209,216` | [#181](https://gitlab.com/devnw/zig/uuid/-/work_items/181) | Add delegation tests (QC-22 pattern) asserting correct target + argument pass-through. | confirmed | Open — scheduled for closure this cycle |
+| 3 | QC-146 | Low | 16 | tests | Stale XFAIL guard + misleading name: `tests/integration.zig:457-478` comptime-guards on `StateVersionDowngrade` existence + `SkipZigTest`, but the variant landed (`src/uuid.zig:115-123`) so the guard is dead code and "currently XFAIL" is wrong. | `tests/integration.zig:457-478` | [#180](https://gitlab.com/devnw/zig/uuid/-/work_items/180) | Remove the comptime guard / `SkipZigTest`; rename to drop "currently XFAIL"; assert unconditionally. | confirmed | Open — scheduled for closure this cycle |
+| 4 | QC-149 | Low | 12 | docs | `newV3Strict` (`:1360`) / `newV5Strict` (`:1364`) lack an `**Errors:**` block / infallibility note; every sibling generation fn carries one. Both return `UUID` (cannot fail). | `src/generator.zig:1354-1367` | [#182](https://gitlab.com/devnw/zig/uuid/-/work_items/182) | Add an `**Errors:**` block / "cannot fail" note to both, matching sibling convention. | confirmed | Open — scheduled for closure this cycle |
+| — | QC-148 | — | — | docs | QUALITY_GAP_ANALYSIS.md has duplicate `## Won't Do Policy` headings (MD024). | `docs/QUALITY_GAP_ANALYSIS.md` (multiple) | (none) | — | confirmed | 🚫 Won't Do (see below) |
+| — | QC-150 | — | — | docs | (Candidate) `generator.zig:1356` doc claims `Namespace` has a vetted `.custom` variant — alleged doc-drift. | `src/generator.zig:1356` | (none) | — | confirmed | ❌ DROPPED — claim invalid (see below) |
+
+### QC-148 — 🚫 Won't Do: duplicate "Won't Do Policy" heading (MD024)
+
+**File:** `docs/QUALITY_GAP_ANALYSIS.md` (heading recurs across cycle sections)
+
+The document intentionally repeats the `## Won't Do Policy — All Cycles` heading once per relevant cycle block so each cycle's reader sees the mandatory policy in context. This trips markdownlint MD024 (no-duplicate-heading), but **MD024 is intentionally disabled in `.pre-commit-config.yaml`** for these ledger files. This is the same precedent established by QC-16 and QC-64 (pre-commit / lint policy handled by separate governance controls; out of scope for ledger content).
+
+**Resolution:** Won't Do. The repeated heading is a deliberate documentation pattern; MD024 is disabled by design. Future agents MUST NOT collapse the headings or re-open this item. No GitLab issue filed.
+
+**Confidence:** confirmed
+
+### QC-150 — ❌ DROPPED: `.custom` variant doc is accurate (not drift)
+
+**Verification (2026-06-11):** `grep -n custom src/namespace.zig` confirms the `.custom` variant is real: the tagged-union member `custom: [16]u8` exists at `src/namespace.zig:77`, the `asUUID` arm at `:86` (`.custom => |b| UUID{ .bytes = b }`), the `fromConfig` producer at `:117`, and a dedicated round-trip test `"Namespace.custom round-trips arbitrary bytes (SEC-P3-05)"` at `:132`. The `newV3Strict` doc at `src/generator.zig:1356` ("plus a vetted `.custom` variant") is therefore accurate. Per the audit instruction ("if it exists, drop this finding"), QC-150 is dropped — no gap, no issue, no fix.
+
+**Confidence:** confirmed
+
+### Roadmap (Phase 4 cycle 4)
+
+- **Quick wins (<1d):** QC-145 (one-word `.paths` fix), QC-146 (guard removal + rename), QC-149 (two doc blocks), QC-112 (doc block extension), QC-124/125/126/127/128 (README/doc consolidation).
+- **Medium (1–5d):** QC-147 (7 delegation tests).
+
+_Last updated: 2026-06-11 — Phase 4 audit cycle 4. 6 candidates examined (QC-145–QC-150): 1 Medium + 3 Low filed as GitLab issues (#179–#182), 1 Won't-Do (QC-148), 1 DROPPED (QC-150). QC-103 moved Open → ✅ RESOLVED (re-verified; no issue ever existed). QC-112 row updated (stale `:1577` → `:2323`, partially-resolved). All open findings this cycle scheduled for same-cycle closure. `glab` auth HEALTHY._

@@ -3,7 +3,8 @@
 > Mirror of resolved items that were previously tracked in `docs/GAP_ANALYSIS.md`
 > and the GitLab issue tracker. The issue tracker is authoritative.
 >
-> Last updated: 2026-04-20 (Phase 5 closure cycle — 12 items closed across GAP-CI-01, 4 SEC-P4 security items, 1 SEC-P4 adversarial co-closure, 2 PERF items + 1 PERF co-closure, 4 QC items + 1 QC co-closure. **Residual closure batch:** +7 items — SEC-P4-13, GAP-DOC-11, GAP-DOC-12, PERF-41, PERF-44, QC-116, QC-117. **QC-113d re-attempt 2026-04-20:** previously deferred, now closed — V7 CAS state-machine extracted into pure `V7Cas.transition` helper; ABA-avoidance + PERF-40 invariants preserved. After the re-attempt, only SEC-P4-14 (Blocked) remains open across all tracker files. Plus the earlier Phase 5 sync migration of Legacy F-1..F-9 + G-1..G-10 and GAP-DOC-13.)
+> Last updated: 2026-06-11 (Closure-drift batch cycle — `glab` auth restored; **GAP-DOC-10** resolved and migrated here; the 25 closure-drift tracker items #154–#178 [exact set: #154,#156,#158,#159,#161,#164,#167,#155,#157,#160,#162,#163,#165,#166,#168–#178] were batch-closed on the GitLab tracker, reconciling the long-standing docs↔tracker drift. New open gaps GAP-DOC-17..21 + SEC-P4-14 recorded in `docs/GAP_ANALYSIS.md` "Audit Cycle 2026-06-11" — not yet resolved, so not mirrored here.)
+> Previously: 2026-04-20 (Phase 5 closure cycle — 12 items closed across GAP-CI-01, 4 SEC-P4 security items, 1 SEC-P4 adversarial co-closure, 2 PERF items + 1 PERF co-closure, 4 QC items + 1 QC co-closure. **Residual closure batch:** +7 items — SEC-P4-13, GAP-DOC-11, GAP-DOC-12, PERF-41, PERF-44, QC-116, QC-117. **QC-113d re-attempt 2026-04-20:** previously deferred, now closed — V7 CAS state-machine extracted into pure `V7Cas.transition` helper; ABA-avoidance + PERF-40 invariants preserved. After the re-attempt, only SEC-P4-14 (Blocked) remains open across all tracker files. Plus the earlier Phase 5 sync migration of Legacy F-1..F-9 + G-1..G-10 and GAP-DOC-13.)
 
 ## Summary
 
@@ -14,6 +15,22 @@
 - **19 Phase-5 migrated legacy items** (2026-04-19, HEAD `7e57b2b`): F-1..F-9 (RFC-9562 compliance) + G-1..G-10 (gofrs/uuid feature parity) — all originally closed 2026-03-21 and flagged `Closed / Implemented` inline in `docs/GAP_ANALYSIS.md`. Moved here to honour the "open-only" invariant. Plus **GAP-DOC-13** (Low) closed in-band as the migration itself.
 
 Evidence for each resolution is pinned to a concrete file:line, commit SHA, or test output.
+
+---
+
+## CI-CD — Closure-Drift Batch (2026-06-11)
+
+### GAP-DOC-10: `glab` auth broken — tracker cross-reference unavailable [RESOLVED]
+
+- **Issue:** (none — self-referential infra gap)
+- **Category:** CI-CD
+- **Severity:** Medium
+- **Resolution:** The `glab` personal access token was rotated by the operator; `glab auth status` now reports green (logged in as `benjiv` on `gitlab.com`). With auth restored, `gap-sync` replayed the long-queued closure-drift batch: the 25 issues that had been confirmed `✅ Closed`-in-code across prior cycles but remained open on the tracker were closed, each with an evidence note. The same cycle recorded 6 new tracker items (GAP-DOC-17..21 [#183–#187] + SEC-P4-14 [#188]).
+- **Evidence:**
+  - `glab auth status` → green (`✓ Logged in to gitlab.com as benjiv`).
+  - 25 issues now `Closed`: #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #175, #176, #177, #178 — each with a preceding evidence note (`glab issue note <iid> -m "…"`; `glab` 1.53.0 `issue close` has no `--comment` flag).
+  - Runbook: `docs/runbooks/glab-auth.md`.
+- **Resolved date:** 2026-06-11
 
 ---
 

@@ -4,7 +4,8 @@
 > [gofrs/uuid](https://github.com/gofrs/uuid) (the reference Go implementation).
 >
 > Date: 2026-03-21
-> Last updated: 2026-04-20 — Phase 4 `/codepros:audit` cycle (gap-detector + gap-sync + security-reviewer + security-issue-tracker). Phase 3 detector: 19/19 requirements Implemented, 0 code gaps. 3 new doc-drift gaps recorded (GAP-DOC-14, GAP-DOC-15, GAP-DOC-16) and fixed in-band this same cycle. 25 tracker-open issues confirmed `✅ Closed` in docs but still open on GitLab (closure-drift, blocked by GAP-DOC-10 — `glab` auth DEGRADED). QC-113d re-attempt closed 2026-04-20 (commits `37419f6`, `b179892`, `a51e411`, `8211c0c`, `2c76a4b`). **Phase 4 cycle 4 (security-reviewer + issue-tracker, 2026-04-20):** 3 new security findings surfaced — all Info/Low, non-blocking: **O-1** (Low, CWE-320, Risk 6) missing `rotateStateMacKey` primitive; **O-2** (Info, CWE-665/CWE-331, Risk 4) no post-fork `reseed()` lint; **H-1** (Info, CWE-829, Risk 2) unpinned `.gitlab-ci.yml` APT installs (folded into SEC-P4-14 scope). **7 closure-drift tickets queued for batch close** when `glab` auth restores: #154, #156, #158, #159, #161, #164, #167 (batch `glab issue close` commands transcribed in `docs/SECURITY_REVIEW_NOTES.md` Phase 4 cycle 4 section). **Recommendation:** relabel SEC-P4-14 `status::blocked` → `status::blocked-external-dependency` (not `Won't-Do`; the blocker is an external credential dependency, not a project decision). **Remaining open: 1 Blocked (SEC-P4-14 Medium-High — sole open structural security gap; operator-held SHA map for 8 ci-catalog components; unblock plan at `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md`).** **Phase 4 cycle 4 closure round 2026-04-20 (9 actionable closures, 10 commits):** **O-1 closed (`5a6f747`)** — `rotateStateMacKey` primitive landed; **QC-118 closed (`f8dd37f`)** — save-during-wipe race fixed (co-closed with SEC-P4-13 root cause); **QC-119 closed (`d23ad7d`)** — 9 Error variant docs added; **QC-120 closed (`85ecd50`)** — `**Errors:**` blocks on 13 public fns; **QC-121 closed (`6413845`)** — README Generator table +11 methods; **QC-122 closed (`412bed9`)** — CHANGELOG `[Unreleased]` residual closures; **PERF-45 closed (`5c420d6`)** — multi-run median bench harness; **PERF-46 closed (`0379bb2`)** — CI contention throughput gate; **PERF-59 closed (`2bd3a18`)** — V1/V6 Timestamp through clockCall. Test delta: 262/263 → 274/275 (+12 new, -1 replaced). Security invariants preserved: SEC-P3-04, SEC-P4-01, SEC-P4-02, SEC-P4-10, SEC-P4-A1, SEC-P4-13 (via QC-118), CWE-316, CWE-320. O-2/H-1 remain open (non-blocking, doc-only / folded into SEC-P4-14).
+> Last updated: 2026-06-11 — Closure-drift batch + doc-drift audit cycle (gap-sync). **`glab` auth RESTORED** — the 25 closure-drift items confirmed `✅ Closed` in code across prior cycles were batch-closed on the GitLab tracker today (7 security #154/#156/#158/#159/#161/#164/#167, 2 perf #155/#157, 16 quality #160/#162/#163/#165/#166/#168–#178), each with an evidence comment. **GAP-DOC-10** (`glab` auth degraded) is now RESOLVED and migrated to `docs/GAP_ANALYSIS_RESOLVED.md`. **5 new Low doc-drift gaps recorded and to be FIXED this same cycle:** GAP-DOC-17 (#183, version string drift root.zig 0.1.0 vs zon 0.1.1), GAP-DOC-18 (#184, README install refs v0.1.0 + stale unreleased note), GAP-DOC-19 (#185, CHANGELOG missing [0.1.1] + stale compare link), GAP-DOC-20 (#186, docs index missing APPSEC_REVIEW + SECURITY_REVIEW_NOTES links), GAP-DOC-21 (#187, REQUIREMENTS UUID-TEST-005 cites removed check-cross step). **SEC-P4-14** formalized on the tracker as #188 (`type::security`, `priority::high`, `blocked` — external operator ci-catalog tag→SHA map; sole open structural security gap). Cross-references this cycle: QC-145..149 (quality ledger), PERF-60..64 (perf ledger), SEC-P5-01/02 (security notes). Won't-Do adjudications: QC-148, PERF-63, PERF-64, and NEW-01 (pre-commit SHA freezing — developer-tooling governance precedent). Doc files for QUALITY_GAP_ANALYSIS / PERF_GAP_ANALYSIS / SECURITY_REVIEW_NOTES are owned by other agents this cycle and untouched here. See "Audit Cycle 2026-06-11" section below.
+> Previously (2026-04-20): Phase 4 `/codepros:audit` cycle (gap-detector + gap-sync + security-reviewer + security-issue-tracker). Phase 3 detector: 19/19 requirements Implemented, 0 code gaps. 3 new doc-drift gaps recorded (GAP-DOC-14, GAP-DOC-15, GAP-DOC-16) and fixed in-band this same cycle. 25 tracker-open issues confirmed `✅ Closed` in docs but still open on GitLab (closure-drift, blocked by GAP-DOC-10 — `glab` auth DEGRADED). QC-113d re-attempt closed 2026-04-20 (commits `37419f6`, `b179892`, `a51e411`, `8211c0c`, `2c76a4b`). **Phase 4 cycle 4 (security-reviewer + issue-tracker, 2026-04-20):** 3 new security findings surfaced — all Info/Low, non-blocking: **O-1** (Low, CWE-320, Risk 6) missing `rotateStateMacKey` primitive; **O-2** (Info, CWE-665/CWE-331, Risk 4) no post-fork `reseed()` lint; **H-1** (Info, CWE-829, Risk 2) unpinned `.gitlab-ci.yml` APT installs (folded into SEC-P4-14 scope). **7 closure-drift tickets queued for batch close** when `glab` auth restores: #154, #156, #158, #159, #161, #164, #167 (batch `glab issue close` commands transcribed in `docs/SECURITY_REVIEW_NOTES.md` Phase 4 cycle 4 section). **Recommendation:** relabel SEC-P4-14 `status::blocked` → `status::blocked-external-dependency` (not `Won't-Do`; the blocker is an external credential dependency, not a project decision). **Remaining open: 1 Blocked (SEC-P4-14 Medium-High — sole open structural security gap; operator-held SHA map for 8 ci-catalog components; unblock plan at `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md`).** **Phase 4 cycle 4 closure round 2026-04-20 (9 actionable closures, 10 commits):** **O-1 closed (`5a6f747`)** — `rotateStateMacKey` primitive landed; **QC-118 closed (`f8dd37f`)** — save-during-wipe race fixed (co-closed with SEC-P4-13 root cause); **QC-119 closed (`d23ad7d`)** — 9 Error variant docs added; **QC-120 closed (`85ecd50`)** — `**Errors:**` blocks on 13 public fns; **QC-121 closed (`6413845`)** — README Generator table +11 methods; **QC-122 closed (`412bed9`)** — CHANGELOG `[Unreleased]` residual closures; **PERF-45 closed (`5c420d6`)** — multi-run median bench harness; **PERF-46 closed (`0379bb2`)** — CI contention throughput gate; **PERF-59 closed (`2bd3a18`)** — V1/V6 Timestamp through clockCall. Test delta: 262/263 → 274/275 (+12 new, -1 replaced). Security invariants preserved: SEC-P3-04, SEC-P4-01, SEC-P4-02, SEC-P4-10, SEC-P4-A1, SEC-P4-13 (via QC-118), CWE-316, CWE-320. O-2/H-1 remain open (non-blocking, doc-only / folded into SEC-P4-14).
 >
 > Previously (2026-04-19): Phase 5 gap-detector sync + Phase 4 security cycle 3 + closure cycle (+ residual closure batch). Legacy F-1..F-9 + G-1..G-10 closed sections migrated to `docs/GAP_ANALYSIS_RESOLVED.md`; 4 new quality gaps recorded (GAP-CI-01, GAP-DOC-11, GAP-DOC-12, GAP-DOC-13) plus 6 new security gaps from Phase-4 cycle 3 (SEC-P4-10 … SEC-P4-14 + SEC-P4-A1). **Closure cycle 2026-04-19:** GAP-CI-01 closed (`87c4a0e`); SEC-P4-10 + SEC-P4-A1 closed (`5202714`); SEC-P4-11 closed (`f67e8bf`); SEC-P4-12 closed (`904d352`). **Residual closure batch 2026-04-19:** SEC-P4-13 closed (`3b338ab`); GAP-DOC-11 + GAP-DOC-12 closed (`0c15b8b`); QC-116 closed (`0c56f13`); QC-117 closed (`cfa9f04`); PERF-41 closed (`6d5804e`); PERF-44 closed (`38ffe49`).
 > Previously (2026-04-18): Group D closure round (HEAD `f77e7da`): 5 items closed (4 full + 1 partial SEC-P3-07). Phase-3 totals: 60 items tracked — 52 previously closed (16 Phase-3 initial + 25 Phase-2 bookkeeping + 11 Group C) + 4 Group D full + 1 Group D partial (SEC-P3-07 — 3 human-input TODOs) + 4 Won't-Do.
@@ -52,6 +53,144 @@ controls and create false assurance.
 | Pre-commit hook versioning | — | Pre-commit hook versions are managed by the developer tooling team, not library code. |
 | `check-yaml --unsafe` removal | SEC-4 | The `--unsafe` flag is required by the project's GitLab CI YAML which uses multi-document anchors. Removing it is a pre-commit configuration concern, not a library concern. |
 | CI components semver→SHA pinning | SEC-5 | Handled by the CI/CD pipeline governance process (Renovate/org policy). Not a library responsibility. |
+
+---
+
+## Audit Cycle 2026-06-11 — Closure-Drift Batch + Doc-Drift
+
+> **Owner this cycle:** `gap-sync` (GitLab batch closures, label taxonomy, GAP-DOC
+> issues, and this file + `docs/GAP_ANALYSIS_RESOLVED.md`). The
+> `docs/QUALITY_GAP_ANALYSIS.md`, `docs/PERF_GAP_ANALYSIS.md`, and
+> `docs/SECURITY_REVIEW_NOTES.md` ledgers are owned by sibling agents this cycle
+> and were not modified here — they are referenced only as cross-links.
+>
+> **`glab` auth RESTORED** (GAP-DOC-10 resolved). `glab auth status` is green
+> (logged in as `benjiv`). This unblocked the closure-drift batch that had been
+> queued since the Phase 3 closure cycle.
+
+### Tracker actions executed 2026-06-11
+
+**25 closure-drift items batch-closed** (each closed with an evidence comment;
+the exact `glab issue close` evidence strings are transcribed in the
+"Batch `glab issue close` commands" block later in this file). All were already
+confirmed `✅ Closed`-in-code in prior cycles — this only reconciled the tracker:
+
+| Bucket | IIDs | Count |
+|--------|------|-------|
+| Security (Cycle 12 + 13) | #154, #156, #158, #159, #161, #164, #167 | 7 |
+| Performance (Cycle 4) | #155, #157 | 2 |
+| Quality (Cycle 12) | #160, #162, #163, #165, #166, #168, #169, #170, #171, #172, #173, #174, #175, #176, #177, #178 | 16 |
+| **Total closed** | | **25** |
+
+**Labels created** (taxonomy gap-fill): `gap`, `type::feature`, `type::enhancement`,
+`type::security`. (`priority::low`, `priority::high`, `blocked`, `quality`,
+`security`, `category::docs`, `type::bug` already existed.) Note: `status::blocked`
+does not exist in this project's taxonomy; the existing `blocked` scoped label was
+used for SEC-P4-14.
+
+**6 new tracker issues created** (open):
+
+| Gap-ID | Issue | Labels | Disposition |
+|--------|-------|--------|-------------|
+| GAP-DOC-17 | [#183](https://gitlab.com/devnw/zig/uuid/-/work_items/183) | gap, quality, type::bug, priority::low, category::docs | Open — FIX this cycle |
+| GAP-DOC-18 | [#184](https://gitlab.com/devnw/zig/uuid/-/work_items/184) | gap, quality, priority::low, category::docs | Open — FIX this cycle |
+| GAP-DOC-19 | [#185](https://gitlab.com/devnw/zig/uuid/-/work_items/185) | gap, quality, priority::low, category::docs | Open — FIX this cycle |
+| GAP-DOC-20 | [#186](https://gitlab.com/devnw/zig/uuid/-/work_items/186) | gap, quality, priority::low, category::docs | Open — FIX this cycle |
+| GAP-DOC-21 | [#187](https://gitlab.com/devnw/zig/uuid/-/work_items/187) | gap, quality, priority::low, category::docs | Open — FIX this cycle |
+| SEC-P4-14 | [#188](https://gitlab.com/devnw/zig/uuid/-/work_items/188) | gap, security, type::security, priority::high, blocked | Open — BLOCKED (external) |
+
+### Open gaps recorded this cycle (GAP-DOC-17..21 — all Low, all to be FIXED this cycle)
+
+#### GAP-DOC-17: Version string drift `root.zig` 0.1.0 vs zon 0.1.1
+
+- **Issue:** [#183](https://gitlab.com/devnw/zig/uuid/-/work_items/183)
+- **Category:** Docs · **Severity:** Low
+- **Requirement source:** Release hygiene / version consistency.
+- **Current state (evidence):**
+  - `src/root.zig:130` — `pub const version = "0.1.0";`
+  - `build.zig.zon:3` — `.version = "0.1.1",`
+  - `README.md:233` — API-constant example shows `"0.1.0"`.
+- **Why this is a gap:** Runtime `uuid.version` reports `0.1.0` while the tagged release is `0.1.1`.
+- **Impact/Risk:** Diagnostics/version reporting drift.
+- **Recommended fix:** Bump `root.zig` version to `0.1.1` (ideally derive from build); update README example.
+- **Acceptance criteria:** `root.zig` version == `build.zig.zon` version; README example matches.
+
+#### GAP-DOC-18: README install instructions reference v0.1.0 + stale unreleased note
+
+- **Issue:** [#184](https://gitlab.com/devnw/zig/uuid/-/work_items/184)
+- **Category:** Docs · **Severity:** Low
+- **Requirement source:** Installation docs accuracy.
+- **Current state (evidence):**
+  - `README.md:25` — `zig fetch` URL pins `v0.1.0`.
+  - `README.md:37` — dependency `.url` pins `v0.1.0`.
+  - `README.md:43` — stale "v0.1.0 is unreleased" note.
+- **Why this is a gap:** Directs consumers to an older/unreleased tag and an obsolete workaround.
+- **Impact/Risk:** Install confusion.
+- **Recommended fix:** Update URL + snippet to `v0.1.1`; remove the unreleased note.
+- **Acceptance criteria:** Install instructions reference the current tag; stale note removed.
+
+#### GAP-DOC-19: CHANGELOG missing `[0.1.1]` section + stale compare link
+
+- **Issue:** [#185](https://gitlab.com/devnw/zig/uuid/-/work_items/185)
+- **Category:** Docs · **Severity:** Low
+- **Requirement source:** Keep-a-Changelog hygiene.
+- **Current state (evidence):**
+  - `CHANGELOG.md:145` — `[Unreleased]: ...compare/v0.1.0...HEAD` (stale base).
+  - `CHANGELOG.md:146` — `[0.1.0]` link present; no `[0.1.1]` section/link.
+- **Why this is a gap:** 0.1.1 changes undocumented; Unreleased diff shows already-shipped changes.
+- **Impact/Risk:** Release notes drift.
+- **Recommended fix:** Add `[0.1.1]` section + release link; re-base `[Unreleased]` to `v0.1.1...HEAD`.
+- **Acceptance criteria:** `[0.1.1]` section + link present; Unreleased compare bases off `v0.1.1`.
+
+#### GAP-DOC-20: docs index missing APPSEC_REVIEW + SECURITY_REVIEW_NOTES links
+
+- **Issue:** [#186](https://gitlab.com/devnw/zig/uuid/-/work_items/186)
+- **Category:** Docs · **Severity:** Low
+- **Requirement source:** Docs discoverability.
+- **Current state (evidence):**
+  - `docs/README.md` — Quick Links omits `APPSEC_REVIEW` and `SECURITY_REVIEW_NOTES`.
+- **Why this is a gap:** Security review artifacts present but unlinked from the docs landing page.
+- **Impact/Risk:** Reduced discoverability for auditors/contributors.
+- **Recommended fix:** Add Quick-Links entries for both documents.
+- **Acceptance criteria:** `docs/README.md` links to APPSEC_REVIEW and SECURITY_REVIEW_NOTES.
+
+#### GAP-DOC-21: REQUIREMENTS UUID-TEST-005 cites removed `check-cross` step
+
+- **Issue:** [#187](https://gitlab.com/devnw/zig/uuid/-/work_items/187)
+- **Category:** Docs · **Severity:** Low
+- **Requirement source:** Requirement traceability (`docs/REQUIREMENTS.md`).
+- **Current state (evidence):**
+  - `docs/REQUIREMENTS.md` — UUID-TEST-005 cites the removed `check-cross` step.
+  - `.gitlab-ci.yml:190-196` — `test-cross-build` job loops `zig build check -Dtarget=$t` over 5 targets (current coverage).
+- **Why this is a gap:** Verification pointer is stale; the cited step no longer exists.
+- **Impact/Risk:** Weakened requirement traceability.
+- **Recommended fix:** Re-point UUID-TEST-005 evidence to `.gitlab-ci.yml:190-196` (`test-cross-build`).
+- **Acceptance criteria:** UUID-TEST-005 cites the `test-cross-build` job.
+
+### Blocked gap reconfirmed (SEC-P4-14)
+
+- **Issue:** [#188](https://gitlab.com/devnw/zig/uuid/-/work_items/188) (newly created this cycle — was doc-only before)
+- **Category:** Security / Supply-chain · **Severity:** Medium-High (Risk 40)
+- **Status:** 🚧 Blocked (external dependency).
+- **Current state (evidence):** `.gitlab-ci.yml` references 8 `gitlab.com/devnw/ci-catalog@v1.7.1` components by moving tag, not SHA. Related historical finding: #41 (SEC-03, same class).
+- **Why this is a gap:** A moving tag can be re-pointed upstream (CWE-829).
+- **Recommended fix:** Pin each component to its immutable SHA once the operator supplies the tag→SHA map.
+- **Note:** The unblock plan path `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` is referenced throughout the gap docs but **is not present in the repo as of 2026-06-11** — it must be authored, or its reference corrected, as part of unblocking. Flagged in the issue body.
+
+### Cross-references (sibling-owned ledgers — not modified here)
+
+- **Quality ledger** (`docs/QUALITY_GAP_ANALYSIS.md`): QC-145..149.
+- **Performance ledger** (`docs/PERF_GAP_ANALYSIS.md`): PERF-60..64.
+- **Security notes** (`docs/SECURITY_REVIEW_NOTES.md`): SEC-P5-01, SEC-P5-02.
+
+### Won't-Do adjudications this cycle
+
+| Item | Adjudicated by ledger | Reason |
+|------|-----------------------|--------|
+| QC-148 | Quality | Won't-Do (per quality-owner adjudication this cycle). |
+| PERF-63 | Performance | Won't-Do (per perf-owner adjudication this cycle). |
+| PERF-64 | Performance | Won't-Do (per perf-owner adjudication this cycle). |
+| NEW-01 — freeze pre-commit hook SHAs | Gap-sync | **Won't-Do** under existing developer-tooling governance precedent. The `.pre-commit-config.yaml` is standardized from the **geode** upstream; freezing SHAs here would diverge from the org-managed config. Precedent: the `check-yaml --unsafe` Won't-Do (a pre-commit configuration concern, not a library concern — see the "Won't Do Items" table above). |
 
 ---
 
@@ -3909,16 +4048,18 @@ Style/formatting commit `5bee3e7` (`zig fmt` nit after PERF-22) accompanies Grou
 - **Impact/Risk:** Readers get conflicting severity vectors for the same findings.
 - **Recommended fix:** Pick one canonical version (v4.0, per SEC-P3-07) and update the three docs in a single sweep. Low priority — fold into the next security-review cycle.
 
-#### GAP-DOC-10 — `glab` auth broken; tracker cross-reference unavailable
+#### GAP-DOC-10 — `glab` auth broken; tracker cross-reference unavailable — ✅ RESOLVED
+
+> **Resolved 2026-06-11 — migrated to `docs/GAP_ANALYSIS_RESOLVED.md`.** `glab auth status` is green again; the 25 closure-drift items were batch-closed on the tracker this cycle. Full resolution entry now lives in the resolved ledger. Retained here only as a back-reference; the authoritative record is in `docs/GAP_ANALYSIS_RESOLVED.md`.
 
 - **Issue:** (none — self-referential)
 - **Category:** CI-CD
 - **Severity:** Medium
-- **Status:** Not Implemented
+- **Status:** ✅ Resolved 2026-06-11 (auth restored; 25 closure-drift items batch-closed). See `docs/GAP_ANALYSIS_RESOLVED.md`.
 - **Current state (evidence):**
-  - `glab auth status` fails with an expired/invalid token this cycle. All GitLab mutations for this audit are **suppressed**; the `glab` block below is documentation-only.
-- **Impact/Risk:** Tracker drifts from doc source-of-truth; duplicate-detection workflow (title prefix / Gap-ID description match) cannot run.
-- **Recommended fix:** Rotate the `glab` personal access token (or GitLab CI token), re-run `glab auth status` until green, then replay the block below to create GAP-DOC-05 / -06 / -08 / -10. Re-open GAP-DOC-07 only if it has not already been in-band closed.
+  - `glab auth status` reports green (logged in as `benjiv`). The 25 batch `glab issue close` commands transcribed below were executed 2026-06-11; all 25 issues are now `Closed` on the tracker.
+- **Impact/Risk:** (historical) Tracker drifted from doc source-of-truth while the token was degraded; duplicate-detection workflow could not run. Now mitigated.
+- **Resolution:** Operator rotated the `glab` token; `gap-sync` replayed the closure-drift batch and recorded the 6 new tracker items (GAP-DOC-17..21 + SEC-P4-14) this cycle. Runbook at `docs/runbooks/glab-auth.md`.
 
 ### Ready-to-run `glab` commands (documentation only — DO NOT execute; token broken)
 
@@ -4221,14 +4362,17 @@ All 25 GitLab work items below are marked `✅ Closed` in this doc with code evi
 | GAP-DOC-16 | Stale "1 Deferred (QC-113d)" lead-in | Docs | Low | ✅ Closed 2026-04-20 (in-band) | Lead-in updated in same commit |
 | SEC-P4-14 | CI catalog components pinned by moving tag `@v1.7.1` | Security / Supply-chain | Medium-High (Risk 40) | 🚧 Blocked | Operator-held SHA map for 8 components at `gitlab.com/devnw/ci-catalog@v1.7.1`; plan at `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` |
 
-### Batch `glab issue close` commands — 25 closure-drift items (DO NOT execute; token DEGRADED)
+### Batch `glab issue close` commands — 25 closure-drift items (✅ EXECUTED 2026-06-11)
 
-> **Prerequisite:** `glab auth status` must report green first. See GAP-DOC-10 runbook at `docs/runbooks/glab-auth.md`.
+> **Status (2026-06-11):** `glab auth status` is green; **all 25 commands below were executed this cycle.** Each issue received an evidence note (`glab issue note <iid> -m "…"`) followed by `glab issue close <iid>` (this `glab` version does not support a `--comment` flag on `close`, so the comment was posted as a preceding note). All 25 issues are now `Closed` on the tracker.
 > Each command cites the doc line where the `✅ Closed` evidence resides. The 7 security commands originally landed in the Phase 3 closure cycle block above (`docs/GAP_ANALYSIS.md:3667-3675`); the 2 performance + 16 quality commands are extended here for completeness.
 
 ```bash
 # Pre-requisite — confirm auth is healthy before mutating.
 glab auth status
+
+# NOTE (2026-06-11): executed as `glab issue note <iid> -m "<comment>"` then
+# `glab issue close <iid>` — glab 1.53.0 `issue close` has no --comment flag.
 
 # --- Security (7) --- evidence in docs/GAP_ANALYSIS_RESOLVED.md § Phase 3 Closure
 glab issue close 154 --comment "SEC-R12-02 closed. Evidence: docs/GAP_ANALYSIS.md:3667, docs/GAP_ANALYSIS_RESOLVED.md Phase 3 Closure; max_safe guard in src/timestamp.zig:89-94."
@@ -4262,6 +4406,8 @@ glab issue close 177 --comment "QC-91 closed. Evidence: docs/GAP_ANALYSIS.md:369
 glab issue close 178 --comment "QC-92 closed. Evidence: docs/GAP_ANALYSIS.md:3696; README docs/ language corrected (README.md:202)."
 ```
 
-_Phase 4 `/codepros:audit` net delta: +3 doc-drift gaps (all Low, all fixed in-band this cycle); +25 batch close commands prepared for the closure-drift items; 0 new code gaps; SEC-P4-14 reconfirmed Blocked. After this cycle: across all tracker files, **only SEC-P4-14 (Blocked — operator ci-catalog SHA map required)** remains open; 25 tracker issues are pending close pending `glab auth status` green._
+_Phase 4 `/codepros:audit` net delta: +3 doc-drift gaps (all Low, all fixed in-band that cycle); +25 batch close commands prepared for the closure-drift items; 0 new code gaps; SEC-P4-14 reconfirmed Blocked._
+
+_**Update 2026-06-11 (closure-drift batch cycle):** `glab` auth restored (GAP-DOC-10 resolved → `docs/GAP_ANALYSIS_RESOLVED.md`). The 25 batch close commands above were **executed**; all 25 tracker issues are now `Closed`. +5 new Low doc-drift gaps recorded (GAP-DOC-17..21, #183–#187, all to be fixed this same cycle). SEC-P4-14 formalized on the tracker as #188 (`blocked`). After this cycle: the only structurally-open tracker item is **SEC-P4-14 (#188, Blocked — operator ci-catalog SHA map required)**; GAP-DOC-17..21 are open-but-being-fixed-in-band. See the "Audit Cycle 2026-06-11" section near the top of this file._
 
 ---

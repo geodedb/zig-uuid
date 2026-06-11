@@ -6,6 +6,7 @@
 > Reviewer: Performance review agent
 >
 > Last updated: 2026-04-20 (Phase-4 follow-up — 15 new findings: PERF-45 through PERF-59 — all P3 defense-in-depth / infra / cosmetic; Phase-2 triage applied (Phase-2-A REFUTED as noise / NO-ACTION; Phase-2-B CONFIRMED → PERF-59; Phase-2-C CORRECTED as Phase-2 math error). Tracker closure-drift reconciled for #155/#157 (still open on GitLab; in-doc closure authoritative since cycle 4). `glab` auth DEGRADED — all close/create commands prepared but NOT EXECUTED this cycle. Phase-5+ priority: (1) PERF-45 multi-run median → (2) PERF-46 CI contention gate → (3) PERF-59 timestamp-clock alignment.)
+> Cycle 7 appended: 2026-06-11 (3 new findings filed + 2 Won't-Do: PERF-60 [#189], PERF-61 [#192], PERF-62 [#193] — all P3/low, all scheduled for fix THIS CYCLE; PERF-63 + PERF-64 Won't-Do. perf-reviewer adjudications recorded: PERF-61 correctness claim REFUTED → robustness nit; PERF-37 confirmed correctly closed; PERF-37+PERF-48 bundling REJECTED; 4T→8T lockfree cliff = intrinsic single-CAS-word contention ceiling, no new gap. `glab` auth HEALTHY — 3 issues created. See "Performance Review Cycle 7" section at bottom.)
 > Cycle 6 appended: 2026-04-20 (15 new findings: PERF-45 through PERF-59 — see "Performance Review Phase-4 Follow-up" section near bottom)
 > 2026-04-19 snapshot (Phase-2/3 follow-up — 5 new findings: PERF-40 through PERF-44; Phase-3 corrections applied to PERF-37 diagnosis and to the stale "single `Generator.mutex`" claim in Appendix methodology. **Closure cycle 2026-04-19:** PERF-40 closed (`beb00ba`); PERF-43 closed (`4a7b3fd`); PERF-42 co-closed (`5202714`, folded with SEC-P4-A1 — CAS retry budget 32_768 → 4096). **Residual closure batch 2026-04-19:** PERF-41 closed (`6d5804e`, doc-only — README prehashed-fast-path note; wrapper option (b) deferred); PERF-44 closed (`38ffe49`, MR-gated `bench-micro-mr` job at 0.10 threshold). All 5 Phase-2/3 follow-up items closed.)
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
@@ -67,6 +68,8 @@
 | # | Finding | Rationale |
 |---|---------|-----------|
 | PERF-08 | Function-pointer CSPRNG indirection | The injectable `RandFn`/`ClockFn`/`HWAddrFn` API is intentional — it is the primary mechanism enabling unit-testing without CSPRNG side-effects. Removing it via a comptime-parameterized Generator would break the public API and eliminate testability. The ~2–5 ns/call overhead is speculative (not measured; Evidence: Suspected). Add benchmarks (PERF-03, now closed) and measure before revisiting. |
+| PERF-63 | `zig-fmt` pre-commit hook rescans full tree (no `pass_filenames`) | The hook is correctly designed, not a perf bug. `zig fmt --check` requires directory arguments (it does not accept the per-file list pre-commit would pass), so `pass_filenames: false` with a fixed dir scan is the standard, correct pattern for this tool. Restricting it to changed files would either break the invocation contract or miss formatting drift introduced by non-`.zig` changes (e.g. generated sources). The full-tree scan is fast for this repo and is the intended behavior. No change. |
+| PERF-64 | Merge `zig-build` + `zig-test` pre-push hooks into one | Keeping the two as separate named pre-push hooks preserves failure-mode observability: a red push tells you immediately whether the *build* broke or a *test* failed, without parsing combined output. Merging them would save only the marginal cost of one hook-runner spawn (build artifacts are already cached/shared between the two invocations) while losing that signal separation. The marginal speedup is not worth the diagnostic-signal loss. No change. |
 
 > **Note for future agents:** The CI pinning, Docker tag pinning, and pre-commit hook versioning items are handled by separate controls and must remain Won't Do. This applies to ALL `*GAP_ANALYSIS.md` files in this repository.
 
@@ -2151,3 +2154,151 @@ glab issue create --title "PERF-59: Timestamp.now() bypasses clockCall() — V1/
   - Phase-2-B CONFIRMED: `src/timestamp.zig:31-50` calls `std.os.linux.clock_gettime` directly; diverges from newV7AtTime's `self.clockCall()` invocation path.
   - Phase-2-C CORRECTED: QC-113d ratio is ~388×; Phase-2 115× figure is math error; source doc PERF-16 stands (cycle-3 prose "300×" is a rounded characterization).
 - **Tracker closure-drift**: GitLab `#155` (PERF-19) and `#157` (PERF-20) remain open on GitLab; in-doc closure is authoritative since 2026-03-22 (cycle 4). Close commands prepared for next auth-available cycle.
+
+---
+
+---
+
+## Performance Review Cycle 7 (2026-06-11)
+
+> Cycle 7 appended: 2026-06-11 (3 new findings filed + 2 Won't-Do; perf-reviewer adjudications recorded for the ledger)
+> Reviewer: Performance review agent | `glab` auth: HEALTHY (3 issues created)
+> Zig version audited: 0.16.0
+
+### Summary (Cycle 7)
+
+**3 new findings filed** (0 P0, 0 P1, 0 P2, 3 P3) — **all scheduled for fix THIS CYCLE** — plus **2 Won't-Do** and a set of recorded perf-reviewer adjudications.
+
+| Severity | Count | Description | Status |
+|----------|-------|-------------|--------|
+| P3 | 3 | CI dep-tool O(n²) BFS; V7 overflow sleep clock domain; main-gate bench statistically weaker than MR gate | 🟡 Open (in-cycle fix) |
+| Won't-Do | 2 | zig-fmt full-tree pre-commit rescan; zig-build+zig-test pre-push merge | 🚫 Won't Do |
+
+**Top risks (Cycle 7):** none material. All three findings are P3/low. The highest-value item (PERF-62, PerfScore 16) is a CI shift-left inversion that weakens main-branch regression detection — worth fixing but not user-facing.
+
+All three are **confidence::confirmed** (unambiguous code/CI evidence). PERF-61 was downgraded from a scanner-suggested correctness/monotonicity claim to a robustness nit after perf-reviewer refutation (see Adjudications below).
+
+### Stack-Ranked Findings (Cycle 7)
+
+| Rank | Severity | PerfScore | Finding | Component | Evidence | Measurement | GitLab Issue | Fix Summary | Owner | SLA/Due | Status |
+|------|----------|-----------|---------|-----------|----------|-------------|--------------|-------------|-------|---------|--------|
+| 1 | P3 | 16 | bench-regression main gate runs `bench-contention` without `--runs` (weaker than MR gate) + stale "5% on main" comment vs `PERF26_THRESHOLD=0.15` | `.gitlab-ci.yml:299,357,272` | Confirmed | Main gate single-run vs MR `--runs 3` median — misses ~6-7% regressions on protected branch | [#193](https://gitlab.com/devnw/zig/uuid/-/work_items/193) | Add `--runs 3` at `:299`; correct stale comment at `:357` | CI owner | P3 — in-cycle | 🟡 Open (in-cycle fix) |
+| 2 | P3 | 8 | `detect_diamond_deps.py` BFS drains queue with `list.pop(0)` — O(n²) | `scripts/detect_diamond_deps.py:191` | Confirmed | O(n²) queue drain; negligible at current graph size, degrades with dep-closure growth | [#189](https://gitlab.com/devnw/zig/uuid/-/work_items/189) | `collections.deque` + `popleft()` (O(1)); bundled with SEC-P5-01 | CI/build tooling owner | P3 — in-cycle | 🟡 Open (in-cycle fix) |
+| 3 | P3 | 4 | V7 same-ms overflow sleep uses `.real` clock for a relative-duration sleep | `src/generator.zig:873,1020` | Confirmed | 0 measurable impact; robustness/intent nit (correctness claim REFUTED) | [#192](https://gitlab.com/devnw/zig/uuid/-/work_items/192) | Switch `.real` → `.awake` (CLOCK_MONOTONIC) at both sites | generator.zig owner | P3 — in-cycle | 🟡 Open (in-cycle fix) |
+
+**PerfScore formula**: Impact (1-5) × Likelihood (1-5) × 4.
+
+### Findings by Area (Cycle 7)
+
+#### Build / CI
+
+##### PERF-62: bench-regression main gate runs `bench-contention` without `--runs` — statistically weaker than MR gate (P3, Confirmed) — [#193](https://gitlab.com/devnw/zig/uuid/-/work_items/193)
+
+**File**: `.gitlab-ci.yml:299` (main gate), `.gitlab-ci.yml:386` (MR gate), `.gitlab-ci.yml:357` (stale comment), `.gitlab-ci.yml:272` (`PERF26_THRESHOLD`)
+
+**Perf impact**: Regression-detection quality on the protected branch. The main-branch gate invokes `bench-contention` **without** `--runs`, while the MR gate uses `--runs 3` (across-run median, added by PERF-45/PERF-46). Single-run contention measurements have higher within-run variance, so the main gate can miss real ~6-7% throughput regressions that the MR gate's `--runs 3` median would catch. This **inverts the shift-left intent**: main should be at least as strict as MR, not weaker.
+
+**Evidence**:
+
+- Main gate (no `--runs`): `.gitlab-ci.yml:299` — `zig build bench-contention ... --output .../latest_contention.json`
+- MR gate (`--runs 3`): `.gitlab-ci.yml:386` — `zig build bench-contention ... --runs 3`
+- Stale comment: `.gitlab-ci.yml:357` claims `(bench-regression keeps 5% on main)` but `.gitlab-ci.yml:272` sets `PERF26_THRESHOLD: "0.15"` (15%, not 5%).
+
+**Root cause**: `--runs 3` was added to the MR gate but never back-ported to the main gate; separately, the threshold comment was never updated when `PERF26_THRESHOLD` moved to 0.15.
+
+**Fix guidance**: (1) Add `--runs 3` to the main-gate `bench-contention` at `:299`. (2) Correct the comment at `:357` to reflect `PERF26_THRESHOLD=0.15` (15%).
+
+**Validation plan**: `glab ci lint`; `grep -n 'bench-contention' .gitlab-ci.yml` (main now `--runs 3`); `grep -n 'PERF26_THRESHOLD' .gitlab-ci.yml` (comment matches 0.15).
+
+**Rollout risk**: Low. `--runs 3` ~3× the main-gate contention bench runtime — acceptable for a protected-branch gate; watch main pipeline duration.
+
+**Status**: 🟡 Open — scheduled for fix THIS CYCLE.
+
+##### PERF-60: `detect_diamond_deps.py` BFS uses `list.pop(0)` — O(n²) queue drain (P3, Confirmed) — [#189](https://gitlab.com/devnw/zig/uuid/-/work_items/189)
+
+**File**: `scripts/detect_diamond_deps.py:191`
+
+**Perf impact**: Cold-path CI tooling (diamond-dependency detector). Python `list.pop(0)` is O(n) per call (shifts all remaining elements), making the BFS over the transitive `build.zig.zon` closure O(n²) in the number of enqueued `.zon` files. Negligible at the current small graph size; degrades quadratically as the dependency closure grows.
+
+**Evidence**:
+
+```python
+queue: List[Path] = [root_zon]
+while queue:
+    zon_path = queue.pop(0)   # :191 — O(n) shift per iteration → O(n²) drain
+```
+
+**Root cause**: FIFO head-removal via `list.pop(0)` inside the traversal loop.
+
+**Fix guidance**: Use `collections.deque` and `popleft()` (O(1)); FIFO order preserved.
+
+**Validation plan**: `python3 scripts/detect_diamond_deps.py` — identical findings/exit code before and after; drain drops O(n²) → O(n).
+
+**Rollout risk**: Negligible (`deque.popleft()` is FIFO-equivalent). Scheduled for fix THIS CYCLE, **bundled with SEC-P5-01** hardening of the same file.
+
+**Status**: 🟡 Open — scheduled for fix THIS CYCLE.
+
+#### Hot Path (UUID Generation)
+
+##### PERF-61: V7 overflow sleep uses `.real` clock domain for a relative-duration sleep (P3, Confirmed — robustness nit) — [#192](https://gitlab.com/devnw/zig/uuid/-/work_items/192)
+
+**File**: `src/generator.zig:873` (CAS path), `src/generator.zig:1020` (mutex path)
+
+**Adjudication (recorded)**: The scanner originally flagged this as a **monotonicity/correctness** risk (wall-clock jumps perturbing the sleep). **perf-reviewer REFUTED that claim**: the sleep argument is a *relative* duration (`fromNanoseconds(sleep_ns)`), and after waking the code **re-reads the clock and recomputes** (`continue; // retry with fresh clock reading`), so the loop is self-correcting regardless of clock domain. Reclassified **correctness → robustness/intent nit**.
+
+**Perf impact**: None measurable. Defense-in-depth / intent-clarity: a monotonic-domain relative sleep cannot be perturbed by NTP/`settimeofday` adjustments and signals intent correctly.
+
+**Evidence**:
+
+```zig
+io_h.sleep(.fromNanoseconds(@intCast(sleep_ns)), .real) catch {};
+continue; // retry with fresh clock reading   // self-correcting → not a correctness bug
+```
+
+**Root cause**: Relative-duration sleep tagged `.real` instead of `.awake`. `std.Io.Clock` supports `.awake` (CLOCK_MONOTONIC) — verified in Zig 0.16 at `lib/std/Io.zig:721-769`.
+
+**Fix guidance**: Switch `.real` → `.awake` at both sites.
+
+**Validation plan**: `zig build test -Doptimize=ReleaseFast` (V7 monotonicity/overflow tests green); `zig build bench-contention -Doptimize=ReleaseFast -- --runs 3` (no throughput regression).
+
+**Rollout risk**: Very low — both sites re-read the clock after wake; only the sleep's reference clock domain changes. Scheduled for fix THIS CYCLE.
+
+**Status**: 🟡 Open — scheduled for fix THIS CYCLE.
+
+### Won't-Do (Cycle 7)
+
+Recorded in the top-of-file **Won't Do** table; rationale repeated here for the cycle record.
+
+- **PERF-63 — `zig-fmt` pre-commit full-tree rescan**: Hook is correctly designed. `zig fmt --check` requires directory args (it does not accept pre-commit's per-file list), so `pass_filenames: false` + fixed dir scan is the standard, correct pattern. Restricting to changed files would break the invocation contract or miss drift from non-`.zig` changes. No change.
+- **PERF-64 — merge `zig-build` + `zig-test` pre-push hooks**: Separate named hooks preserve failure-mode observability (build-broke vs test-failed is immediately distinguishable). Build artifacts are already shared between the two invocations, so the only saving is one hook-runner spawn — marginal speedup not worth the diagnostic-signal loss. No change.
+
+### perf-reviewer Adjudications Recorded (ledger, no new gaps)
+
+These are reviewer decisions captured for the audit trail; none open a new finding.
+
+- **PERF-61 correctness claim REFUTED** → robustness/intent nit only (see PERF-61 above). Self-correcting clock re-read after wake means the `.real`-domain relative sleep is not a monotonicity/correctness issue.
+- **PERF-37 confirmed correctly closed**: the stats counter has its own `align(64)` + padding line at `src/generator.zig:208-215`; `@offsetOf` witness confirms the dedicated cache line. No regression.
+- **PERF-37 + PERF-48 bundling REJECTED**: keep **PERF-48 standalone** (clockToMs CAS-retry hoist) — it is unrelated to the PERF-37 stats-counter cache-line layout; bundling would conflate two distinct concerns.
+- **4T → 8T lockfree throughput cliff**: adjudicated as **intrinsic single-CAS-word contention** (all threads CAS the one `v7_atomic_state` word). This is an **architectural ceiling**, not a layout/false-sharing bug. Documented mitigation = **sharded generators** (one per thread). **No new gap filed.**
+
+### GitLab Actions Log (Cycle 7)
+
+`glab` auth HEALTHY this cycle — issues created (numbering continued from #188; #190/#191 consumed by sibling agents in parallel):
+
+```text
+PERF-60 → #189  https://gitlab.com/devnw/zig/uuid/-/work_items/189
+PERF-61 → #192  https://gitlab.com/devnw/zig/uuid/-/work_items/192
+PERF-62 → #193  https://gitlab.com/devnw/zig/uuid/-/work_items/193
+```
+
+Labels applied to all three: `performance, priority::low, severity::p3, confidence::confirmed, status::triage, category::perf` + `area::ci` (PERF-60, PERF-62) / `area::app` (PERF-61).
+
+No issues filed for PERF-63 / PERF-64 (Won't-Do). No issues filed for the recorded adjudications (no new gaps).
+
+### Methodology (Cycle 7)
+
+- **HEAD**: `9bd6057` (main, clean tree).
+- **Verification**: code evidence re-read at exact lines — `scripts/detect_diamond_deps.py:191` (pop(0)), `src/generator.zig:873` + `:1020` (`.real` relative sleep + `continue` re-read), `.gitlab-ci.yml:299` (main gate, no `--runs`) vs `:386` (MR gate, `--runs 3`), `:357` stale comment vs `:272` `PERF26_THRESHOLD=0.15`. `std.Io.Clock.awake` (CLOCK_MONOTONIC) support verified in Zig 0.16 `lib/std/Io.zig:721-769` per perf-reviewer.
+- **Benchmarks run**: None this cycle (review/triage-driven; all three findings are confirmed by static code/CI evidence). Validation commands are recorded per-finding above and in each issue.
+- **GitLab mutation**: 3 issues created (#189, #192, #193). Auth healthy.
+- **Scope**: docs/PERF_GAP_ANALYSIS.md and PERF-series GitLab issues only. No product code modified.

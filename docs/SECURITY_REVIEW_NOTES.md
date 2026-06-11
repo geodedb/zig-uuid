@@ -1197,3 +1197,80 @@ glab issue update <iid> \
 | #154, #156, #158, #159, #161, #164, #167 | — | — | Closed in docs; closure-drift on tracker | 7× `glab issue close` (queued) |
 
 _Last updated: 2026-04-20 — Phase 4 audit cycle 4 (issue-tracker) + closure round. 3 new findings (all Info/Low, non-blocking): **O-1 ✅ Closed (`5a6f747`)** — `rotateStateMacKey` primitive landed with 4 new tests; O-2 Risk 4 (doc-only, open); H-1 Risk 2 (folded into SEC-P4-14, open). Sole open structural gap remains SEC-P4-14 (🚧 Blocked — recommend relabel `status::blocked-external-dependency`). 7 closure-drift tickets (#154, #156, #158, #159, #161, #164, #167) queued for batch close when `glab` auth is restored. `glab` auth DEGRADED — no tracker mutations performed._
+
+---
+
+## Phase 5 — 2026-06-11 (full appsec re-review + coverage-gap probes)
+
+> **Scope:** Full codebase + CI/CD + supply chain + disclosure hygiene.
+> **Reviewer:** appsec review (OWASP Top 10:2025 + CIS Controls v8.1.2) + security issue-tracking agent.
+> **Risk convention (this cycle):** Risk Score = Impact (1–5) × Likelihood (1–5) × 4 (range 4–100), per the security-scoring skill. (Differs from the raw-product convention used in Phase 3/4 sections above.)
+> **`glab` auth:** ✅ Restored — logged in as `benjiv`. Tracker mutations performed this cycle.
+
+### 1. Full appsec review
+
+Completed and saved to **`docs/APPSEC_REVIEW_2026-06-11.md`** (OWASP Top 10:2025 + CIS Controls v8.1.2).
+
+- **Zero** new Critical / High / Medium findings.
+- All prior security invariants verified intact (MAC-under-caller-policy on state load, fork reseed via `Generator.reseed()`, timestamp overflow guards, mutex-authoritative `resolveV1V6State`).
+- Known items re-validated **unchanged**: **SEC-P4-14** (CI ci-catalog moving-tag pin — still blocked, tracked #188), **O-2** (Info doc/lint gap — open, doc-only), **H-1** (Info — folded into SEC-P4-14 scope).
+
+### 2. Coverage-gap probes (CG-1..4) — all resolved clean
+
+| Probe | Question | Result |
+|-------|----------|--------|
+| CG-1  | (rolled into appsec review invariant re-verification) | Clean — no new exposure. |
+| CG-2  | Windows reparse-point / symlink TOCTOU on state file | **None.** The reparse/handle check runs on the **already-opened handle**, not a re-resolved path — no TOCTOU window. Evidence: `src/generator.zig:2050-2062`. |
+| CG-3  | Fuzz boundary seeds straddle `max_safe` timestamp | **Verified mathematically exact.** Fuzz seeds at `fuzz.zig:158,160` straddle the `max_safe` boundary defined at `timestamp.zig:125-127` exactly (one below, one above). Note: `--fuzz` could not bind a socket in the sandbox; **CI is unaffected** (CI runs fuzz with network). |
+| CG-4  | Transitive deps `uri-0.1.4` + `thread_pool-0.2.4` reachable from runtime? | **Bounds-safe and NOT reachable from any `uuid` runtime path.** `uuid_json` only touches `json.Value`; `uri` is imported solely by the json **schema** module; `thread_pool` is imported solely by the json **parallel** module. Neither is on a `uuid` core code path. |
+
+### 3. New findings (filed this cycle)
+
+**SEC-P5-01** (Low, CWE-22 / CWE-59, **Risk Score 8** = Impact 2 × Likelihood 1 × 4, confidence::confirmed) — Path traversal + symlink follow in dev tooling.
+`scripts/detect_diamond_deps.py` builds a filesystem path from an **unvalidated** `pkg_hash` parsed out of `build.zig.zon` (`_parse_dep_entries` → `_zon_path_for_hash` → `collect_transitive`), and `read_text` follows symlinks. A crafted hash (`../`) or a planted symlink under `zig-pkg/<hash>/build.zig.zon` can read an out-of-tree file on the dev/CI machine. **Surface:** local / dev-tooling only — NOT internet-facing, NOT in the published library runtime.
+**Fix (verified against the 3 real Zig hash formats — `^[A-Za-z0-9._-]+$` accepts all 3):** add `_SAFE_HASH` guard in `_parse_dep_entries`; reject symlinks in `_zon_path_for_hash`. **Scheduled for fix this cycle.**
+GitLab: [#190](https://gitlab.com/devnw/zig/uuid/-/work_items/190) (labels: `security`, `type::security`, `priority::low`). SLA 180d.
+
+**SEC-P5-02** (Low, disclosure hygiene; OWASP A05:2021 / CWE-200 adjacent, **Risk Score 4** = Impact 1 × Likelihood 1 × 4, confidence::confirmed) — Disclosure contact mismatch.
+`.well-known/security.txt:11` advertises `mailto:benji@codepros.org` while `SECURITY.md:13` instructs reporting to `security@codepros.dev`. Git-history analysis: `.dev` is scaffold-era; `.org` was deliberately authored later; org-wide convention is `codepros.dev` (`conduct@`, `support@`).
+**Resolution decided this cycle:** align both files on `security@codepros.dev` as **primary** AND keep `benji@codepros.org` as a **second** `Contact:` line in `security.txt` (RFC 9116 permits multiple contacts). **Scheduled for fix this cycle.**
+GitLab: [#191](https://gitlab.com/devnw/zig/uuid/-/work_items/191) (labels: `security`, `type::security`, `priority::low`). SLA 180d.
+
+### 4. Dispositions recorded
+
+| Item | Disposition | Notes |
+|------|-------------|-------|
+| NEW-01 | 🚫 Won't-Do | Developer-tooling governance precedent; geode-upstream-managed config. Recorded in `GAP_ANALYSIS.md` by gap-sync — cross-reference only (this doc does not own that ledger). |
+| NEW-02 | ✅ Resolved-at-HEAD | Optional release pin-gate noted as a future enhancement; no issue filed. |
+| NEW-05 | ✅ Accepted risk | Within the semi-trusted-kernel threat model; optional cap noted as future enhancement; no issue filed. |
+| O-2 | 🔓 Open (unchanged) | Info doc/lint gap; doc-only tracking. |
+| H-1 | 🔓 Open (unchanged) | Folded into SEC-P4-14 scope. |
+| SEC-P4-14 | 🚧 Blocked (unchanged) | CI ci-catalog moving-tag pin; tracked #188. See note 6 below. |
+
+### 5. Scan summary
+
+| Tool | Result |
+|------|--------|
+| gitleaks | Unavailable locally this run — **CI covers** secret scanning. |
+| semgrep | 309 rules → **0 findings**. |
+| vuln-mcp | **0 advisories** across all deps. |
+| Secrets in tree + history | **Zero** since 2026-04-20 (unchanged). |
+
+### 6. Note — SEC-P4-14 unblock plan file is ABSENT
+
+The SEC-P4-14 unblock plan file `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` is **referenced but does not exist** in the repo. Flagged in **#188**; it needs to be authored, or the reference corrected.
+
+### Phase 5 Summary
+
+| Gap-ID    | Severity | Risk Score | Status / disposition | Tracker |
+|-----------|----------|-----------|----------------------|---------|
+| SEC-P5-01 | Low      | 8         | 🔓 Open — scheduled for fix this cycle (path-traversal/symlink guard) | [#190](https://gitlab.com/devnw/zig/uuid/-/work_items/190) |
+| SEC-P5-02 | Low      | 4         | 🔓 Open — scheduled for fix this cycle (align disclosure contacts, RFC 9116 multi-contact) | [#191](https://gitlab.com/devnw/zig/uuid/-/work_items/191) |
+| SEC-P4-14 | Medium-High | 40     | 🚧 Blocked (unchanged) — plan file absent, flagged | [#188](https://gitlab.com/devnw/zig/uuid/-/work_items/188) |
+| O-2       | Info     | 4         | 🔓 Open (unchanged) — doc-only | — |
+| H-1       | Info     | 2         | 🔓 Open (unchanged) — folded into SEC-P4-14 | — |
+| NEW-01    | —        | —         | 🚫 Won't-Do (geode-upstream config) | GAP_ANALYSIS.md (gap-sync) |
+| NEW-02    | —        | —         | ✅ Resolved-at-HEAD | — |
+| NEW-05    | —        | —         | ✅ Accepted risk (semi-trusted-kernel) | — |
+
+_Last updated: 2026-06-11 — Phase 5 (full appsec re-review + CG probes + issue-tracking). Full appsec review (`docs/APPSEC_REVIEW_2026-06-11.md`): **zero new Critical/High/Medium**; all invariants intact; SEC-P4-14 / O-2 / H-1 re-validated unchanged. CG-1..4 all clean. **2 new Low findings filed: SEC-P5-01 (#190, Risk 8, CWE-22/CWE-59) + SEC-P5-02 (#191, Risk 4, disclosure hygiene)** — both scheduled for fix this cycle. Dispositions: NEW-01 Won't-Do, NEW-02 resolved-at-HEAD, NEW-05 accepted risk. Scans: semgrep 0/309, vuln-mcp 0 advisories, 0 secrets in tree+history (gitleaks via CI). SEC-P4-14 unblock plan file ABSENT — flagged #188. **No immediate-action items** (no leaked secrets, no active RCE). `glab` auth ✅ restored — tracker mutations performed._
