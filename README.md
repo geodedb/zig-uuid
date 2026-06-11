@@ -220,8 +220,7 @@ Three `HashContext` variants are available — see
 | `namespace_dns` / `namespace_url` / `namespace_oid` / `namespace_x500` | RFC-9562 §6.6 well-known namespace UUIDs |
 | `Namespace` | Closed tagged union over the four RFC namespaces plus a vetted `.custom` arm — use with `newV3Strict`/`newV5Strict` so the type system rejects attacker-controlled namespace UUIDs (SEC-P3-05) |
 | `Namespace.fromConfig(bytes: [16]u8, origin: []const u8)` | Construct a `.custom` namespace from configuration, recording its trusted origin |
-| `registerTrustedNamespaceOrigin(origin: []const u8)` | Register a trusted origin label for `.custom` namespaces (SEC-P4-04) |
-| `isTrusted(origin: []const u8)` | Check whether a namespace's origin has been registered as trusted |
+| `registerTrustedNamespaceOrigin(origin: []const u8)` | Register a trusted origin label for `.custom` namespaces (SEC-P4-04). `Namespace.fromConfig` consults this registry internally and returns `error.UnvettedNamespace` for unregistered origins |
 
 The nil and max UUIDs are available via both `uuid.nil`/`uuid.max` (top-level
 re-exports) and `uuid.UUID.nil`/`uuid.UUID.max` (struct-scoped constants).
