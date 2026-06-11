@@ -14,7 +14,7 @@
         "build.zig.zon",
         "src",
         "tests",
-        "bench",
+        "benchmarks",
         "examples",
         "docs",
         "LICENSE",
