@@ -317,8 +317,12 @@ bench-regression:
     - $TASKSET_PREFIX zig build bench-micro-format -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_format.json
     - $TASKSET_PREFIX zig build bench-micro-hash -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_hash.json
     - |
+      # State-suite benches are fsync-bound — throughput is a property of the
+      # runner's disk, not the code. Cross-machine comparison against committed
+      # baselines is meaningless, so state pairs report WARN instead of FAIL.
       zig build bench-compare-all -- \
-        --threshold "${PERF26_THRESHOLD:-0.15}" 2>&1 | tee bench-regression-report.txt
+        --threshold "${PERF26_THRESHOLD:-0.15}" \
+        --warn-only state 2>&1 | tee bench-regression-report.txt
   artifacts:
     when: always
     paths:
