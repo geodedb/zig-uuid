@@ -61,7 +61,7 @@ can avoid pulling in that dependency.
 - Full RFC-9562 conformance (V1, V3, V4, V5, V6, V7, V8 with correct version
   and variant nibbles; rejection of invalid variants in parse).
 - `zig build check && zig build test --summary all && zig build test-integration`
-  passes 257/257 unit tests + 1 skip and 37/37 integration tests on Zig 0.16.0.
+  passes 279 unit tests + 1 skip and 37/37 integration tests on Zig 0.16.0.
 - Cross-platform MAC resolution compiles on Linux / macOS / Windows;
   `withHWAddr` is opt-in and documented as exposing the host MAC.
 

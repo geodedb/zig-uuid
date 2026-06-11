@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (PERF-60).
 - Disclosure contacts aligned across `SECURITY.md` and
   `.well-known/security.txt` (SEC-P5-02).
+- README dependency-injection example used a non-existent
+  `gen.interface()` method; corrected to
+  `GeneratorInterface.fromGenerator(&gen)` (QC-125). Full error-set
+  table, namespace API, and hash-context tables also corrected
+  (QC-126..128).
+
+### Added (tests)
+
+- Delegation tests for the 7 module-level wrappers added after QC-30
+  (`newV3Bounded`, `newV5Bounded`, `saveState`, `loadState`,
+  `migrateStateToV3`, `rotateStateMacKey`, `secureWipeMacKey`) — unit
+  suite 274 → 279 passing (QC-147). Dead XFAIL guard removed from the
+  SEC-P4-01 downgrade integration test (QC-146).
 
 ## [0.1.1] - 2026-05-02
 
