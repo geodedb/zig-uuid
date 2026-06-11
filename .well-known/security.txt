@@ -8,6 +8,7 @@
 # Fields below follow the IETF RFC 9116 "A File Format to Aid in the
 # Coordinated Disclosure of Security Vulnerabilities" specification.
 
+Contact: mailto:security@codepros.dev
 Contact: mailto:benji@codepros.org
 Expires: 2027-12-31T23:59:59Z
 Policy: https://gitlab.com/devnw/zig/uuid/-/blob/main/SECURITY.md
