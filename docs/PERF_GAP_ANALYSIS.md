@@ -6,7 +6,7 @@
 > Reviewer: Performance review agent
 >
 > Last updated: 2026-04-20 (Phase-4 follow-up — 15 new findings: PERF-45 through PERF-59 — all P3 defense-in-depth / infra / cosmetic; Phase-2 triage applied (Phase-2-A REFUTED as noise / NO-ACTION; Phase-2-B CONFIRMED → PERF-59; Phase-2-C CORRECTED as Phase-2 math error). Tracker closure-drift reconciled for #155/#157 (still open on GitLab; in-doc closure authoritative since cycle 4). `glab` auth DEGRADED — all close/create commands prepared but NOT EXECUTED this cycle. Phase-5+ priority: (1) PERF-45 multi-run median → (2) PERF-46 CI contention gate → (3) PERF-59 timestamp-clock alignment.)
-> Cycle 7 appended: 2026-06-11 (3 new findings filed + 2 Won't-Do: PERF-60 [#189], PERF-61 [#192], PERF-62 [#193] — all P3/low, all scheduled for fix THIS CYCLE; PERF-63 + PERF-64 Won't-Do. perf-reviewer adjudications recorded: PERF-61 correctness claim REFUTED → robustness nit; PERF-37 confirmed correctly closed; PERF-37+PERF-48 bundling REJECTED; 4T→8T lockfree cliff = intrinsic single-CAS-word contention ceiling, no new gap. `glab` auth HEALTHY — 3 issues created. See "Performance Review Cycle 7" section at bottom.)
+> Cycle 7 appended: 2026-06-11 (3 new findings filed + 2 Won't-Do: PERF-60 [#189], PERF-61 [#192], PERF-62 [#193] — all P3/low, **all CLOSED this cycle** 2026-06-11: PERF-60 commits fa9b05f+5c2a7ea [#189 closed], PERF-61 commit 98276a9 [#192 closed], PERF-62 commit cc555b4 [#193 closed]; PERF-63 + PERF-64 Won't-Do. perf-reviewer adjudications recorded: PERF-61 correctness claim REFUTED → robustness nit; PERF-37 confirmed correctly closed; PERF-37+PERF-48 bundling REJECTED; 4T→8T lockfree cliff = intrinsic single-CAS-word contention ceiling, no new gap. `glab` auth HEALTHY — 3 issues created and closed. See "Performance Review Cycle 7" section at bottom.)
 > Cycle 6 appended: 2026-04-20 (15 new findings: PERF-45 through PERF-59 — see "Performance Review Phase-4 Follow-up" section near bottom)
 > 2026-04-19 snapshot (Phase-2/3 follow-up — 5 new findings: PERF-40 through PERF-44; Phase-3 corrections applied to PERF-37 diagnosis and to the stale "single `Generator.mutex`" claim in Appendix methodology. **Closure cycle 2026-04-19:** PERF-40 closed (`beb00ba`); PERF-43 closed (`4a7b3fd`); PERF-42 co-closed (`5202714`, folded with SEC-P4-A1 — CAS retry budget 32_768 → 4096). **Residual closure batch 2026-04-19:** PERF-41 closed (`6d5804e`, doc-only — README prehashed-fast-path note; wrapper option (b) deferred); PERF-44 closed (`38ffe49`, MR-gated `bench-micro-mr` job at 0.10 threshold). All 5 Phase-2/3 follow-up items closed.)
 > Cycle 2 appended: 2026-03-21 (5 new findings: PERF-11 through PERF-15)
@@ -2174,7 +2174,7 @@ glab issue create --title "PERF-59: Timestamp.now() bypasses clockCall() — V1/
 | P3 | 3 | CI dep-tool O(n²) BFS; V7 overflow sleep clock domain; main-gate bench statistically weaker than MR gate | 🟡 Open (in-cycle fix) |
 | Won't-Do | 2 | zig-fmt full-tree pre-commit rescan; zig-build+zig-test pre-push merge | 🚫 Won't Do |
 
-**Top risks (Cycle 7):** none material. All three findings are P3/low. The highest-value item (PERF-62, PerfScore 16) is a CI shift-left inversion that weakens main-branch regression detection — worth fixing but not user-facing.
+**Top risks (Cycle 7):** none material. All three findings are P3/low. The highest-value item (PERF-62, PerfScore 16) is a CI shift-left inversion that weakens main-branch regression detection — worth fixing but not user-facing. **All three RESOLVED 2026-06-11** (PERF-60 fa9b05f+5c2a7ea, PERF-61 98276a9, PERF-62 cc555b4; issues #189, #192, #193 closed).
 
 All three are **confidence::confirmed** (unambiguous code/CI evidence). PERF-61 was downgraded from a scanner-suggested correctness/monotonicity claim to a robustness nit after perf-reviewer refutation (see Adjudications below).
 
@@ -2182,9 +2182,9 @@ All three are **confidence::confirmed** (unambiguous code/CI evidence). PERF-61 
 
 | Rank | Severity | PerfScore | Finding | Component | Evidence | Measurement | GitLab Issue | Fix Summary | Owner | SLA/Due | Status |
 |------|----------|-----------|---------|-----------|----------|-------------|--------------|-------------|-------|---------|--------|
-| 1 | P3 | 16 | bench-regression main gate runs `bench-contention` without `--runs` (weaker than MR gate) + stale "5% on main" comment vs `PERF26_THRESHOLD=0.15` | `.gitlab-ci.yml:299,357,272` | Confirmed | Main gate single-run vs MR `--runs 3` median — misses ~6-7% regressions on protected branch | [#193](https://gitlab.com/devnw/zig/uuid/-/work_items/193) | Add `--runs 3` at `:299`; correct stale comment at `:357` | CI owner | P3 — in-cycle | 🟡 Open (in-cycle fix) |
-| 2 | P3 | 8 | `detect_diamond_deps.py` BFS drains queue with `list.pop(0)` — O(n²) | `scripts/detect_diamond_deps.py:191` | Confirmed | O(n²) queue drain; negligible at current graph size, degrades with dep-closure growth | [#189](https://gitlab.com/devnw/zig/uuid/-/work_items/189) | `collections.deque` + `popleft()` (O(1)); bundled with SEC-P5-01 | CI/build tooling owner | P3 — in-cycle | 🟡 Open (in-cycle fix) |
-| 3 | P3 | 4 | V7 same-ms overflow sleep uses `.real` clock for a relative-duration sleep | `src/generator.zig:873,1020` | Confirmed | 0 measurable impact; robustness/intent nit (correctness claim REFUTED) | [#192](https://gitlab.com/devnw/zig/uuid/-/work_items/192) | Switch `.real` → `.awake` (CLOCK_MONOTONIC) at both sites | generator.zig owner | P3 — in-cycle | 🟡 Open (in-cycle fix) |
+| 1 | P3 | 16 | bench-regression main gate runs `bench-contention` without `--runs` (weaker than MR gate) + stale "5% on main" comment vs `PERF26_THRESHOLD=0.15` | `.gitlab-ci.yml:299,357,272` | Confirmed | Main gate single-run vs MR `--runs 3` median — misses ~6-7% regressions on protected branch | [#193](https://gitlab.com/devnw/zig/uuid/-/work_items/193) | Add `--runs 3` at `:299`; correct stale comment at `:357` | CI owner | P3 — in-cycle | ✅ RESOLVED 2026-06-11 — commit cc555b4. Issue #193 closed. |
+| 2 | P3 | 8 | `detect_diamond_deps.py` BFS drains queue with `list.pop(0)` — O(n²) | `scripts/detect_diamond_deps.py:191` | Confirmed | O(n²) queue drain; negligible at current graph size, degrades with dep-closure growth | [#189](https://gitlab.com/devnw/zig/uuid/-/work_items/189) | `collections.deque` + `popleft()` (O(1)); bundled with SEC-P5-01 | CI/build tooling owner | P3 — in-cycle | ✅ RESOLVED 2026-06-11 — commits fa9b05f + 5c2a7ea (bundled with SEC-P5-01). Issue #189 closed. |
+| 3 | P3 | 4 | V7 same-ms overflow sleep uses `.real` clock for a relative-duration sleep | `src/generator.zig:873,1020` | Confirmed | 0 measurable impact; robustness/intent nit (correctness claim REFUTED) | [#192](https://gitlab.com/devnw/zig/uuid/-/work_items/192) | Switch `.real` → `.awake` (CLOCK_MONOTONIC) at both sites | generator.zig owner | P3 — in-cycle | ✅ RESOLVED 2026-06-11 — commit 98276a9. Issue #192 closed. |
 
 **PerfScore formula**: Impact (1-5) × Likelihood (1-5) × 4.
 
@@ -2212,7 +2212,7 @@ All three are **confidence::confirmed** (unambiguous code/CI evidence). PERF-61 
 
 **Rollout risk**: Low. `--runs 3` ~3× the main-gate contention bench runtime — acceptable for a protected-branch gate; watch main pipeline duration.
 
-**Status**: 🟡 Open — scheduled for fix THIS CYCLE.
+**Status**: ✅ RESOLVED 2026-06-11 — commit cc555b4: `--runs 3` added to main-gate `bench-contention` invocation at `.gitlab-ci.yml:299`; stale "5% on main" comment corrected to reflect `PERF26_THRESHOLD=0.15`. Issue [#193](https://gitlab.com/devnw/zig/uuid/-/work_items/193) closed.
 
 ##### PERF-60: `detect_diamond_deps.py` BFS uses `list.pop(0)` — O(n²) queue drain (P3, Confirmed) — [#189](https://gitlab.com/devnw/zig/uuid/-/work_items/189)
 
@@ -2236,7 +2236,7 @@ while queue:
 
 **Rollout risk**: Negligible (`deque.popleft()` is FIFO-equivalent). Scheduled for fix THIS CYCLE, **bundled with SEC-P5-01** hardening of the same file.
 
-**Status**: 🟡 Open — scheduled for fix THIS CYCLE.
+**Status**: ✅ RESOLVED 2026-06-11 — commits fa9b05f + 5c2a7ea: `collections.deque` + `popleft()` replacing `list.pop(0)` at `scripts/detect_diamond_deps.py:191`; bundled with SEC-P5-01 hardening of the same file. Issue [#189](https://gitlab.com/devnw/zig/uuid/-/work_items/189) closed.
 
 #### Hot Path (UUID Generation)
 
@@ -2263,7 +2263,7 @@ continue; // retry with fresh clock reading   // self-correcting → not a corre
 
 **Rollout risk**: Very low — both sites re-read the clock after wake; only the sleep's reference clock domain changes. Scheduled for fix THIS CYCLE.
 
-**Status**: 🟡 Open — scheduled for fix THIS CYCLE.
+**Status**: ✅ RESOLVED 2026-06-11 — commit 98276a9: `.real` → `.awake` at both V7 spin-sleep sites (`src/generator.zig:873` and `:1020`). 279/280 unit + 37/37 integration green. Issue [#192](https://gitlab.com/devnw/zig/uuid/-/work_items/192) closed.
 
 ### Won't-Do (Cycle 7)
 

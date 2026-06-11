@@ -1228,13 +1228,15 @@ Completed and saved to **`docs/APPSEC_REVIEW_2026-06-11.md`** (OWASP Top 10:2025
 
 **SEC-P5-01** (Low, CWE-22 / CWE-59, **Risk Score 8** = Impact 2 × Likelihood 1 × 4, confidence::confirmed) — Path traversal + symlink follow in dev tooling.
 `scripts/detect_diamond_deps.py` builds a filesystem path from an **unvalidated** `pkg_hash` parsed out of `build.zig.zon` (`_parse_dep_entries` → `_zon_path_for_hash` → `collect_transitive`), and `read_text` follows symlinks. A crafted hash (`../`) or a planted symlink under `zig-pkg/<hash>/build.zig.zon` can read an out-of-tree file on the dev/CI machine. **Surface:** local / dev-tooling only — NOT internet-facing, NOT in the published library runtime.
-**Fix (verified against the 3 real Zig hash formats — `^[A-Za-z0-9._-]+$` accepts all 3):** add `_SAFE_HASH` guard in `_parse_dep_entries`; reject symlinks in `_zon_path_for_hash`. **Scheduled for fix this cycle.**
+**Fix (verified against the 3 real Zig hash formats — `^[A-Za-z0-9._-]+$` accepts all 3):** add `_SAFE_HASH` guard in `_parse_dep_entries`; reject symlinks in `_zon_path_for_hash`.
 GitLab: [#190](https://gitlab.com/devnw/zig/uuid/-/work_items/190) (labels: `security`, `type::security`, `priority::low`). SLA 180d.
+**✅ RESOLVED 2026-06-11** — commits fa9b05f + 5c2a7ea: `SAFE_HASH_RE` regex anchored with `\Z`; symlink rejection added in `_zon_path_for_hash`; BFS queue converted to `collections.deque` (bundled PERF-60). Issue #190 closed.
 
 **SEC-P5-02** (Low, disclosure hygiene; OWASP A05:2021 / CWE-200 adjacent, **Risk Score 4** = Impact 1 × Likelihood 1 × 4, confidence::confirmed) — Disclosure contact mismatch.
 `.well-known/security.txt:11` advertises `mailto:benji@codepros.org` while `SECURITY.md:13` instructs reporting to `security@codepros.dev`. Git-history analysis: `.dev` is scaffold-era; `.org` was deliberately authored later; org-wide convention is `codepros.dev` (`conduct@`, `support@`).
-**Resolution decided this cycle:** align both files on `security@codepros.dev` as **primary** AND keep `benji@codepros.org` as a **second** `Contact:` line in `security.txt` (RFC 9116 permits multiple contacts). **Scheduled for fix this cycle.**
+**Resolution decided this cycle:** align both files on `security@codepros.dev` as **primary** AND keep `benji@codepros.org` as a **second** `Contact:` line in `security.txt` (RFC 9116 permits multiple contacts).
 GitLab: [#191](https://gitlab.com/devnw/zig/uuid/-/work_items/191) (labels: `security`, `type::security`, `priority::low`). SLA 180d.
+**✅ RESOLVED 2026-06-11** — commit d5fdb44: `.well-known/security.txt` updated with `security@codepros.dev` as primary Contact + `benji@codepros.org` as secondary Contact; `SECURITY.md` aligned on `security@codepros.dev` as primary reporting address. Issue #191 closed.
 
 ### 4. Dispositions recorded
 
@@ -1256,21 +1258,21 @@ GitLab: [#191](https://gitlab.com/devnw/zig/uuid/-/work_items/191) (labels: `sec
 | vuln-mcp | **0 advisories** across all deps. |
 | Secrets in tree + history | **Zero** since 2026-04-20 (unchanged). |
 
-### 6. Note — SEC-P4-14 unblock plan file is ABSENT
+### 6. Note — SEC-P4-14 unblock plan file
 
-The SEC-P4-14 unblock plan file `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` is **referenced but does not exist** in the repo. Flagged in **#188**; it needs to be authored, or the reference corrected.
+**Update 2026-06-11:** The SEC-P4-14 unblock plan file `docs/superpowers/plans/2026-04-19-sec-p4-ci-catalog-sha-pins.md` has been **authored in commit a5373be**. The plan is now present in the repo. Noted in #188 comment. The issue remains BLOCKED on the operator supplying the tag→SHA map for 8 ci-catalog components at `gitlab.com/devnw/ci-catalog@v1.7.1`.
 
 ### Phase 5 Summary
 
 | Gap-ID    | Severity | Risk Score | Status / disposition | Tracker |
 |-----------|----------|-----------|----------------------|---------|
-| SEC-P5-01 | Low      | 8         | 🔓 Open — scheduled for fix this cycle (path-traversal/symlink guard) | [#190](https://gitlab.com/devnw/zig/uuid/-/work_items/190) |
-| SEC-P5-02 | Low      | 4         | 🔓 Open — scheduled for fix this cycle (align disclosure contacts, RFC 9116 multi-contact) | [#191](https://gitlab.com/devnw/zig/uuid/-/work_items/191) |
-| SEC-P4-14 | Medium-High | 40     | 🚧 Blocked (unchanged) — plan file absent, flagged | [#188](https://gitlab.com/devnw/zig/uuid/-/work_items/188) |
+| SEC-P5-01 | Low      | 8         | ✅ Closed 2026-06-11 — commits fa9b05f + 5c2a7ea (SAFE_HASH_RE anchored, symlink rejection, deque BFS) | [#190](https://gitlab.com/devnw/zig/uuid/-/work_items/190) |
+| SEC-P5-02 | Low      | 4         | ✅ Closed 2026-06-11 — commit d5fdb44 (contacts aligned: <security@codepros.dev> primary, <benji@codepros.org> secondary) | [#191](https://gitlab.com/devnw/zig/uuid/-/work_items/191) |
+| SEC-P4-14 | Medium-High | 40     | 🚧 Blocked (unchanged) — plan file NOW AUTHORED (a5373be); awaiting operator tag→SHA map | [#188](https://gitlab.com/devnw/zig/uuid/-/work_items/188) |
 | O-2       | Info     | 4         | 🔓 Open (unchanged) — doc-only | — |
 | H-1       | Info     | 2         | 🔓 Open (unchanged) — folded into SEC-P4-14 | — |
 | NEW-01    | —        | —         | 🚫 Won't-Do (geode-upstream config) | GAP_ANALYSIS.md (gap-sync) |
 | NEW-02    | —        | —         | ✅ Resolved-at-HEAD | — |
 | NEW-05    | —        | —         | ✅ Accepted risk (semi-trusted-kernel) | — |
 
-_Last updated: 2026-06-11 — Phase 5 (full appsec re-review + CG probes + issue-tracking). Full appsec review (`docs/APPSEC_REVIEW_2026-06-11.md`): **zero new Critical/High/Medium**; all invariants intact; SEC-P4-14 / O-2 / H-1 re-validated unchanged. CG-1..4 all clean. **2 new Low findings filed: SEC-P5-01 (#190, Risk 8, CWE-22/CWE-59) + SEC-P5-02 (#191, Risk 4, disclosure hygiene)** — both scheduled for fix this cycle. Dispositions: NEW-01 Won't-Do, NEW-02 resolved-at-HEAD, NEW-05 accepted risk. Scans: semgrep 0/309, vuln-mcp 0 advisories, 0 secrets in tree+history (gitleaks via CI). SEC-P4-14 unblock plan file ABSENT — flagged #188. **No immediate-action items** (no leaked secrets, no active RCE). `glab` auth ✅ restored — tracker mutations performed._
+_Last updated: 2026-06-11 — Phase 5 (full appsec re-review + CG probes + issue-tracking) **CLOSURE COMPLETE**. Full appsec review (`docs/APPSEC_REVIEW_2026-06-11.md`): **zero new Critical/High/Medium**; all invariants intact; SEC-P4-14 / O-2 / H-1 re-validated unchanged. CG-1..4 all clean. **2 new Low findings filed and CLOSED this cycle: SEC-P5-01 (#190, Risk 8, CWE-22/CWE-59, commits fa9b05f+5c2a7ea) + SEC-P5-02 (#191, Risk 4, disclosure hygiene, commit d5fdb44)**. Dispositions: NEW-01 Won't-Do, NEW-02 resolved-at-HEAD, NEW-05 accepted risk. Scans: semgrep 0/309, vuln-mcp 0 advisories, 0 secrets in tree+history (gitleaks via CI). SEC-P4-14 unblock plan file authored (a5373be) — still blocked on operator tag→SHA map; flagged #188. **No immediate-action items** (no leaked secrets, no active RCE). `glab` auth ✅ restored — issues #190, #191 closed._

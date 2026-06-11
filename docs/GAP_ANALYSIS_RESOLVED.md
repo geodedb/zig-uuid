@@ -3,7 +3,7 @@
 > Mirror of resolved items that were previously tracked in `docs/GAP_ANALYSIS.md`
 > and the GitLab issue tracker. The issue tracker is authoritative.
 >
-> Last updated: 2026-06-11 (Closure-drift batch cycle — `glab` auth restored; **GAP-DOC-10** resolved and migrated here; the 25 closure-drift tracker items #154–#178 [exact set: #154,#156,#158,#159,#161,#164,#167,#155,#157,#160,#162,#163,#165,#166,#168–#178] were batch-closed on the GitLab tracker, reconciling the long-standing docs↔tracker drift. New open gaps GAP-DOC-17..21 + SEC-P4-14 recorded in `docs/GAP_ANALYSIS.md` "Audit Cycle 2026-06-11" — not yet resolved, so not mirrored here.)
+> Last updated: 2026-06-11 (Audit cycle 2026-06-11 closure complete — **GAP-DOC-17..21** resolved and migrated here (5 doc-drift items, GitLab #183–#187 closed); **GAP-DOC-10** resolved and migrated here (closure-drift batch cycle — `glab` auth restored); the 25 closure-drift tracker items #154–#178 [exact set: #154,#156,#158,#159,#161,#164,#167,#155,#157,#160,#162,#163,#165,#166,#168–#178] were batch-closed on the GitLab tracker, reconciling the long-standing docs↔tracker drift. **Only SEC-P4-14 (#188, Blocked-external) remains open** across all tracker files. Cumulative closures: 105. Won't-Do retained: 4.)
 > Previously: 2026-04-20 (Phase 5 closure cycle — 12 items closed across GAP-CI-01, 4 SEC-P4 security items, 1 SEC-P4 adversarial co-closure, 2 PERF items + 1 PERF co-closure, 4 QC items + 1 QC co-closure. **Residual closure batch:** +7 items — SEC-P4-13, GAP-DOC-11, GAP-DOC-12, PERF-41, PERF-44, QC-116, QC-117. **QC-113d re-attempt 2026-04-20:** previously deferred, now closed — V7 CAS state-machine extracted into pure `V7Cas.transition` helper; ABA-avoidance + PERF-40 invariants preserved. After the re-attempt, only SEC-P4-14 (Blocked) remains open across all tracker files. Plus the earlier Phase 5 sync migration of Legacy F-1..F-9 + G-1..G-10 and GAP-DOC-13.)
 
 ## Summary
@@ -1248,3 +1248,67 @@ creates a `GeneratorInterface` backed by the concrete `Generator` via the
 QC-113d was subsequently re-attempted on 2026-04-20 per `docs/superpowers/plans/2026-04-19-qc-113d-v7-cas-reattempt.md`. The V7 CAS state-machine was extracted into a pure `V7Cas.transition` helper inside `Generator` (non-`pub`) and `newV7Atomic` was rewired to delegate the decision tree. ABA-avoidance (single-word `cmpxchgStrong` with `.acq_rel` / `.acquire` orderings) preserved; PERF-40 + PERF-34 layout witnesses pass; bench-compare within stddev-adjusted gates on all V7 scenarios (`v7_contention_lockfree_8T` +1.23%). See the `### QC-113d: V7 CAS state-machine extraction [RESOLVED]` section above for full details. Commits: `37419f6`, `b179892`, `a51e411`, `8211c0c`.
 
 **Post-re-attempt status:** across every tracker file, only **SEC-P4-14 (Blocked)** remains open. Cumulative closures: **100** (99 prior + QC-113d re-attempt).
+
+---
+
+## Audit Cycle 2026-06-11 — Doc-Drift Closure (5 items)
+
+> HEAD at closure: d1b161e (pushed to main). Test state: 279/280 unit Debug+ReleaseSafe + 1 Windows-only skip, 37/37 integration, fmt clean, examples/bench-check OK.
+> These items were opened and fixed same-cycle (2026-06-11). GitLab issues #183–#187 created then closed same cycle with evidence notes. Only SEC-P4-14 (#188) remains open (Blocked-external).
+
+### GAP-DOC-17: Version string drift `root.zig` 0.1.0 vs zon 0.1.1 [RESOLVED]
+
+- **Issue:** [#183](https://gitlab.com/devnw/zig/uuid/-/work_items/183) — closed 2026-06-11
+- **Category:** Docs
+- **Severity:** Low
+- **Resolution:** `src/root.zig` `pub const version` bumped to `"0.1.1"` to match `build.zig.zon`; README API-constant example updated; CI version-consistency gate added to enforce the invariant going forward.
+- **Evidence:** `src/root.zig` `pub const version = "0.1.1"` matches `build.zig.zon:.version = "0.1.1"`.
+- **Commits:** `036bdb9` + `5ba1cf9`
+- **Resolved date:** 2026-06-11
+
+### GAP-DOC-18: README install instructions reference v0.1.0 + stale unreleased note [RESOLVED]
+
+- **Issue:** [#184](https://gitlab.com/devnw/zig/uuid/-/work_items/184) — closed 2026-06-11
+- **Category:** Docs
+- **Severity:** Low
+- **Resolution:** README `zig fetch` URL and dependency `.url` snippet updated to `v0.1.1`; stale "v0.1.0 is unreleased" note removed. Install instructions now reference the current released tag.
+- **Evidence:** `README.md` install section — URL and snippet reference `v0.1.1`; stale note absent.
+- **Commits:** `036bdb9` + `5ba1cf9` + `6041865`
+- **Resolved date:** 2026-06-11
+
+### GAP-DOC-19: CHANGELOG missing `[0.1.1]` section + stale compare link [RESOLVED]
+
+- **Issue:** [#185](https://gitlab.com/devnw/zig/uuid/-/work_items/185) — closed 2026-06-11
+- **Category:** Docs
+- **Severity:** Low
+- **Resolution:** `CHANGELOG.md` `[0.1.1]` section added with release notes for the cycle's closed items (QC-125, QC-146, QC-147, plus earlier dep-convergence entries); `[Unreleased]` compare link re-based to `v0.1.1...HEAD`; `[0.1.1]` release link added.
+- **Evidence:** `CHANGELOG.md` — `[0.1.1]` section + link present; `[Unreleased]: .../compare/v0.1.1...HEAD`.
+- **Commit:** `6041865`
+- **Resolved date:** 2026-06-11
+
+### GAP-DOC-20: docs index missing APPSEC_REVIEW + SECURITY_REVIEW_NOTES links [RESOLVED]
+
+- **Issue:** [#186](https://gitlab.com/devnw/zig/uuid/-/work_items/186) — closed 2026-06-11
+- **Category:** Docs
+- **Severity:** Low
+- **Resolution:** `docs/README.md` Quick Links section updated to include `APPSEC_REVIEW_2026-06-11.md` and `SECURITY_REVIEW_NOTES.md` entries, making security review artifacts discoverable from the docs landing page.
+- **Evidence:** `docs/README.md` Quick Links — both security review docs now linked.
+- **Commit:** `485a663`
+- **Resolved date:** 2026-06-11
+
+### GAP-DOC-21: REQUIREMENTS UUID-TEST-005 cites removed `check-cross` step [RESOLVED]
+
+- **Issue:** [#187](https://gitlab.com/devnw/zig/uuid/-/work_items/187) — closed 2026-06-11
+- **Category:** Docs
+- **Severity:** Low
+- **Resolution:** `docs/REQUIREMENTS.md` UUID-TEST-005 verification pointer updated from the removed `check-cross` step to the current `test-cross-build` CI job at `.gitlab-ci.yml:190-196`, which loops `zig build check -Dtarget=$t` over 5 cross-compile targets.
+- **Evidence:** `docs/REQUIREMENTS.md` UUID-TEST-005 — cites `test-cross-build` (`.gitlab-ci.yml:190-196`).
+- **Commit:** `485a663`
+- **Resolved date:** 2026-06-11
+
+### Audit Cycle 2026-06-11 — Tally
+
+- Full closures this cycle: **5** (GAP-DOC-17, GAP-DOC-18, GAP-DOC-19, GAP-DOC-20, GAP-DOC-21).
+- Blocked (unchanged): **1** (SEC-P4-14 — plan file now authored `a5373be`; still awaiting operator tag→SHA map).
+- **After this cycle:** only **SEC-P4-14 (#188, Blocked-external)** remains open across all tracker files.
+- Cumulative closures this project: **105** (100 prior + 5 GAP-DOC-17..21). Won't-Do retained: 4.
