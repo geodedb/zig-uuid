@@ -92,7 +92,7 @@ HASH_RE = re.compile(r'\.hash\s*=\s*"(?P<hash>[^"]+)"')
 # SEC-P5-01 (CWE-22): Zig package hashes are `<name>-<semver>-<base64url>`
 # — strictly [A-Za-z0-9._-]. Reject anything else before the hash is used
 # as a path component (blocks `../` traversal from a hostile manifest).
-SAFE_HASH_RE = re.compile(r"^[A-Za-z0-9._-]{8,256}$")
+SAFE_HASH_RE = re.compile(r"^[A-Za-z0-9._-]{8,256}\Z")
 
 
 # Strip `// ...` line comments BUT NOT when the `//` sits inside a
