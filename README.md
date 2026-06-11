@@ -230,7 +230,7 @@ Both refer to the same values; prefer the shorter `uuid.nil`/`uuid.max` form.
 
 | Constant | Description |
 |----------|-------------|
-| `uuid.version` | Library version string (e.g. `"0.1.0"`) |
+| `uuid.version` | Library version string (e.g. `"0.1.1"`) |
 
 ### JSON Adapter
 

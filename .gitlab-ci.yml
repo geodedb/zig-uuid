@@ -82,6 +82,17 @@ zig-format:
   before_script:
     - *install-zig
 
+# GAP-DOC-17: root.zig `version` must match build.zig.zon `.version`.
+# Two sources of truth drifted at the v0.1.1 bump; this gate prevents a repeat.
+version-consistency:
+  stage: lint
+  image: debian:bookworm-slim
+  script:
+    - ZON_V=$(grep -oP '\.version = "\K[^"]+' build.zig.zon)
+    - ROOT_V=$(grep -oP 'pub const version = "\K[^"]+' src/root.zig)
+    - echo "zon=$ZON_V root=$ROOT_V"
+    - test "$ZON_V" = "$ROOT_V"
+
 # Build job (QC-18: use `zig build check` so all source files are actually
 # type-checked.  `zig build` with no installArtifact in build.zig is a no-op
 # for source compilation — only the build-runner binary gets compiled.)
