@@ -283,6 +283,15 @@ fuzz:
 bench-regression:
   stage: fuzz
   image: debian:bookworm-slim
+  # Pin bench jobs to the OVH dedicated runners (linux excludes the Windows
+  # runner that also carries `dedicated`): consistent bare-metal hardware with
+  # local disk. The k8s cluster runner's network-backed storage makes the
+  # fsync-bound state suite exceed the 1h job timeout, and machine-to-machine
+  # variance defeats the regression gate (INV-01 spirit).
+  tags:
+    - company
+    - linux
+    - dedicated
   variables:
     PERF26_THRESHOLD: "0.15"
     BENCH_PIN_CORES: "1"
@@ -371,6 +380,12 @@ build-bench:
 bench-micro-mr:
   stage: fuzz
   image: debian:bookworm-slim
+  # Same dedicated-runner pin as bench-regression (consistent hardware for
+  # comparable bench numbers; avoids slow network-backed storage).
+  tags:
+    - company
+    - linux
+    - dedicated
   variables:
     MICRO_THRESHOLD: "0.10"
     # PERF-46: contention gate at 10% on MR (bench-regression keeps 15% on main, PERF26_THRESHOLD).

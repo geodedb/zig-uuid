@@ -2850,3 +2850,24 @@ The document intentionally repeats the `## Won't Do Policy — All Cycles` headi
 - **Remaining open (deferred to future cycle):** QC-110, QC-111.
 
 _Last updated: 2026-06-11 — Phase 4 audit cycle 4 **CLOSURE COMPLETE**. 6 candidates examined (QC-145–QC-150): 1 Medium + 3 Low filed as GitLab issues (#179–#182, all closed this cycle), 1 Won't-Do (QC-148), 1 DROPPED (QC-150). QC-103 moved Open → ✅ RESOLVED (re-verified; no issue ever existed). QC-112/124/125/126/127/128/145/146/147/149 — all 10 items ✅ RESOLVED 2026-06-11. Only QC-110 and QC-111 remain open (deferred). `glab` auth HEALTHY. Issues closed: #179, #180, #181, #182._
+
+## Iteration-2 verification pass (2026-06-11, same day)
+
+Post-closure delta re-scan (quality-scanner over `9bd6057..fcace35`) surfaced 4 findings in the
+just-landed code; all **fixed in-band same-cycle** (commit `0e7973c`), no GitLab issues filed
+(precedent: doc-drift in-band fixes, 2026-04-20 cycle):
+
+- **QC-151 (Medium → ✅ fixed `0e7973c`):** `benchmarks/compare.zig` `runWalker` never accumulated
+  `pair_stats.warnings` into `total.warnings`; `--all` summary always printed `0 warning(s)`.
+- **QC-152 (Low → ✅ fixed `0e7973c`):** `--warn-only` demoted the `duplicate_uuids` correctness
+  gate alongside the throughput gate; duplicate detection now always FAILs regardless of
+  `--warn-only`.
+- **QC-153 (nit → ✅ fixed `0e7973c`):** `--dir` lacked the `=`-form parsing that `--threshold`
+  and `--warn-only` support.
+- **QC-154 (nit → ✅ fixed `0e7973c`):** QC-147 tests repeated a 6-line tmp-path construction 3×;
+  extracted file-local `tmpStatePath` helper in `src/versions.zig`. (Pre-existing duplication in
+  `tests/integration.zig` left as-is — out of scope.)
+
+Also fixed in-band: `docs/GAP_ANALYSIS.md` GAP-DOC-17..21 resolved blocks were copied (not moved)
+to the resolved file — now deleted from the open file (commit `8d80fa7`). Perf and security
+delta re-scans returned **zero** new findings (see `docs/APPSEC_REVIEW_2026-06-11_diff-9bd6057-fcace35.md`).
