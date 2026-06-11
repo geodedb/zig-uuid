@@ -5,6 +5,10 @@
 default:
   tags:
     - company
+    # Exclude the Windows PowerShell runner from the `company` pool — every
+    # job in this file is a bash/Linux job (Windows coverage is cross-compile
+    # only, via test-cross-build).
+    - linux
 
 include:
   # Security scanning
