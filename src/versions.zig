@@ -407,3 +407,92 @@ test "module-level initV5Namespace matches newV5 for the same namespace (QC-100)
     const b = newV5(ns_mod.namespace_url, "https://example.com");
     try std.testing.expect(a.eql(b));
 }
+
+// QC-147: delegation tests for the 7 wrappers added after QC-30.
+
+test "top-level newV3Bounded delegates and enforces cap (QC-147)" {
+    const ns = @import("namespace.zig").namespace_dns;
+    const u = try newV3Bounded(ns, "www.example.com", 64);
+    const expected = newV3(ns, "www.example.com");
+    try std.testing.expectEqual(expected, u);
+    try std.testing.expectError(
+        uuid_mod.Error.NameTooLong,
+        newV3Bounded(ns, "www.example.com", 4),
+    );
+}
+
+test "top-level newV5Bounded delegates and enforces cap (QC-147)" {
+    const ns = @import("namespace.zig").namespace_dns;
+    const u = try newV5Bounded(ns, "www.example.com", 64);
+    const expected = newV5(ns, "www.example.com");
+    try std.testing.expectEqual(expected, u);
+    try std.testing.expectError(
+        uuid_mod.Error.NameTooLong,
+        newV5Bounded(ns, "www.example.com", 4),
+    );
+}
+
+test "top-level saveState/loadState delegate to default_generator (QC-147)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try std.process.currentPath(io, &cwd_buf);
+    var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buf,
+        "{s}/.zig-cache/tmp/{s}/qc147.state",
+        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
+    );
+
+    _ = try newV7(); // ensure default_generator has V7 state to persist
+    try saveState(path);
+    try loadState(path); // round-trip through the module-level wrappers
+}
+
+test "top-level migrateStateToV3 delegates to default_generator (QC-147)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try std.process.currentPath(io, &cwd_buf);
+    var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buf,
+        "{s}/.zig-cache/tmp/{s}/qc147-migrate.state",
+        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
+    );
+
+    // Save a v2 (keyless) file via the module wrapper, then migrate under a key.
+    defer secureWipeMacKey(); // restore global key-null state for other tests
+    secureWipeMacKey(); // guarantee keyless state before saving v2
+    _ = try newV7();
+    try saveState(path); // v2 — no key configured
+    gen_mod.default_generator.state_mac_key = .{0x42} ** 32;
+    try migrateStateToV3(path);
+    try loadState(path); // v3 file now loads under the configured key
+}
+
+test "top-level rotateStateMacKey + secureWipeMacKey delegate (QC-147)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try std.process.currentPath(io, &cwd_buf);
+    var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buf,
+        "{s}/.zig-cache/tmp/{s}/qc147-rotate.state",
+        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
+    );
+
+    defer secureWipeMacKey(); // always restore global key-null state
+    gen_mod.default_generator.state_mac_key = .{0x11} ** 32;
+    _ = try newV7();
+    try saveState(path); // v3 under the old key
+    try rotateStateMacKey(path, .{0x22} ** 32);
+    try loadState(path); // authenticates under the new key
+
+    secureWipeMacKey();
+    try std.testing.expect(gen_mod.default_generator.state_mac_key == null);
+}
