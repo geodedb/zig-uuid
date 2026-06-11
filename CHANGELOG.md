@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `src/root.zig` `version` constant synced to the package version (`0.1.1`)
+  with a CI consistency gate (GAP-DOC-17).
+- `.paths` in `build.zig.zon` now ships `benchmarks/` (the stale `bench`
+  entry pointed at a directory removed in the benchmark-suite rewrite)
+  (QC-145).
+- V7 spin-sleep intervals use the monotonic (`.awake`) clock (PERF-61).
+- `scripts/detect_diamond_deps.py`: package-hash format validation +
+  symlink rejection before cache reads (SEC-P5-01); O(1) BFS dequeue
+  (PERF-60).
+- Disclosure contacts aligned across `SECURITY.md` and
+  `.well-known/security.txt` (SEC-P5-02).
+
+## [0.1.1] - 2026-05-02
+
 ### Release Notes -- 2026-04-18..2026-04-20 Phase 2/3 Quality Audit Closures (QC-113..QC-117, QC-114, PERF-41/44, SEC-P4-13)
 
 Phase 2/3 quality-audit closure batch landed between 2026-04-18 and 2026-04-20. Five quality findings (QC-113a/b/c/d, QC-114, QC-115, QC-116, QC-117) closed across four commits plus a late-cycle QC-113d re-attempt; two performance findings (PERF-41, PERF-44) and one security follow-up (SEC-P4-13 — save-during-wipe race) recorded in adjacent `docs/PERF_GAP_ANALYSIS.md` and `docs/GAP_ANALYSIS.md`. No public API surface changes; all closures are refactor / test / tooling / documentation improvements preserving the SEC-P3-04 HMAC contract, the PERF-21 dual-path V7 design, and the PERF-34 align(64) cache-line separator invariant. See `docs/QUALITY_GAP_ANALYSIS.md` Phase 2/3 section (line 2575 onward) for the full evidence + commit chain.
@@ -142,5 +158,6 @@ This release closes a 60-item gap-analysis cycle spanning security, performance,
 - `GeneratorInterface` for dependency injection and mocking
 - RFC-9562 Appendix A test vectors for V1, V6, V7
 
-[Unreleased]: https://gitlab.com/devnw/zig/uuid/-/compare/v0.1.0...HEAD
+[Unreleased]: https://gitlab.com/devnw/zig/uuid/-/compare/v0.1.1...HEAD
+[0.1.1]: https://gitlab.com/devnw/zig/uuid/-/compare/v0.1.0...v0.1.1
 [0.1.0]: https://gitlab.com/devnw/zig/uuid/-/releases/v0.1.0

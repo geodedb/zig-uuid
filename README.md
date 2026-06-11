@@ -22,7 +22,7 @@ the content hash, and writes a correctly-formed `build.zig.zon` entry for you
 in one step:
 
 ```bash
-zig fetch --save https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.0/uuid-v0.1.0.tar.gz
+zig fetch --save https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.1/uuid-v0.1.1.tar.gz
 ```
 
 After this runs, your `build.zig.zon` will contain an entry that looks
@@ -34,15 +34,11 @@ reference only:
 ```zig
 .dependencies = .{
     .uuid = .{
-        .url = "https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.0/uuid-v0.1.0.tar.gz",
+        .url = "https://gitlab.com/devnw/zig/uuid/-/archive/v0.1.1/uuid-v0.1.1.tar.gz",
         .hash = "<populated by `zig fetch --save`>",
     },
 },
 ```
-
-> Note: v0.1.0 is unreleased; until the tag is published, point `.url` at a
-> specific commit archive (`.../archive/<sha>.tar.gz`) and re-run
-> `zig fetch --save` to refresh the hash.
 
 Then in your `build.zig`:
 
