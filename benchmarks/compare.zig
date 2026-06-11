@@ -77,6 +77,8 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--dir") and idx + 1 < args.len) {
             results_dir = args[idx + 1];
             idx += 1;
+        } else if (std.mem.startsWith(u8, arg, "--dir=")) {
+            results_dir = arg["--dir=".len..];
         }
     }
 
@@ -200,6 +202,7 @@ fn runWalker(allocator: std.mem.Allocator, io: std.Io, results_dir: []const u8, 
         try comparePair(allocator, io, base_path, cand_path, threshold, &pair_stats, base_name, pair_warn_only);
 
         total.failures += pair_stats.failures;
+        total.warnings += pair_stats.warnings;
         total.missing += pair_stats.missing;
         total.rows_compared += pair_stats.rows_compared;
         pairs_ran += 1;
@@ -296,24 +299,15 @@ fn comparePair(
         }
 
         // UUID-specific correctness gates.
+        // duplicate_uuids is a correctness signal — never demoted by --warn-only.
         if (row.duplicate_uuids != 0) {
-            if (warn_only) {
-                const dup_line = try std.fmt.bufPrint(
-                    &buf,
-                    "    WARN (non-gating): {d} duplicate UUIDs in contention scenario\n",
-                    .{row.duplicate_uuids},
-                );
-                try stderr.writeStreamingAll(io, dup_line);
-                stats.warnings += 1;
-            } else {
-                const dup_line = try std.fmt.bufPrint(
-                    &buf,
-                    "    FAIL: {d} duplicate UUIDs in contention scenario\n",
-                    .{row.duplicate_uuids},
-                );
-                try stderr.writeStreamingAll(io, dup_line);
-                stats.failures += 1;
-            }
+            const dup_line = try std.fmt.bufPrint(
+                &buf,
+                "    FAIL: {d} duplicate UUIDs in contention scenario\n",
+                .{row.duplicate_uuids},
+            );
+            try stderr.writeStreamingAll(io, dup_line);
+            stats.failures += 1;
         }
 
         // INV-01 secondary signal: lockfree_fallbacks drift.

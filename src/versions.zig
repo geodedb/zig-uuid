@@ -408,6 +408,22 @@ test "module-level initV5Namespace matches newV5 for the same namespace (QC-100)
     try std.testing.expect(a.eql(b));
 }
 
+// QC-147 test helper: absolute path inside a std.testing.TmpDir.
+fn tmpStatePath(
+    io: std.Io,
+    tmp: *std.testing.TmpDir,
+    buf: []u8,
+    name: []const u8,
+) ![]const u8 {
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try std.process.currentPath(io, &cwd_buf);
+    return std.fmt.bufPrint(
+        buf,
+        "{s}/.zig-cache/tmp/{s}/{s}",
+        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..], name },
+    );
+}
+
 // QC-147: delegation tests for the 7 wrappers added after QC-30.
 
 test "top-level newV3Bounded delegates and enforces cap (QC-147)" {
@@ -436,14 +452,8 @@ test "top-level saveState/loadState delegate to default_generator (QC-147)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.Io.Threaded.global_single_threaded.io();
-    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd_len = try std.process.currentPath(io, &cwd_buf);
     var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
-    const path = try std.fmt.bufPrint(
-        &path_buf,
-        "{s}/.zig-cache/tmp/{s}/qc147.state",
-        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
-    );
+    const path = try tmpStatePath(io, &tmp, &path_buf, "qc147.state");
 
     _ = try newV7(); // ensure default_generator has V7 state to persist
     try saveState(path);
@@ -454,14 +464,8 @@ test "top-level migrateStateToV3 delegates to default_generator (QC-147)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.Io.Threaded.global_single_threaded.io();
-    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd_len = try std.process.currentPath(io, &cwd_buf);
     var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
-    const path = try std.fmt.bufPrint(
-        &path_buf,
-        "{s}/.zig-cache/tmp/{s}/qc147-migrate.state",
-        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
-    );
+    const path = try tmpStatePath(io, &tmp, &path_buf, "qc147-migrate.state");
 
     // Save a v2 (keyless) file via the module wrapper, then migrate under a key.
     defer secureWipeMacKey(); // restore global key-null state for other tests
@@ -477,14 +481,8 @@ test "top-level rotateStateMacKey + secureWipeMacKey delegate (QC-147)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.Io.Threaded.global_single_threaded.io();
-    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd_len = try std.process.currentPath(io, &cwd_buf);
     var path_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
-    const path = try std.fmt.bufPrint(
-        &path_buf,
-        "{s}/.zig-cache/tmp/{s}/qc147-rotate.state",
-        .{ cwd_buf[0..cwd_len], tmp.sub_path[0..] },
-    );
+    const path = try tmpStatePath(io, &tmp, &path_buf, "qc147-rotate.state");
 
     defer secureWipeMacKey(); // always restore global key-null state
     gen_mod.default_generator.state_mac_key = .{0x11} ** 32;
