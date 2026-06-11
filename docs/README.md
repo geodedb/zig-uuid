@@ -10,6 +10,8 @@ with an injectable generator, cross-platform MAC resolution, and multiple parse/
 - [Installation](../README.md#installation)
 - [Quick Start](../README.md#quick-start)
 - [Gap Analyses](GAP_ANALYSIS.md) — RFC-9562, security, performance, and quality reviews
+- [AppSec Review 2026-06-11](APPSEC_REVIEW_2026-06-11.md) — OWASP 2025 + CIS v8.1.2 defensive code review
+- [Security Review Notes](SECURITY_REVIEW_NOTES.md) — running ledger of all security review cycles
 - [Contributing](../CONTRIBUTING.md)
 - [Security](../SECURITY.md)
 - [Changelog](../CHANGELOG.md)

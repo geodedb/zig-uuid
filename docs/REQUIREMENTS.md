@@ -54,7 +54,7 @@ can avoid pulling in that dependency.
 | UUID-TEST-002 | Integration tests exercise the public module seam (`@import("uuid")`) end-to-end. | `tests/integration.zig` |
 | UUID-TEST-003 | Fuzz harness exercises `fromString` against malformed input. | `src/fuzz.zig` |
 | UUID-TEST-004 | RFC-9562 Appendix A test vectors for V1, V6, V7 assert byte-exact output. | `src/uuid_test.zig` |
-| UUID-TEST-005 | Cross-compile smoke test for x86_64/aarch64 Linux, x86_64/aarch64 macOS, x86_64 Windows. | `build.zig` (`check-cross` step) |
+| UUID-TEST-005 | Cross-compile smoke test for x86_64/aarch64 Linux, x86_64/aarch64 macOS, x86_64 Windows. | `.gitlab-ci.yml` (`test-cross-build` job) |
 
 ## Acceptance
 
