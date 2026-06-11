@@ -88,8 +88,8 @@ version-consistency:
   stage: lint
   image: debian:bookworm-slim
   script:
-    - ZON_V=$(grep -oP '\.version = "\K[^"]+' build.zig.zon)
-    - ROOT_V=$(grep -oP 'pub const version = "\K[^"]+' src/root.zig)
+    - ZON_V=$(grep '\.version = ' build.zig.zon | sed 's/.*"\(.*\)".*/\1/')
+    - ROOT_V=$(grep 'pub const version = ' src/root.zig | sed 's/.*"\(.*\)".*/\1/')
     - echo "zon=$ZON_V root=$ROOT_V"
     - test "$ZON_V" = "$ROOT_V"
 
