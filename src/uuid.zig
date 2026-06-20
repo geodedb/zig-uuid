@@ -14,6 +14,9 @@ const std = @import("std");
 // We use a small atomic state machine instead of std.once (which does not
 // exist in Zig 0.16) — see PERF-32 instruction's fallback note.
 // -----------------------------------------------------------------------------
+// fips-exempt: non-security — HashDoS-resistance seed for an in-memory
+// HashMap, never a cryptographic key. std.crypto.random is used only to make
+// the Wyhash seed unpredictable; FIPS routing is unnecessary.
 var process_seed: u64 = 0;
 const ProcessSeedState = enum(u8) { uninit = 0, initializing = 1, ready = 2 };
 var process_seed_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(ProcessSeedState.uninit));
@@ -304,6 +307,7 @@ pub const UUID = struct {
     /// For ordinary UUID identity checks where the UUID is a public identifier,
     /// `eql` is preferred — it is faster and constant-time safety is unnecessary.
     pub fn timingSafeEql(self: UUID, other: UUID) bool {
+        // fips-exempt: non-security — constant-time compare, no algorithm choice.
         return std.crypto.timing_safe.eql([16]u8, self.bytes, other.bytes);
     }
 
@@ -364,11 +368,15 @@ pub const UUID = struct {
 
         /// Create a new SecureHashContext with a cryptographically random seed.
         pub fn init() SecureHashContext {
-            return .{ .seed = blk: {
-                var seed_buf: [8]u8 = undefined;
-                std.Io.Threaded.global_single_threaded.io().random(&seed_buf);
-                break :blk std.mem.readInt(u64, &seed_buf, .little);
-            } };
+            return .{
+                .seed = blk: {
+                    var seed_buf: [8]u8 = undefined;
+                    // fips-exempt: non-security — HashDoS-resistance seed for an
+                    // in-memory HashMap, never a cryptographic key.
+                    std.Io.Threaded.global_single_threaded.io().random(&seed_buf);
+                    break :blk std.mem.readInt(u64, &seed_buf, .little);
+                },
+            };
         }
 
         pub fn hash(self: SecureHashContext, key: UUID) u64 {

@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const crypto_backend = @import("crypto_backend");
 const UUID = @import("uuid.zig").UUID;
 const Version = @import("uuid.zig").Version;
 const Variant = @import("uuid.zig").Variant;
@@ -43,7 +44,11 @@ fn defaultClock() i128 {
 }
 
 fn defaultRand(buf: []u8) anyerror!void {
-    gio().random(buf);
+    // FIPS-0001: security-relevant entropy for V4/V7 + V1/V6 clock-seq.
+    // Under -Dfips=true this is the OpenSSL SP800-90A DRBG; otherwise
+    // std.crypto.random via the shim. Mapped to Error.RandomError at the
+    // call site.
+    crypto_backend.Csprng.bytes(buf) catch return error.RandomError;
 }
 
 /// QC-99: Collapse the wide underlying filesystem / I/O error set that
@@ -1314,6 +1319,9 @@ pub const Generator = struct {
     /// front or use `newV3Bounded`, which returns `Error.NameTooLong`
     /// above the caller's cap.
     pub fn newV3(_: *Generator, ns: UUID, name: []const u8) UUID {
+        // fips-exempt: non-security — RFC 9562 V3 deterministic namespace UUID
+        // (MD5 mandated by the spec); no secret, no adversary-integrity claim,
+        // not a key/MAC/signature.
         var md5 = std.crypto.hash.Md5.init(.{});
         md5.update(&ns.bytes);
         md5.update(name);
@@ -1352,6 +1360,8 @@ pub const Generator = struct {
     /// to `name.len`. Use `newV5Bounded` (returns `Error.NameTooLong`
     /// above the caller's cap) or validate `name.len` before calling.
     pub fn newV5(_: *Generator, ns: UUID, name: []const u8) UUID {
+        // fips-exempt: non-security — RFC 9562 V5 deterministic namespace UUID
+        // (SHA-1 mandated by the spec); no secret, not a security primitive.
         var sha1 = std.crypto.hash.Sha1.init(.{});
         sha1.update(&ns.bytes);
         sha1.update(name);
@@ -1477,6 +1487,8 @@ pub const Generator = struct {
     ///
     /// **Security:** inherits the same MD5 / collision warnings as `newV3`.
     pub fn initV3Namespace(_: *Generator, ns: UUID) PrehashedV3 {
+        // fips-exempt: non-security — RFC 9562 V3 deterministic namespace UUID
+        // (MD5 mandated by the spec); not a security primitive.
         var h = std.crypto.hash.Md5.init(.{});
         h.update(&ns.bytes);
         return .{ .hasher = h };
@@ -1488,6 +1500,8 @@ pub const Generator = struct {
     ///
     /// **Security:** inherits the same SHA-1 / collision warnings as `newV5`.
     pub fn initV5Namespace(_: *Generator, ns: UUID) PrehashedV5 {
+        // fips-exempt: non-security — RFC 9562 V5 deterministic namespace UUID
+        // (SHA-1 mandated by the spec); not a security primitive.
         var h = std.crypto.hash.Sha1.init(.{});
         h.update(&ns.bytes);
         return .{ .hasher = h };
@@ -1838,7 +1852,8 @@ pub const Generator = struct {
         // observer can null it.
         const write_len: usize = if (key_copy) |*k| blk: {
             var mac: [state_mac_size]u8 = undefined;
-            std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, buf[0..state_size], k);
+            // FIPS-0001b: persisted-state authentication HMAC-SHA256 via the seam.
+            _ = crypto_backend.Mac.hmac(.sha256, k, buf[0..state_size], &mac) catch return error.RandomError;
             @memcpy(buf[state_size..state_size_v3], &mac);
             break :blk state_size_v3;
         } else state_size;
@@ -2132,8 +2147,10 @@ pub const Generator = struct {
         // cannot be authenticated — treat as tampering.
         const key_ptr = key_opt orelse return Error.StateMacMismatch;
         var expected: [state_mac_size]u8 = undefined;
-        std.crypto.auth.hmac.sha2.HmacSha256.create(&expected, bytes[0..state_size], key_ptr);
+        // FIPS-0001b: persisted-state authentication HMAC-SHA256 via the seam.
+        _ = crypto_backend.Mac.hmac(.sha256, key_ptr, bytes[0..state_size], &expected) catch return Error.StateMacMismatch;
         const trailer = bytes[state_size..state_size_v3];
+        // fips-exempt: non-security — constant-time MAC compare, no algorithm choice.
         if (!std.crypto.timing_safe.eql([state_mac_size]u8, expected, trailer.*)) {
             return Error.StateMacMismatch;
         }

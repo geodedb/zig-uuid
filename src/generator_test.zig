@@ -22,6 +22,22 @@ test "Generator.newV4: version=4, variant=rfc9562" {
     try std.testing.expectEqual(Variant.rfc9562, u.variant());
 }
 
+test "FIPS-0001: default V4 entropy routes through crypto_backend.Csprng" {
+    // Two default V4 UUIDs must differ (CSPRNG-backed) under both flag values.
+    var gen = Generator.init();
+    const ua = try gen.newV4();
+    const ub = try gen.newV4();
+    try std.testing.expect(!ua.eql(ub));
+    try std.testing.expectEqual(Version.v4, ua.version());
+}
+
+test "FIPS-0001b: state-file HMAC-SHA256 trailer is seam-routed (Mac decl present)" {
+    // The persisted-state HMAC-SHA256 is the security path; the byte-flip
+    // tamper regression lives in generator_state_test.zig (SEC-P4-02). Here we
+    // assert the seam exposes the Mac surface the routing depends on.
+    try std.testing.expect(@hasDecl(@import("crypto_backend"), "Mac"));
+}
+
 test "Generator.newV4: two calls return distinct UUIDs" {
     var gen = Generator.init();
     const a = try gen.newV4();
