@@ -139,4 +139,5 @@ test {
     _ = @import("hwaddr/hwaddr.zig");
     _ = @import("fuzz.zig"); // SEC-R2-11: fuzz tests for UUID parsing
     _ = @import("trusted_namespace_origins.zig"); // SEC-P4-04
+    _ = @import("crypto_backend_smoke_test.zig"); // FIPS seam smoke test
 }

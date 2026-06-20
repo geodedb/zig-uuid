@@ -7,6 +7,41 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // -------------------------------------------------------------------------
+    // FIPS-140-3 seam (GAP-0020-safe: exactly ONE build_options instance).
+    // Off by default with zero overhead; -Dfips=true routes security crypto
+    // through the linked OpenSSL FIPS provider via the lazy `fips` dep.
+    // -------------------------------------------------------------------------
+    const fips = b.option(bool, "fips", "Route security crypto through the linked FIPS-140-3 provider (off by default; zero overhead when off)") orelse false;
+    const openssl_path = b.option([]const u8, "openssl_path", "OpenSSL install prefix for non-standard installs (e.g. /usr/local/ssl)");
+    const link = @import("src/link.zig");
+
+    // ONE build_options instance -> ONE module reference shared everywhere.
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "fips", fips);
+    const build_options_mod = build_options.createModule();
+
+    // Shared NAMED seam module so every consumer resolves one crypto_backend.zig identity.
+    const crypto_backend_mod = b.addModule("crypto_backend", .{
+        .root_source_file = b.path("src/crypto_backend.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "build_options", .module = build_options_mod }},
+    });
+    const std_shim_mod = b.addModule("std_shim", .{
+        .root_source_file = b.path("src/std_shim.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    crypto_backend_mod.addImport("std_shim", std_shim_mod);
+    if (fips) {
+        if (b.lazyDependency("fips", .{ .target = target, .optimize = optimize, .openssl_path = openssl_path orelse "/usr/local/ssl" })) |fips_dep| {
+            const fips_mod = fips_dep.module("fips");
+            crypto_backend_mod.addImport("fips", fips_mod);
+            link.linkOpenssl(b, fips_mod, openssl_path);
+        }
+    }
+
     // Core `uuid` module is dep-free. The json adapter lives in a separate
     // `uuid_json` module consumers opt into. Keeping json out of the core
     // module avoids diamond errors when uuid is instantiated by multiple
@@ -17,6 +52,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    module.addImport("crypto_backend", crypto_backend_mod);
 
     // Opt-in json adapter. Depends on `json` and the core uuid module.
     const json_dep = b.dependency("json", .{ .target = target, .optimize = optimize });
@@ -28,6 +64,7 @@ pub fn build(b: *std.Build) void {
     });
     uuid_json_module.addImport("json", json_module);
     uuid_json_module.addImport("uuid", module);
+    uuid_json_module.addImport("crypto_backend", crypto_backend_mod);
 
     // Unit tests — reuse the public `module` so src/root.zig isn't rooted by
     // multiple module instances (would trigger "file exists in modules 'json'
@@ -48,6 +85,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "uuid", .module = module },
                 .{ .name = "uuid_json", .module = uuid_json_module },
                 .{ .name = "json", .module = json_module },
+                .{ .name = "crypto_backend", .module = crypto_backend_mod },
             },
         }),
     });

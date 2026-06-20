@@ -8,6 +8,19 @@
             .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.14#cc94e37600b188be667b8f36532abdcc90755c2d",
             .hash = "json-0.1.7-tOue4XPRDwD_yDp0Q9YNH-4WzcJGgN39T_RRefh0RyOF",
         },
+        // FIPS-140-3 backend. Resolved ONLY under -Dfips=true (lazy). Local
+        // path dep until the fips package is published; the eventual form is:
+        //   .fips = .{
+        //       .url = "git+https://gitlab.com/devnw/zig/fips.git?ref=v0.1.0#<sha>",
+        //       .hash = "<zig-fetch-hash>",
+        //       .lazy = true,
+        //   },
+        // Zig 0.16 rejects absolute .path values, so this is the build-root-
+        // relative path to /home/benji/src/devnw/zig/fips.
+        .fips = .{
+            .path = "../../../../../devnw/zig/fips",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",
