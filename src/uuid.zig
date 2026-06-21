@@ -336,6 +336,8 @@ pub const UUID = struct {
     /// `SecureHashContext` instead.
     pub const HashContext = struct {
         pub fn hash(_: HashContext, key: UUID) u64 {
+            // fips-exempt: non-security — Wyhash HashMap key hashing, not a
+            // cryptographic primitive (no secret, no integrity/auth claim).
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(&key.bytes);
             return hasher.final();
@@ -380,6 +382,8 @@ pub const UUID = struct {
         }
 
         pub fn hash(self: SecureHashContext, key: UUID) u64 {
+            // fips-exempt: non-security — Wyhash HashMap key hashing (the seed
+            // gives HashDoS resistance), not a cryptographic primitive.
             var hasher = std.hash.Wyhash.init(self.seed);
             hasher.update(&key.bytes);
             return hasher.final();
@@ -414,6 +418,8 @@ pub const UUID = struct {
     /// observe the same value with one `@atomicLoad` of acquire-ordered u8.
     pub const ProcessHashContext = struct {
         pub fn hash(_: ProcessHashContext, key: UUID) u64 {
+            // fips-exempt: non-security — Wyhash HashMap key hashing with a
+            // per-process seed, not a cryptographic primitive.
             var hasher = std.hash.Wyhash.init(processHashSeed());
             hasher.update(&key.bytes);
             return hasher.final();

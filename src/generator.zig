@@ -620,6 +620,8 @@ pub const Generator = struct {
     /// semantics are needed again.
     pub fn secureWipeMacKey(self: *Generator) void {
         if (self.state_mac_key) |*key_ptr| {
+            // fips-exempt: non-security — volatile memory zeroization (CWE-316
+            // residue scrub), not a cryptographic algorithm; no seam analogue.
             std.crypto.secureZero(u8, key_ptr);
         }
         self.state_mac_key = null;
@@ -1445,6 +1447,9 @@ pub const Generator = struct {
 
     /// Prehashed V3 (MD5) namespace — see `initV3Namespace`.
     pub const PrehashedV3 = struct {
+        // fips-exempt: non-security — RFC 9562 V3 deterministic namespace UUID
+        // (MD5 mandated by the spec); not a key/MAC/signature, and MD5 has no
+        // crypto_backend seam analogue.
         hasher: std.crypto.hash.Md5,
 
         /// Compute a V3 UUID for `name` under the prehashed namespace. The
@@ -1464,6 +1469,9 @@ pub const Generator = struct {
 
     /// Prehashed V5 (SHA-1) namespace — see `initV5Namespace`.
     pub const PrehashedV5 = struct {
+        // fips-exempt: non-security — RFC 9562 V5 deterministic namespace UUID
+        // (SHA-1 mandated by the spec); not a security primitive, and SHA-1 has
+        // no crypto_backend seam analogue.
         hasher: std.crypto.hash.Sha1,
 
         /// Compute a V5 UUID for `name` under the prehashed namespace. The
@@ -1833,6 +1841,8 @@ pub const Generator = struct {
         // `std.crypto.secureZero` on all return paths including the
         // try-propagated error from `atomicWriteStateFile`.
         var key_copy: ?[32]u8 = null;
+        // fips-exempt: non-security — volatile memory zeroization (CWE-316
+        // residue scrub), not a cryptographic algorithm; no seam analogue.
         defer if (key_copy) |*k| std.crypto.secureZero(u8, k);
 
         // Discard the returned bool — `key_copy != null` is the
@@ -2002,6 +2012,8 @@ pub const Generator = struct {
         // before overwriting it with the new key.  Done via direct
         // pointer into the Optional's payload so the volatile-write
         // `std.crypto.secureZero` cannot be DCE'd by the optimiser.
+        // fips-exempt: non-security — volatile memory zeroization (CWE-316
+        // residue scrub), not a cryptographic algorithm; no seam analogue.
         if (self.state_mac_key) |*old| std.crypto.secureZero(u8, old);
         self.state_mac_key = new_key;
 
