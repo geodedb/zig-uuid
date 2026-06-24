@@ -127,7 +127,7 @@ pub const uuidToGUID = if (builtin.os.tag == .windows)
 else
     @compileError("uuidToGUID is only available on Windows");
 
-pub const version = "0.1.2";
+pub const version = "0.1.4";
 
 test {
     _ = @import("uuid.zig"); // transitively imports uuid_test.zig (QC-65)
