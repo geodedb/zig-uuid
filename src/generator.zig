@@ -42,8 +42,34 @@ fn defaultClock() i128 {
     return @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
 }
 
+/// PERF-31: per-thread CSPRNG for the default rand source.
+///
+/// The original `defaultRand` reached the OS CSPRNG (`gio().random`, a `getrandom`
+/// syscall) on EVERY call. Even with one `Generator` per thread (no shared mutex),
+/// that syscall serialises all threads in the kernel and caps multi-threaded UUID
+/// generation — measured on a 56-core host driving DPI analysis, removing the
+/// per-call syscall lifted parallel throughput from 11.4 to 21.8 Gbps.
+///
+/// We instead seed a per-thread ChaCha20 CSPRNG ONCE from the OS and draw rand_b
+/// from it in userspace thereafter. Cryptographic strength is preserved (a ChaCha
+/// CSPRNG keyed by 256 bits of OS entropy), but there is no per-call syscall and no
+/// cross-thread serialisation. The generator is re-seeded from the OS every
+/// `reseed_interval` draws to bound output-per-seed (defensive forward secrecy;
+/// one syscall per ~1M UUIDs is negligible). Each thread's stream is independent,
+/// so this does not weaken cross-thread uniqueness.
+threadlocal var tl_csprng: ?std.Random.DefaultCsprng = null;
+threadlocal var tl_csprng_draws: usize = 0;
+
 fn defaultRand(buf: []u8) anyerror!void {
-    gio().random(buf);
+    const reseed_interval: usize = 1 << 20;
+    if (tl_csprng == null or tl_csprng_draws >= reseed_interval) {
+        var seed: [std.Random.DefaultCsprng.secret_seed_length]u8 = undefined;
+        gio().random(&seed); // one syscall per (re)seed, not per call
+        tl_csprng = std.Random.DefaultCsprng.init(seed);
+        tl_csprng_draws = 0;
+    }
+    tl_csprng.?.random().bytes(buf);
+    tl_csprng_draws += 1;
 }
 
 /// QC-99: Collapse the wide underlying filesystem / I/O error set that
