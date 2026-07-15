@@ -17,8 +17,13 @@ pub fn build(b: *std.Build) void {
     const link = @import("src/link.zig");
 
     // ONE build_options instance -> ONE module reference shared everywhere.
+    // package_name keeps the generated options.zig content unique per package:
+    // identical options content across sibling packages dedupes to one cached
+    // file, and a file rooted in two modules is a hard compile error when both
+    // packages land in the same compilation (e.g. geode's dep tree).
     const build_options = b.addOptions();
     build_options.addOption(bool, "fips", fips);
+    build_options.addOption([]const u8, "package_name", "uuid");
     const build_options_mod = build_options.createModule();
 
     // Shared NAMED seam module so every consumer resolves one crypto_backend.zig identity.
