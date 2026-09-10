@@ -471,3 +471,12 @@ test-fips:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# Disable empty merge_request_event pipelines: no job runs on merge_request_event,
+# so MR pipelines are always empty, fail, and become the head pipeline that blocks
+# Renovate auto-merge. Branch pipelines carry the real jobs; evaluate those.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    - when: always
