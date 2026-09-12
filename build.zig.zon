@@ -1,17 +1,17 @@
 .{
     .name = .uuid,
-    .version = "0.1.6",
+    .version = "0.1.7",
     .fingerprint = 0xd17f50a6ae62bdb4,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .json = .{
-            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.14#cc94e37600b188be667b8f36532abdcc90755c2d",
-            .hash = "json-0.1.7-tOue4XPRDwD_yDp0Q9YNH-4WzcJGgN39T_RRefh0RyOF",
+            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.15#2f75b5d1d42fd179398b0f81491f8e211a888c5e",
+            .hash = "json-0.1.15-tOue4XXRDwDiwJ1Edhk5QstM23dtV_5itFSX1ln2qTrQ",
         },
         // FIPS-140-3 backend. Resolved ONLY under -Dfips=true (lazy).
         .fips = .{
-            .url = "git+https://gitlab.com/devnw/zig/fips.git#v0.1.0",
-            .hash = "fips-0.1.0-1wf3nbxWBgAp6yAk6cPRrF5l_U1tbblcVcN9xcjJDddy",
+            .url = "git+https://gitlab.com/devnw/zig/fips.git?ref=v0.1.1#4041d9cfdeadcab665644b3f4d3362c276f94bb7",
+            .hash = "fips-0.1.1-1wf3na01BwC3voljVu61_0g6DXp6BCedXrq4QMuMeQBq",
             .lazy = true,
         },
     },
