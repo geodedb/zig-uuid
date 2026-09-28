@@ -5,13 +5,13 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .json = .{
-            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.15#2f75b5d1d42fd179398b0f81491f8e211a888c5e",
-            .hash = "json-0.1.15-tOue4XXRDwDiwJ1Edhk5QstM23dtV_5itFSX1ln2qTrQ",
+            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.18#807796bd4ba269870393ef9cad51047ad800ea8f",
+            .hash = "json-0.1.18-tOue4dEGEQBouX4qMZ_VpSZYhnOrprvUOpSF8G4sv27O",
         },
         // FIPS-140-3 backend. Resolved ONLY under -Dfips=true (lazy).
         .fips = .{
-            .url = "git+https://gitlab.com/devnw/zig/fips.git?ref=v0.1.1#4041d9cfdeadcab665644b3f4d3362c276f94bb7",
-            .hash = "fips-0.1.1-1wf3na01BwC3voljVu61_0g6DXp6BCedXrq4QMuMeQBq",
+            .url = "git+https://gitlab.com/devnw/zig/fips.git?ref=v0.1.2#2db29e0add6e2e6111b1f27c0fa72afd366f9092",
+            .hash = "fips-0.1.2-1wf3naNnBwDb429FDp9qyF1irQ7otgjMxUafGKxjYTMG",
             .lazy = true,
         },
     },
