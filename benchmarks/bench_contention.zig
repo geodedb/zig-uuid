@@ -45,7 +45,12 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "v7_contention_lockfree_8T", .variant = "lockfree", .thread_count = 8, .expected_iterations = per_thread_iters * 8, .runFn = runLockfree8, .run_count = contention_runs },
         .{ .name = "v7_contention_lockfree_16T", .variant = "lockfree", .thread_count = 16, .expected_iterations = per_thread_iters * 16, .runFn = runLockfree16, .run_count = contention_runs },
     };
-    try common.runScenariosOpts(allocator, init.io, &specs, .{ .output_path = output, .runs = runs });
+    // Scenario buffers go through the general-purpose allocator, not the
+    // arena: each 16T run allocates ~77 MiB of UUID/latency buffers that the
+    // harness and runContention free, and an arena ignores those frees. With
+    // 8 scenarios x 15 runs x `--runs 3` the arena grew past 8 GiB and CI
+    // runners OOM-killed the bench. The arena still owns the parsed args.
+    try common.runScenariosOpts(std.heap.smp_allocator, init.io, &specs, .{ .output_path = output, .runs = runs });
 }
 
 // --------------------------------------------------------------------------
