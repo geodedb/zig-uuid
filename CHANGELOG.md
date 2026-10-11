@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - json v0.1.19 and thread-pool v0.2.8 (single thread-pool in the graph).
 - CI: create GitLab Releases with the job token.
+- fips v0.1.3 (one fips version across the devnw/zig graph).
+- CI: test-fips provisions the OpenSSL 3.6.5 FIPS provider through the fips
+  dependency's own installer (`zig build provision-fips`), replacing the
+  fips-deps job that called a nonexistent `make deps` target.
+
+### Fixed
+
+- bench-contention no longer exhausts memory. It handed the harness an
+  arena, so per-run buffer frees were ignored and `--runs 3` grew past 8 GiB.
+  Peak RSS is now about 250 MiB.
 
 ## [0.1.7] - 2026-09-12
 

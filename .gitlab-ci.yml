@@ -443,35 +443,28 @@ bench-micro-mr:
 # ---------------------------------------------------------------------------
 # FIPS-140-3 dual-mode test (-Dfips=true).
 #
-# `fips-deps` builds the latest OpenSSL 3.x + FIPS provider into
-# /usr/local/ssl (via the repo `make deps` target, which the ci-catalog
-# `zig-fips-build` component also provides). `test-fips` then runs the suite
-# against the validated FIPS backend. Linux-only; MR + default-branch.
-fips-deps:
-  stage: build
-  image: debian:bookworm-slim
-  before_script:
-    - apt-get update && apt-get install -y --no-install-recommends build-essential perl curl xz-utils python3 ca-certificates
-    - *install-zig
-  script:
-    - make deps   # builds latest OpenSSL + FIPS provider into /usr/local/ssl
-  artifacts:
-    paths:
-      - /usr/local/ssl
-    expire_in: 1 day
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-
+# Same provisioning as devnw/zig/tls: `zig build provision-fips` runs the
+# pinned fips package's own scripts/install-openssl-fips.sh (hash-verified
+# through build.zig.zon, signature verification forced with REQUIRE_GPG=1),
+# then `make test-fips` runs the unit + integration suites against the
+# validated FIPS provider. One job, so no OpenSSL artifact has to cross
+# runners (the old fips-deps job called a `make deps` target this repo never
+# had, and /usr/local/ssl can't be uploaded as an artifact anyway).
 test-fips:
   stage: test
   image: debian:bookworm-slim
+  timeout: 45m
+  variables:
+    OPENSSL_VERSION: "3.6.5"
+    OPENSSL_PREFIX: "/usr/local/ssl"
   before_script:
+    - apt-get update && apt-get install -y --no-install-recommends build-essential perl wget curl xz-utils ca-certificates git sudo gnupg dirmngr python3
     - *install-zig
+    - wget -q https://www.openssl-library.org/source/pubkeys.asc -O /tmp/openssl-pubkeys.asc
+    - gpg --batch --import /tmp/openssl-pubkeys.asc
+    - zig build provision-fips -Dfips=true -Dopenssl_path="${OPENSSL_PREFIX}" --summary all
   script:
-    - OPENSSL_CONF=/usr/local/ssl/ssl/openssl.cnf zig build test -Dfips=true -Dopenssl_path=/usr/local/ssl --summary all
-  needs:
-    - fips-deps
+    - make test-fips OPENSSL_PREFIX="${OPENSSL_PREFIX}"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
