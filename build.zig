@@ -41,6 +41,18 @@ pub fn build(b: *std.Build) void {
     crypto_backend_mod.addImport("std_shim", std_shim_mod);
     if (fips) {
         if (b.lazyDependency("fips", .{ .target = target, .optimize = optimize, .openssl_path = openssl_path orelse "/usr/local/ssl" })) |fips_dep| {
+            // Provision only when explicitly requested (same step as
+            // devnw/zig/tls): run the pinned fips package's own installer, so
+            // CI builds the OpenSSL FIPS provider that this exact fips
+            // release verifies, with mandatory signature checks. Normal
+            // builds never install libraries or mutate the host.
+            const provision = b.addSystemCommand(&.{"bash"});
+            provision.addFileArg(fips_dep.path("scripts/install-openssl-fips.sh"));
+            provision.setEnvironmentVariable("OPENSSL_PREFIX", openssl_path orelse "/usr/local/ssl");
+            provision.setEnvironmentVariable("REQUIRE_GPG", "1");
+            provision.has_side_effects = true;
+            b.step("provision-fips", "Install and verify the pinned dependency's OpenSSL FIPS provider (-Dfips=true)").dependOn(&provision.step);
+
             const fips_mod = fips_dep.module("fips");
             crypto_backend_mod.addImport("fips", fips_mod);
             link.linkOpenssl(b, fips_mod, openssl_path);
