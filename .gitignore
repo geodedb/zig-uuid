@@ -20,6 +20,7 @@ Thumbs.db
 *.out
 test_*
 !tests/
+!/scripts/test_hook_env.py
 
 # Build artifacts
 *.exe
