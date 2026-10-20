@@ -502,6 +502,11 @@ workflow:
         on_new_commit: none
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: never
+    # SRE-194: validation pipelines fail fast on the first blocking job failure;
+    # these rules admit only what the next rule already admits.
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+      auto_cancel:
+        on_job_failure: all
     - when: always
 
 # SONNY-4778: tools must not redirect Git operations into this worktree.
