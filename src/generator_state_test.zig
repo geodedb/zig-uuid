@@ -10,17 +10,10 @@ const builtin = @import("builtin");
 const Generator = @import("generator.zig").Generator;
 const Error = @import("uuid.zig").Error;
 
-/// Resolve the absolute path of a Dir handle via /proc/self/fd/<fd> (Linux only).
-/// On non-Linux platforms, returns an error (caller should skip the test).
-fn dirAbsPath(dir: std.Io.Dir, buf: []u8) error{ Unsupported, FileNotFound, NoSpaceLeft }![]const u8 {
-    const linux = if (comptime builtin.os.tag == .linux) std.os.linux else return error.Unsupported;
-    const fd: linux.fd_t = dir.handle;
-    var link_buf: [64:0]u8 = undefined;
-    _ = std.fmt.bufPrintZ(&link_buf, "/proc/self/fd/{d}", .{fd}) catch return error.NoSpaceLeft;
-    const rc = linux.readlink(&link_buf, buf.ptr, buf.len);
-    const err = linux.errno(rc);
-    if (err != .SUCCESS) return error.FileNotFound;
-    return buf[0..rc];
+/// Resolve the test directory through the host's filesystem implementation.
+fn dirAbsPath(dir: std.Io.Dir, buf: []u8) std.Io.Dir.RealPathError![]const u8 {
+    const n = try dir.realPath(std.Io.Threaded.global_single_threaded.io(), buf);
+    return buf[0..n];
 }
 
 // --- F-9: saveState / loadState ---
@@ -680,31 +673,24 @@ test "Generator.saveState: result file has POSIX mode 0o600 (SEC-P3-03)" {
 
     // Deliberately set a permissive umask so that open(2) alone would leave
     // the file world-readable.  The fchmod fallback in saveState must still
-    // force 0o600.  Use the raw Linux umask(2) syscall (std.posix has no
-    // umask wrapper in 0.16).
-    const old_umask: usize = std.os.linux.syscall1(.umask, 0o000);
-    defer _ = std.os.linux.syscall1(.umask, old_umask);
+    // force 0o600. Zig has no Io umask operation, so use the host interface.
+    const old_umask = if (builtin.os.tag == .linux)
+        std.os.linux.syscall1(.umask, 0o000)
+    else
+        std.c.umask(0o000);
+    defer _ = if (builtin.os.tag == .linux)
+        std.os.linux.syscall1(.umask, old_umask)
+    else
+        std.c.umask(old_umask);
 
     var gen = Generator.init();
     gen.v1v6.clock_seq = 0x0099;
     gen.v1v6.clock_seq_initialized = true;
     try gen.saveState(path);
 
-    // statx(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, STATX_MODE, &stx) and verify
-    // the low 9 mode bits are exactly 0o600.
-    var path_z_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
-    const path_z = try std.fmt.bufPrintZ(&path_z_buf, "{s}", .{path});
-    var stx: std.os.linux.Statx = undefined;
-    const AT_SYMLINK_NOFOLLOW: u32 = 0x100;
-    const rc = std.os.linux.statx(
-        std.os.linux.AT.FDCWD,
-        path_z.ptr,
-        AT_SYMLINK_NOFOLLOW,
-        .{ .MODE = true },
-        &stx,
-    );
-    try std.testing.expectEqual(std.os.linux.E.SUCCESS, std.os.linux.errno(rc));
-    const perm_bits: u16 = @intCast(stx.mode & 0o777);
+    // Do not follow a substituted symlink when checking the final mode.
+    const stat = try tmp.dir.statFile(std.Io.Threaded.global_single_threaded.io(), "state.bin", .{ .follow_symlinks = false });
+    const perm_bits: u16 = @intCast(stat.permissions.toMode() & 0o777);
     try std.testing.expectEqual(@as(u16, 0o600), perm_bits);
 }
 

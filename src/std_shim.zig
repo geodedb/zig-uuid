@@ -14,18 +14,11 @@
 const std = @import("std");
 pub const policy = @import("policy.zig");
 
-fn randomBytes(out: []u8) void {
-    // Linux getrandom syscall; the non-fips shim's CSPRNG.
-    var off: usize = 0;
-    while (off < out.len) {
-        const rc = std.os.linux.getrandom(out.ptr + off, out.len - off, 0);
-        const n: isize = @bitCast(rc);
-        if (n < 0) {
-            // EINTR/EAGAIN: retry; anything else: fall back to a re-seed.
-            continue;
-        }
-        off += @intCast(n);
-    }
+fn randomBytes(out: []u8) error{OpensslFailure}!void {
+    // Obtain OS entropy through Zig's platform implementation. A raw Linux
+    // syscall traps on macOS; permanent entropy failures must not spin forever.
+    std.Io.Threaded.global_single_threaded.io().randomSecure(out) catch
+        return error.OpensslFailure;
 }
 
 pub const Hash = struct {
@@ -356,12 +349,12 @@ pub const Kem = struct {
 
 /// PERF: per-thread CSPRNG cache for the non-fips backend.
 ///
-/// `randomBytes` is the Linux `getrandom` syscall. Calling it on EVERY draw
+/// `randomBytes` obtains fresh OS entropy. Calling it on EVERY draw
 /// serialises all threads in the kernel and caps multi-threaded CSPRNG/UUID
 /// throughput — measured driving 56-worker DPI analysis, the per-call syscall
 /// held parallel throughput to ~11 Gbps; removing it lifted it to ~20+ Gbps.
 ///
-/// We seed a per-thread ChaCha20 CSPRNG ONCE from `getrandom` and draw from it in
+/// We seed a per-thread ChaCha20 CSPRNG ONCE from OS entropy and draw from it in
 /// userspace thereafter (re-seeded every `reseed_interval` draws for defensive
 /// forward secrecy). Strength is preserved — a ChaCha20 CSPRNG keyed by 256 bits
 /// of OS entropy — with no per-call syscall and no cross-thread serialisation.
@@ -378,7 +371,7 @@ pub const Csprng = struct {
         const reseed_interval: usize = 1 << 20;
         if (tl_csprng == null or tl_csprng_draws >= reseed_interval) {
             var seed: [std.Random.DefaultCsprng.secret_seed_length]u8 = undefined;
-            randomBytes(&seed); // one getrandom syscall per (re)seed, not per call
+            try randomBytes(&seed); // OS entropy only on (re)seed, not each draw
             tl_csprng = std.Random.DefaultCsprng.init(seed);
             tl_csprng_draws = 0;
         }

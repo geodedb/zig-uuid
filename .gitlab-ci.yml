@@ -58,10 +58,18 @@ stages:
 
 # Zig installation template (SEC-R6-02: SHA-256 verified via ziglang.org index)
 .install-zig: &install-zig
-  - apt-get update && apt-get install -y curl xz-utils python3
   - |
-    if [ ! -f "zig-${ZIG_VERSION}/zig" ]; then
+    if [ "$(uname -s)" = "Linux" ]; then
+      apt-get update && apt-get install -y curl xz-utils python3
+    fi
+  - |
+    if [ ! -x "zig-${ZIG_VERSION}/zig" ] || [ "$(zig-${ZIG_VERSION}/zig version)" != "$ZIG_VERSION" ]; then
       ARCH=$(uname -m)
+      case "$(uname -s)" in
+        Linux) ZIG_OS=linux ;;
+        Darwin) ZIG_OS=macos ;;
+        *) echo "Unsupported operating system"; exit 1 ;;
+      esac
       case "$ARCH" in
         x86_64)  ZIG_ARCH="x86_64" ;;
         aarch64) ZIG_ARCH="aarch64" ;;
@@ -71,14 +79,14 @@ stages:
       MAJOR=$(echo "$ZIG_VERSION" | cut -d. -f1)
       MINOR=$(echo "$ZIG_VERSION" | cut -d. -f2)
       if [ "$MAJOR" -eq 0 ] && [ "$MINOR" -lt 15 ]; then
-        ARCHIVE_NAME="zig-linux-${ZIG_ARCH}-${ZIG_VERSION}"
+        ARCHIVE_NAME="zig-${ZIG_OS}-${ZIG_ARCH}-${ZIG_VERSION}"
       else
-        ARCHIVE_NAME="zig-${ZIG_ARCH}-linux-${ZIG_VERSION}"
+        ARCHIVE_NAME="zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}"
       fi
       TARBALL="${ARCHIVE_NAME}.tar.xz"
       INDEX_FILE=$(mktemp)
       curl -fsSL "https://ziglang.org/download/index.json" -o "${INDEX_FILE}"
-      EXPECTED_HASH=$(ZIG_VER="${ZIG_VERSION}" ZIG_ARCH_KEY="${ZIG_ARCH}-linux" ZIG_IDX="${INDEX_FILE}" \
+      EXPECTED_HASH=$(ZIG_VER="${ZIG_VERSION}" ZIG_ARCH_KEY="${ZIG_ARCH}-${ZIG_OS}" ZIG_IDX="${INDEX_FILE}" \
         python3 -c "
     import json, os, sys
     idx = json.load(open(os.environ['ZIG_IDX']))
@@ -89,8 +97,9 @@ stages:
     ")
       rm -f "${INDEX_FILE}"
       curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${TARBALL}" -o "${TARBALL}"
-      echo "${EXPECTED_HASH}  ${TARBALL}" | sha256sum --check --strict
+      ZIG_ARCHIVE="${TARBALL}" ZIG_SHA256="${EXPECTED_HASH}" python3 -c 'import hashlib, os; p=os.environ["ZIG_ARCHIVE"]; actual=hashlib.sha256(open(p, "rb").read()).hexdigest(); assert actual == os.environ["ZIG_SHA256"], "Zig archive checksum mismatch"'
       tar -xJf "${TARBALL}"
+      rm -rf "zig-${ZIG_VERSION}"
       mv "${ARCHIVE_NAME}" "zig-${ZIG_VERSION}"
       rm -f "${TARBALL}"
     fi
@@ -146,6 +155,23 @@ test-integration:
     - zig build test-integration --summary all
   needs:
     - build
+
+# Cross-compilation cannot detect Linux syscalls executing on Darwin. Run the
+# existing suites natively, with a cached, checksum-verified Zig installation.
+test-macos:
+  stage: test
+  image: macos-26-xcode-26
+  tags: [saas-macos-medium-m1]
+  timeout: 15m
+  needs: []
+  cache:
+    key: "zig-${ZIG_VERSION}-${CI_RUNNER_EXECUTABLE_ARCH}"
+    paths:
+      - zig-${ZIG_VERSION}/
+  before_script:
+    - *install-zig
+  script:
+    - zig build -j2 test test-integration --summary all
 
 # Release optimization tests
 test-release-safe:

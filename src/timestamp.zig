@@ -18,7 +18,7 @@ pub const Timestamp = struct {
 
     /// Current time as a Gregorian Timestamp (F-7).
     ///
-    /// **Note:** This function reads `std.os.linux.clock_gettime` directly
+    /// **Note:** This function reads the platform's real-time clock
     /// and is NOT affected by `Generator.withClock()`.  The generator's
     /// V1/V6/V7 paths route their timestamps through `Timestamp.fromGeneratorClock`
     /// (see PERF-59) so callers injecting a custom clock via `withClock`
@@ -32,10 +32,7 @@ pub const Timestamp = struct {
     /// addition of `gregorian_offset` would overflow u64.  Both guards
     /// match those in `fromUnixNano` (SEC-R11-01, SEC-R12-02 / CWE-190).
     pub fn now() Error!Timestamp {
-        var ts: std.os.linux.timespec = undefined;
-        const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
-        if (rc != 0) return Error.InvalidTimestamp;
-        const ns: i128 = @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
+        const ns = std.Io.Clock.real.now(std.Io.Threaded.global_single_threaded.io()).nanoseconds;
         return fromGeneratorClock(ns);
     }
 
