@@ -37,10 +37,7 @@ inline fn gio() std.Io {
 }
 
 fn defaultClock() i128 {
-    var ts: std.os.linux.timespec = undefined;
-    const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
-    if (rc != 0) return 0;
-    return @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
+    return std.Io.Clock.real.now(gio()).nanoseconds;
 }
 
 fn defaultRand(buf: []u8) anyerror!void {
@@ -1765,9 +1762,7 @@ pub const Generator = struct {
             // has no POSIX mode concept; the Permissions enum is a no-op
             // there and this branch is skipped.
             if (comptime builtin.os.tag != .windows) {
-                const rc = std.os.linux.fchmod(f.handle, 0o600);
-                const errno_val = std.os.linux.errno(rc);
-                if (errno_val != .SUCCESS) return Error.StateIoFailure;
+                f.setPermissions(io, .fromMode(0o600)) catch return Error.StateIoFailure;
             }
             try f.writePositionalAll(io, bytes, 0);
             // PERF-35: flush file data to stable storage BEFORE the
