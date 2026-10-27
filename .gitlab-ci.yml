@@ -160,8 +160,7 @@ test-integration:
 # existing suites natively, with a cached, checksum-verified Zig installation.
 test-macos:
   stage: test
-  image: macos-26-xcode-26
-  tags: [saas-macos-medium-m1]
+  tags: [dedicated, macos, arm]
   timeout: 15m
   needs: []
   cache:
