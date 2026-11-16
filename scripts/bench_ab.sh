@@ -22,6 +22,9 @@
 #                   tagged HEAD is still compared with the release before it).
 #   BENCH_ROUNDS    rounds per suite, at least 3. Default 5.
 #   BENCH_SUITES    space-separated subset of build steps to run. Default all.
+#   BENCH_READY_FILE  optional path touched once both sides are built, just
+#                   before round 1 (lets a caller start work alongside the
+#                   measurements only, e.g. the self-test's CPU load).
 #   TASKSET_PREFIX  optional CPU-pinning prefix (see INV-01 in .gitlab-ci.yml).
 #
 # HEAD is the working tree, so uncommitted edits are measured. The reference
@@ -81,10 +84,26 @@ run_suite() {
     (cd "$dir" && $taskset_prefix zig build "$step" -Doptimize=ReleaseFast -- --output "$output")
 }
 
+has_step() {
+    (cd "$1" && zig build -l 2>/dev/null | grep -qE "^  $2( |$)")
+}
+
+# Compile every benchmark executable for both sides up front, so round 1
+# doesn't include a cold build and the rounds reuse cached binaries.
+for dir in "$ref_dir" "$root"; do
+    if has_step "$dir" bench-check; then
+        echo "== build: $([ "$dir" = "$root" ] && echo HEAD || echo "$ref")"
+        (cd "$dir" && zig build bench-check -Doptimize=ReleaseFast)
+    fi
+done
+if [ -n "${BENCH_READY_FILE:-}" ]; then
+    touch "$BENCH_READY_FILE"
+fi
+
 for entry in "${suites[@]}"; do
     IFS=: read -r step suffix <<<"$entry"
     selected "$step" || continue
-    if ! (cd "$ref_dir" && zig build -l 2>/dev/null | grep -qE "^  $step( |$)"); then
+    if ! has_step "$ref_dir" "$step"; then
         echo "== $step: not defined at $ref; skipped"
         continue
     fi

@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -253,34 +254,58 @@ def burner_cores():
     return sorted(os.sched_getaffinity(0))
 
 
+def cgroup_cpu_quota():
+    """CPUs granted by a cgroup v2 `cpu.max` quota, or None when unlimited."""
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+    except (OSError, ValueError):
+        return None
+    if quota == "max":
+        return None
+    return int(quota) / int(period)
+
+
 class CpuLoad:
     """Bursty CPU burners pinned to the benchmark cores.
 
-    Two burners per core, each spinning ~2 s then idling ~1 s with staggered
-    phases, so whole benchmark runs land in contended windows unevenly on
-    base and HEAD, like a shared runner."""
+    Up to two burners per core, each spinning ~2 s then idling ~1 s with
+    staggered phases, so benchmark runs land in contended windows unevenly on
+    base and HEAD, like a shared runner. Under a cgroup CPU quota the burner
+    count stays below the quota: past it, CFS throttling would stall the
+    whole container (benchmarks included) instead of contending with it."""
 
     PER_CORE = 2
+    SCRIPT = (
+        "import os, sys, time\n"
+        "os.sched_setaffinity(0, {int(sys.argv[1])})\n"
+        "time.sleep(float(sys.argv[2]))\n"
+        "while True:\n"
+        "    end = time.monotonic() + 2.0\n"
+        "    while time.monotonic() < end: pass\n"
+        "    time.sleep(1.0)\n"
+    )
 
     def __init__(self, cores):
         self.cores = cores
         self.procs = []
+        count = self.PER_CORE * len(cores)
+        quota = cgroup_cpu_quota()
+        if quota is not None:
+            count = min(count, max(1, int(quota) - 1))
+        self.count = count
+        print(
+            f"\nCpuLoad: {count} burners on cores {cores[0]}-{cores[-1]} "
+            f"(cgroup quota: {'none' if quota is None else f'{quota:g} CPUs'})",
+            flush=True,
+        )
 
     def __enter__(self):
-        code = (
-            "import os, sys, time\n"
-            "os.sched_setaffinity(0, {int(sys.argv[1])})\n"
-            "time.sleep(float(sys.argv[2]))\n"
-            "while True:\n"
-            "    end = time.monotonic() + 2.0\n"
-            "    while time.monotonic() < end: pass\n"
-            "    time.sleep(1.0)\n"
-        )
-        for i, core in enumerate(self.cores * self.PER_CORE):
+        for i in range(self.count):
+            core = self.cores[i % len(self.cores)]
             phase = (0.37 * i) % 3.0
             self.procs.append(
                 subprocess.Popen(
-                    [sys.executable, "-c", code, str(core), str(phase)],
+                    [sys.executable, "-c", self.SCRIPT, str(core), str(phase)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -295,19 +320,37 @@ class CpuLoad:
 
 
 def run_ab(tree, ref, out, rounds):
-    """Measure `tree` (as HEAD) against `ref` with this checkout's bench_ab.sh.
+    """Measure `tree` (as HEAD) against `ref` with this checkout's bench_ab.sh,
+    with CPU load running during the measurement rounds only.
 
     The script takes HEAD from its working directory, so running it with
-    cwd=tree benchmarks that tree's working copy."""
+    cwd=tree benchmarks that tree's working copy. It touches the ready file
+    once both sides are built; the load starts then, not during compilation."""
+    ready = Path(out).parent / f"{Path(out).name}.ready"
     env = dict(
-        os.environ, BENCH_REF=ref, BENCH_SUITES=E2E_SUITES, BENCH_ROUNDS=str(rounds)
+        os.environ,
+        BENCH_REF=ref,
+        BENCH_SUITES=E2E_SUITES,
+        BENCH_ROUNDS=str(rounds),
+        BENCH_READY_FILE=str(ready),
     )
-    subprocess.run(
-        ["bash", str(ROOT / "scripts/bench_ab.sh"), str(out)],
-        cwd=tree,
-        env=env,
-        check=True,
+    proc = subprocess.Popen(
+        ["bash", str(ROOT / "scripts/bench_ab.sh"), str(out)], cwd=tree, env=env
     )
+    try:
+        while not ready.exists() and proc.poll() is None:
+            time.sleep(0.5)
+        if proc.poll() is None:
+            with CpuLoad(burner_cores()):
+                proc.wait()
+        else:
+            proc.wait()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, proc.args)
     return gate.evaluate_dir(out, threshold=0.15, warn_only=["state"])
 
 
@@ -328,8 +371,7 @@ class EndToEnd(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_identical_trees_pass_under_cpu_load(self):
-        with CpuLoad(burner_cores()):
-            report = run_ab(ROOT, self.head, self.tmp / "out", self.rounds)
+        report = run_ab(ROOT, self.head, self.tmp / "out", self.rounds)
         print("\n" + report.render(), flush=True)
         self.assertFalse(report.failed, report.render())
 
@@ -359,8 +401,7 @@ class EndToEnd(unittest.TestCase):
                 "fromString signature moved; update the e2e anchor",
             )
             src.write_text(text.replace(anchor, anchor + SLOWDOWN))
-            with CpuLoad(burner_cores()):
-                report = run_ab(slow, self.head, self.tmp / "out", self.rounds)
+            report = run_ab(slow, self.head, self.tmp / "out", self.rounds)
         finally:
             subprocess.run(
                 ["git", "-C", str(ROOT), "worktree", "remove", "--force", str(slow)],
