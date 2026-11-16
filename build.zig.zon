@@ -1,12 +1,12 @@
 .{
     .name = .uuid,
-    .version = "0.1.9",
+    .version = "0.1.10",
     .fingerprint = 0xd17f50a6ae62bdb4,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .json = .{
-            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.20#22154db734abf5264a716086fc0669eb9d6c082a",
-            .hash = "json-0.1.20-tOue4YSW6ACsmrKTooK2625fgWaZHPTZbu2R_EWVY4aU",
+            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.21#a73791a1fe2365949db02ba7eb5a4fb91fdd7f69",
+            .hash = "json-0.1.21-tOue4YaW6ACrNXeY2rLSDiON1ZH5jRpB_riq5dqzbKyP",
         },
         // FIPS-140-3 backend. Resolved ONLY under -Dfips=true (lazy).
         .fips = .{
