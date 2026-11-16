@@ -295,14 +295,20 @@ fuzz:
 
 # PERF-26 + INV-01: bench-regression with hard threshold gate.
 #
-# Same-runner A/B (SONNY-6630): `scripts/bench_ab.sh` builds and runs every
-# benchmark suite for the previous release tag (baseline*.json) and for HEAD
-# (latest*.json) in this one job, then the walker-mode `bench-compare-all`
-# gates every pair. Regressions beyond PERF26_THRESHOLD (default 15%) fail
-# the job. Secondary lockfree_fallbacks drift is reported as a WARN but does
-# not fail (INV-01 guidance). `allow_failure` is omitted on main so a hard
+# Same-runner A/B (SONNY-6630), interleaved (SONNY-6660): `scripts/bench_ab.sh`
+# runs every benchmark suite for the previous release tag and for HEAD in
+# this one job, BENCH_ROUNDS times, alternating which side goes first each
+# round. `scripts/bench_ab_gate.py` then gates every scenario on the median of
+# the per-round paired deltas: it fails when that median is below
+# -max(PERF26_THRESHOLD, 3 x its robust standard error) and flags NOISY rows
+# whose spread widened the gate. `allow_failure` is omitted on main so a hard
 # regression blocks the merge-train. Set BENCH_REF to compare against a
 # different reference.
+#
+# Why rounds: the single-run A/B failed twice on main for identical uuid
+# code (parse_invalid_reject -15%, then toString_lower -52%) because one
+# 20-second window of contention on the shared OVH runner hit only the HEAD
+# side. A disturbed round now moves the median by at most one rank.
 #
 # The gate used to compare against the committed
 # `benchmarks/results/baseline*.json`, recorded once on 2026-04-18 on an
@@ -311,17 +317,26 @@ fuzz:
 # so the job failed or passed by runner, not by code. Those files remain as a
 # historical reference for local `bench-compare` runs; CI no longer reads them.
 #
-# The 15% threshold absorbs ReleaseFast non-determinism and run-to-run
-# jitter. The compare tool additionally widens the effective gate to
-# max(threshold, 3*stddev) so noisy rows still have a sensible floor.
-#
 # INV-01 pinning: when the runner has >= 4 cores, bench invocations are
 # wrapped with `taskset -c 2-N` so CI machinery on cores 0-1 does not
 # perturb contention scenarios. Skipped when nproc < 4 (tiny runner =
 # no meaningful isolation possible). Controlled by BENCH_PIN_CORES;
 # set to `"0"` to disable pinning explicitly.
 #
-# Artifacts retain the fresh-run JSONs + compare report for 90 days.
+# Artifacts retain the per-round JSONs + gate report for 90 days.
+.bench-taskset: &bench-taskset
+  - |
+    if [ "${BENCH_PIN_CORES:-1}" = "1" ] && command -v taskset >/dev/null 2>&1 && [ "$(nproc)" -ge 4 ]; then
+      LAST_CORE=$(($(nproc) - 1))
+      if [ "$LAST_CORE" -gt 17 ]; then LAST_CORE=17; fi
+      TASKSET_PREFIX="taskset -c 2-$LAST_CORE"
+      echo "INV-01: pinning bench to cores 2-$LAST_CORE (nproc=$(nproc))"
+    else
+      TASKSET_PREFIX=""
+      echo "INV-01: taskset pin skipped (nproc=$(nproc), BENCH_PIN_CORES=${BENCH_PIN_CORES:-1})"
+    fi
+    export TASKSET_PREFIX
+
 bench-regression:
   stage: fuzz
   image: debian:bookworm-slim
@@ -342,6 +357,7 @@ bench-regression:
   variables:
     PERF26_THRESHOLD: "0.15"
     BENCH_PIN_CORES: "1"
+    BENCH_ROUNDS: "5"
     # bench_ab.sh needs history and tags to check out the reference release.
     GIT_DEPTH: "0"
   before_script:
@@ -350,27 +366,15 @@ bench-regression:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
     - git fetch --quiet --tags origin
   script:
-    - |
-      # Resolve the taskset prefix once so both bench invocations use
-      # an identical isolation envelope.
-      if [ "${BENCH_PIN_CORES:-1}" = "1" ] && command -v taskset >/dev/null 2>&1 && [ "$(nproc)" -ge 4 ]; then
-        LAST_CORE=$(($(nproc) - 1))
-        if [ "$LAST_CORE" -gt 17 ]; then LAST_CORE=17; fi
-        TASKSET_PREFIX="taskset -c 2-$LAST_CORE"
-        echo "INV-01: pinning bench to cores 2-$LAST_CORE (nproc=$(nproc))"
-      else
-        TASKSET_PREFIX=""
-        echo "INV-01: taskset pin skipped (nproc=$(nproc), BENCH_PIN_CORES=${BENCH_PIN_CORES:-1})"
-      fi
-      export TASKSET_PREFIX
+    - *bench-taskset
     # PERF-43: every suite runs (bench, contention, state, and the three
     # micro suites individually, since they share one `--output` path).
     - bash scripts/bench_ab.sh bench-ab
     - |
       # State-suite benches are fsync-bound; throughput is a property of the
-      # runner's disk, so state pairs report WARN instead of FAIL.
+      # runner's disk, so state rows report WARN instead of FAIL.
       set -o pipefail
-      zig build bench-compare-all -- \
+      python3 scripts/bench_ab_gate.py \
         --dir bench-ab \
         --threshold "${PERF26_THRESHOLD:-0.15}" \
         --warn-only state 2>&1 | tee bench-regression-report.txt
@@ -390,6 +394,43 @@ bench-regression:
         - .gitlab-ci.yml
         - benchmarks/**/*
         - scripts/bench_ab.sh
+        - scripts/bench_ab_gate.py
+      when: manual
+      allow_failure: true
+  needs:
+    - build
+
+# SONNY-6660: end-to-end self-test of the A/B gate on the bench runner.
+# Under bursty CPU burners pinned to the benchmark cores, identical trees must
+# pass and a tree with a slowdown injected into UUID.fromString must fail.
+# Manual: it exists to validate changes to the gate, not to gate merges.
+bench-ab-selftest:
+  stage: fuzz
+  image: debian:bookworm-slim
+  tags:
+    - company
+    - linux
+    - dedicated
+    - local-nvme
+  timeout: 1h
+  variables:
+    BENCH_PIN_CORES: "1"
+    BENCH_AB_E2E: "1"
+    GIT_DEPTH: "0"
+  before_script:
+    - *install-zig
+    - apt-get update && apt-get install -y --no-install-recommends util-linux procps git
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+  script:
+    - *bench-taskset
+    - python3 scripts/test_bench_ab_gate.py
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+      changes:
+        - .gitlab-ci.yml
+        - scripts/bench_ab.sh
+        - scripts/bench_ab_gate.py
+        - scripts/test_bench_ab_gate.py
       when: manual
       allow_failure: true
   needs:
@@ -538,3 +579,12 @@ hook-env-regression:
     - apt-get update -qq && apt-get install -y --no-install-recommends git
   script:
     - python3 scripts/test_hook_env.py
+
+# SONNY-6660: the bench A/B gate's verdicts on synthetic rounds (milliseconds;
+# the benchmark end-to-end cases are the manual bench-ab-selftest job).
+bench-ab-gate-regression:
+  stage: lint
+  image: python:3.15-slim-bookworm
+  tags: [company, linux, x86]
+  script:
+    - python3 scripts/test_bench_ab_gate.py
