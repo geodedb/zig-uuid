@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-15
+
+### Changed
+
+- json v0.1.20 -> v0.1.21, which carries thread-pool v0.2.11, so uuid's
+  consumers resolve a single thread-pool (SONNY-6630).
+
 ## [0.1.8] - 2026-10-11
 
 ### Changed
