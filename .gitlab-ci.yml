@@ -295,25 +295,25 @@ fuzz:
 
 # PERF-26 + INV-01: bench-regression with hard threshold gate.
 #
-# Runs the structured JSON benchmark suite (single-thread + multi-thread
-# contention) and compares every `latest*.json` against its committed
-# `benchmarks/results/baseline*.json` counterpart via the walker-mode
-# `bench-compare-all` step. Regressions beyond PERF26_THRESHOLD (default
-# 15%) fail the job. Secondary lockfree_fallbacks drift is reported as a
-# WARN but does not fail (INV-01 guidance). `allow_failure` is omitted so
-# a hard regression blocks the merge-train.
+# Same-runner A/B (SONNY-6630): `scripts/bench_ab.sh` builds and runs every
+# benchmark suite for the previous release tag (baseline*.json) and for HEAD
+# (latest*.json) in this one job, then the walker-mode `bench-compare-all`
+# gates every pair. Regressions beyond PERF26_THRESHOLD (default 15%) fail
+# the job. Secondary lockfree_fallbacks drift is reported as a WARN but does
+# not fail (INV-01 guidance). `allow_failure` is omitted on main so a hard
+# regression blocks the merge-train. Set BENCH_REF to compare against a
+# different reference.
 #
-# Regenerate baselines whenever an intentional perf change lands:
-#   zig build bench -Doptimize=ReleaseFast -- \
-#       --output benchmarks/results/baseline.json
-#   zig build bench-contention -Doptimize=ReleaseFast -- \
-#       --output benchmarks/results/baseline_contention.json
-#   git add benchmarks/results/baseline*.json && git commit
+# The gate used to compare against the committed
+# `benchmarks/results/baseline*.json`, recorded once on 2026-04-18 on an
+# unrecorded machine. Measured against it, the same code read -25..-50% on the
+# 2-vCPU AWS spot overflow runner and +85..+409% on the OVH bare-metal runner,
+# so the job failed or passed by runner, not by code. Those files remain as a
+# historical reference for local `bench-compare` runs; CI no longer reads them.
 #
-# The 15% threshold absorbs runner-to-runner jitter and ReleaseFast
-# non-determinism. The compare tool additionally widens the effective
-# gate to max(threshold, 3*stddev) so noisy rows still have a sensible
-# floor.
+# The 15% threshold absorbs ReleaseFast non-determinism and run-to-run
+# jitter. The compare tool additionally widens the effective gate to
+# max(threshold, 3*stddev) so noisy rows still have a sensible floor.
 #
 # INV-01 pinning: when the runner has >= 4 cores, bench invocations are
 # wrapped with `taskset -c 2-N` so CI machinery on cores 0-1 does not
@@ -329,17 +329,26 @@ bench-regression:
   # runner that also carries `dedicated`): consistent bare-metal hardware with
   # local disk. The k8s cluster runner's network-backed storage makes the
   # fsync-bound state suite exceed the 1h job timeout, and machine-to-machine
-  # variance defeats the regression gate (INV-01 spirit).
+  # variance defeats the regression gate (INV-01 spirit). `local-nvme` is
+  # required because the AWS spot overflow autoscaler also carries
+  # company/linux/dedicated: without it the job lands on a 2-vCPU spot
+  # instance whenever the OVH runner is saturated (SONNY-6630).
   tags:
     - company
     - linux
     - dedicated
+    - local-nvme
+  timeout: 2h
   variables:
     PERF26_THRESHOLD: "0.15"
     BENCH_PIN_CORES: "1"
+    # bench_ab.sh needs history and tags to check out the reference release.
+    GIT_DEPTH: "0"
   before_script:
     - *install-zig
-    - apt-get update && apt-get install -y --no-install-recommends util-linux procps
+    - apt-get update && apt-get install -y --no-install-recommends util-linux procps git
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - git fetch --quiet --tags origin
   script:
     - |
       # Resolve the taskset prefix once so both bench invocations use
@@ -354,40 +363,35 @@ bench-regression:
         echo "INV-01: taskset pin skipped (nproc=$(nproc), BENCH_PIN_CORES=${BENCH_PIN_CORES:-1})"
       fi
       export TASKSET_PREFIX
-    # PERF-43: run every benchmark suite that has a committed baseline so
-    # bench-compare-all actually has a candidate for each pair.  Previously
-    # only `bench` + `bench-contention` ran and the walker silently skipped
-    # baseline_state.json / baseline_micro_*.json.  The three micro suites
-    # are invoked individually (not via the `bench-micro` aggregate step)
-    # because they all forward `b.args` to the same `--output` path and
-    # would otherwise clobber each other.
-    - $TASKSET_PREFIX zig build bench -Doptimize=ReleaseFast -- --output benchmarks/results/latest.json
-    - $TASKSET_PREFIX zig build bench-contention -Doptimize=ReleaseFast -- --output benchmarks/results/latest_contention.json --runs 3
-    - $TASKSET_PREFIX zig build bench-state -Doptimize=ReleaseFast -- --output benchmarks/results/latest_state.json
-    - $TASKSET_PREFIX zig build bench-micro-parse -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_parse.json
-    - $TASKSET_PREFIX zig build bench-micro-format -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_format.json
-    - $TASKSET_PREFIX zig build bench-micro-hash -Doptimize=ReleaseFast -- --output benchmarks/results/latest_micro_hash.json
+    # PERF-43: every suite runs (bench, contention, state, and the three
+    # micro suites individually, since they share one `--output` path).
+    - bash scripts/bench_ab.sh bench-ab
     - |
-      # State-suite benches are fsync-bound — throughput is a property of the
-      # runner's disk, not the code. Cross-machine comparison against committed
-      # baselines is meaningless, so state pairs report WARN instead of FAIL.
+      # State-suite benches are fsync-bound; throughput is a property of the
+      # runner's disk, so state pairs report WARN instead of FAIL.
+      set -o pipefail
       zig build bench-compare-all -- \
+        --dir bench-ab \
         --threshold "${PERF26_THRESHOLD:-0.15}" \
         --warn-only state 2>&1 | tee bench-regression-report.txt
   artifacts:
     when: always
     paths:
-      - benchmarks/results/latest.json
-      - benchmarks/results/latest_contention.json
-      - benchmarks/results/latest_state.json
-      - benchmarks/results/latest_micro_parse.json
-      - benchmarks/results/latest_micro_format.json
-      - benchmarks/results/latest_micro_hash.json
+      - bench-ab/
       - bench-regression-report.txt
     expire_in: 90 days
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    # Let a branch that changes the gate or the benchmarks prove it before
+    # merge. Manual and non-blocking, so ordinary branches never wait on it.
+    - if: '$CI_COMMIT_BRANCH'
+      changes:
+        - .gitlab-ci.yml
+        - benchmarks/**/*
+        - scripts/bench_ab.sh
+      when: manual
+      allow_failure: true
   needs:
     - build
 
