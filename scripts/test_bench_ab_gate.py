@@ -255,7 +255,13 @@ def burner_cores():
 
 
 def cgroup_cpu_quota():
-    """CPUs granted by a cgroup v2 `cpu.max` quota, or None when unlimited."""
+    """CPUs granted by a cgroup v2 `cpu.max` quota, or None when unlimited.
+
+    BENCH_AB_E2E_CPU_QUOTA overrides the detection (to exercise the quota
+    path on an unlimited host)."""
+    override = os.environ.get("BENCH_AB_E2E_CPU_QUOTA")
+    if override:
+        return float(override)
     try:
         quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
     except (OSError, ValueError):
@@ -265,36 +271,56 @@ def cgroup_cpu_quota():
     return int(quota) / int(period)
 
 
+def contended_cores():
+    """Cores the benchmark and the burners share.
+
+    Without a quota: every benchmark core. Under a cgroup CPU quota of Q CPUs:
+    the first max(1, floor(Q) - 1) of them, so benchmark + burners can never
+    need more than Q CPUs. Otherwise CFS would throttle the whole container,
+    a far harsher and different disturbance from a noisy neighbour, which
+    takes CPU time on shared cores, not this job's quota."""
+    cores = burner_cores()
+    quota = cgroup_cpu_quota()
+    if quota is not None:
+        cores = cores[: max(1, int(quota) - 1)]
+    return cores, quota
+
+
 class CpuLoad:
-    """Bursty CPU burners pinned to the benchmark cores.
+    """Bursty CPU burners on the benchmark's cores: a noisy neighbour.
 
-    Up to two burners per core, each spinning ~2 s then idling ~1 s with
-    staggered phases, so benchmark runs land in contended windows unevenly on
-    base and HEAD, like a shared runner. Under a cgroup CPU quota the burner
-    count stays below the quota: past it, CFS throttling would stall the
-    whole container (benchmarks included) instead of contending with it."""
+    One burner per core spins for 0.5-1.5 s, then idles for 8-16 s (random,
+    seeded per burner). Sharing the benchmark's core, a burst roughly halves
+    whatever is being measured, so a disturbed run reads ~-25..-50%, and
+    about one run in ten is disturbed. That matches what the OVH runner
+    showed without any injected load (~5% of rounds off by 15-55%,
+    SONNY-6660), with margin.
 
-    PER_CORE = 2
+    Why not heavier: when about half of all runs are disturbed, the paired
+    deltas go bimodal (e.g. [-26, -25, +36, -28, -27] for identical code) and
+    no 5-round median can tell that from a real -25% regression with one
+    outlier round. Contention that frequent needs more rounds, not a looser
+    gate. Why random: a fixed period phase-locks with the near-constant
+    benchmark run lengths and skews one side in every round."""
+
+    PER_CORE = 1
     SCRIPT = (
-        "import os, sys, time\n"
+        "import os, random, sys, time\n"
         "os.sched_setaffinity(0, {int(sys.argv[1])})\n"
-        "time.sleep(float(sys.argv[2]))\n"
+        "rng = random.Random(int(sys.argv[2]))\n"
+        "time.sleep(rng.uniform(0, 8))\n"
         "while True:\n"
-        "    end = time.monotonic() + 2.0\n"
+        "    end = time.monotonic() + rng.uniform(0.5, 1.5)\n"
         "    while time.monotonic() < end: pass\n"
-        "    time.sleep(1.0)\n"
+        "    time.sleep(rng.uniform(8, 16))\n"
     )
 
-    def __init__(self, cores):
+    def __init__(self, cores, quota=None):
         self.cores = cores
         self.procs = []
-        count = self.PER_CORE * len(cores)
-        quota = cgroup_cpu_quota()
-        if quota is not None:
-            count = min(count, max(1, int(quota) - 1))
-        self.count = count
+        self.count = self.PER_CORE * len(cores)
         print(
-            f"\nCpuLoad: {count} burners on cores {cores[0]}-{cores[-1]} "
+            f"\nCpuLoad: {self.count} burners on cores {cores[0]}-{cores[-1]} "
             f"(cgroup quota: {'none' if quota is None else f'{quota:g} CPUs'})",
             flush=True,
         )
@@ -302,10 +328,10 @@ class CpuLoad:
     def __enter__(self):
         for i in range(self.count):
             core = self.cores[i % len(self.cores)]
-            phase = (0.37 * i) % 3.0
+            seed = 6660 + i
             self.procs.append(
                 subprocess.Popen(
-                    [sys.executable, "-c", self.SCRIPT, str(core), str(phase)],
+                    [sys.executable, "-c", self.SCRIPT, str(core), str(seed)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -325,14 +351,17 @@ def run_ab(tree, ref, out, rounds):
 
     The script takes HEAD from its working directory, so running it with
     cwd=tree benchmarks that tree's working copy. It touches the ready file
-    once both sides are built; the load starts then, not during compilation."""
+    once both sides are built; the load starts then, not during compilation.
+    The benchmark is pinned to the same cores as the burners."""
     ready = Path(out).parent / f"{Path(out).name}.ready"
+    cores, quota = contended_cores()
     env = dict(
         os.environ,
         BENCH_REF=ref,
         BENCH_SUITES=E2E_SUITES,
         BENCH_ROUNDS=str(rounds),
         BENCH_READY_FILE=str(ready),
+        TASKSET_PREFIX=f"taskset -c {cores[0]}-{cores[-1]}",
     )
     proc = subprocess.Popen(
         ["bash", str(ROOT / "scripts/bench_ab.sh"), str(out)], cwd=tree, env=env
@@ -341,7 +370,7 @@ def run_ab(tree, ref, out, rounds):
         while not ready.exists() and proc.poll() is None:
             time.sleep(0.5)
         if proc.poll() is None:
-            with CpuLoad(burner_cores()):
+            with CpuLoad(cores, quota):
                 proc.wait()
         else:
             proc.wait()
@@ -351,7 +380,16 @@ def run_ab(tree, ref, out, rounds):
             proc.wait()
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, proc.args)
-    return gate.evaluate_dir(out, threshold=0.15, warn_only=["state"])
+    report = gate.evaluate_dir(out, threshold=0.15, warn_only=["state"])
+    # Rows the gate failed carry a real change; count the load on the rest.
+    deltas = [d for r in report.results if r.status != "FAIL" for d in r.deltas]
+    off = sum(abs(d) > 0.15 for d in deltas)
+    print(
+        f"\nload check: {off}/{len(deltas)} rounds of unchanged rows moved more than 15% "
+        f"({100 * off / max(1, len(deltas)):.0f}%)",
+        flush=True,
+    )
+    return report
 
 
 @unittest.skipUnless(E2E, "set BENCH_AB_E2E=1 to run the benchmark end-to-end tests")

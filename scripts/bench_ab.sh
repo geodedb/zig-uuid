@@ -55,6 +55,9 @@ cleanup() {
     git -C "$root" worktree remove --force "$ref_dir" >/dev/null 2>&1 || rm -rf "$ref_dir"
 }
 trap cleanup EXIT
+# bash skips the EXIT trap when a signal kills it (e.g. a cancelled CI job).
+trap 'exit 130' INT
+trap 'exit 143' TERM
 git -C "$root" worktree add --quiet --detach "$ref_dir" "$ref_sha"
 
 printf 'reference %s (%s)\nhead      %s\nhost      %s, nproc=%s\nrounds    %s\n' \
