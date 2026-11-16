@@ -21,6 +21,7 @@ Thumbs.db
 test_*
 !tests/
 !/scripts/test_hook_env.py
+!/scripts/test_bench_ab_gate.py
 
 # Build artifacts
 *.exe
