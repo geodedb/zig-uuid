@@ -240,7 +240,7 @@ E2E_SUITES = os.environ.get(
 # Spin injected at the top of UUID.fromString for the slowdown case. The
 # volatile store keeps the loop from being optimised out.
 SLOWDOWN = (
-    "        { var spin: u32 = 0; while (spin < 16) : (spin += 1) "
+    "        { var spin: u32 = 0; while (spin < 32) : (spin += 1) "
     "std.mem.doNotOptimizeAway(&spin); }\n"
 )
 
